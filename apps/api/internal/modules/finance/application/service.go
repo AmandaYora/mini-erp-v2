@@ -467,7 +467,7 @@ func (s *Service) NetProfit(ctx context.Context, branchID int64, from, to string
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	rep, err := s.profitLoss(ctx, branchID, start, end)
+	rep, err := s.profitLoss(ctx, branchID, start, end, fullBooks)
 	if err != nil {
 		return 0, 0, 0, err
 	}

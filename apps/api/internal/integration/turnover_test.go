@@ -8,46 +8,52 @@ import (
 	financeapp "mini-erp/internal/modules/finance/application"
 	productapp "mini-erp/internal/modules/product/application"
 	salesapp "mini-erp/internal/modules/sales/application"
-	stockapp "mini-erp/internal/modules/stock/application"
 )
 
-// bigTicket adds a product priced so that a handful of units crosses the
-// Rp4,8 M ceiling, keeping the fixtures small and the arithmetic obvious.
-// Unit price 2.000.000.000 → 3 units = 6 M, ceiling bites on the third.
-const bigTicketPrice = 2_000_000_000
+// bigTicketPrice / bigTicketCost price a product so that a handful of units
+// crosses the Rp4,8 M ceiling, keeping fixtures small and the arithmetic
+// obvious: 2 M per unit → the third unit breaches.
+const (
+	bigTicketPrice = 2_000_000_000
+	bigTicketCost  = 1_000_000_000
+)
 
-func newBigTicket(t *testing.T, ctx context.Context, fx shopFixture) (productID, variantID int64) {
+// newBigTicket swaps the fixture onto a high-value product whose stock comes
+// from a RECEIPT, not from an opening adjustment.
+//
+// That distinction matters: adjustment stock carries no cost, so deliveries
+// of it book zero COGS. Buying it in gives the cost ledger a real basis, and
+// only then can a test prove that excluding an order removes its COGS too —
+// not just its revenue.
+func newBigTicket(t *testing.T, ctx context.Context, fx shopFixture) shopFixture {
 	t.Helper()
 	p, err := testMods.product.Service().CreateProduct(ctx, 0, productapp.ProductInput{
 		Code: "BIG-001", Name: "Barang Nilai Besar", Type: "barang", Tracked: true,
 		BaseUOM: "pcs", PurchaseUOM: "pcs", SalesUOM: "pcs",
 		PurchaseFactor: 1, SalesFactor: 1,
-		PurchasePrice: 1_000_000_000,
+		PurchasePrice: bigTicketCost,
 		SellingPrice:  bigTicketPrice,
 	})
 	if err != nil {
 		t.Fatalf("create big-ticket product: %v", err)
 	}
-	if err := testMods.stock.Service().Adjust(ctx, 0, fx.branchID, stockapp.AdjustInput{
-		ProductID: p.ID, VariantID: p.Variants[0].ID, Location: fx.locationID,
-		Mode: "in", QtyDelta: 20, Reason: "stok awal uji plafon",
-	}); err != nil {
-		t.Fatalf("stock in: %v", err)
-	}
-	return p.ID, p.Variants[0].ID
+	fx.productID = p.ID
+	fx.variantID = p.Variants[0].ID
+	receivePO(t, fx, bigTicketCost, 20)
+	return fx
 }
 
 // sellAndPost creates → confirms → ships → posts one order on a given date,
 // returning the sales order id. Posting is what puts revenue in the books,
 // which is the only thing the ceiling reads.
-func sellAndPost(t *testing.T, ctx context.Context, fx shopFixture, productID, variantID int64, qty float64, date string) int64 {
+func sellAndPost(t *testing.T, ctx context.Context, fx shopFixture, qty float64, date string) int64 {
 	t.Helper()
 	m := testMods
 	so, err := m.sales.Service().CreateOrder(ctx, 0, fx.branchID, salesapp.OrderInput{
 		PartyID: fx.customerID, Channel: "regular", PaymentTerms: "cod", TaxType: "none",
 		OrderDate: date,
 		Items: []salesapp.LineInput{{
-			ProductID: productID, VariantID: variantID, UOM: "pcs", Qty: qty,
+			ProductID: fx.productID, VariantID: fx.variantID, UOM: "pcs", Qty: qty,
 		}},
 	})
 	if err != nil {
@@ -58,7 +64,7 @@ func sellAndPost(t *testing.T, ctx context.Context, fx shopFixture, productID, v
 	}
 	dn, err := m.delivery.Service().Create(ctx, 0, fx.branchID, so.ID, date, "", deliveryapp.DocInput{},
 		[]deliveryapp.LineInput{{
-			ProductID: productID, VariantID: variantID,
+			ProductID: fx.productID, VariantID: fx.variantID,
 			LocationID: fx.locationID, UOM: "pcs", Qty: qty,
 		}})
 	if err != nil {
@@ -80,13 +86,13 @@ func sellAndPost(t *testing.T, ctx context.Context, fx shopFixture, productID, v
 func TestGrossTurnoverCeiling(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
-	productID, variantID := newBigTicket(t, ctx(), fx)
+	fx = newBigTicket(t, ctx(), fx)
 
 	// 2 M (Jan) + 2 M (Feb) = 4 M under the ceiling; the March order would
 	// take the running total to 6 M, so March falls outside.
-	janSO := sellAndPost(t, ctx(), fx, productID, variantID, 1, "2026-01-15")
-	febSO := sellAndPost(t, ctx(), fx, productID, variantID, 1, "2026-02-15")
-	marSO := sellAndPost(t, ctx(), fx, productID, variantID, 1, "2026-03-15")
+	janSO := sellAndPost(t, ctx(), fx, 1, "2026-01-15")
+	febSO := sellAndPost(t, ctx(), fx, 1, "2026-02-15")
+	marSO := sellAndPost(t, ctx(), fx, 1, "2026-03-15")
 
 	basis, err := testMods.finance.Service().GrossTurnoverBasis(ctx(), 2026, 3)
 	if err != nil {
@@ -129,10 +135,10 @@ func TestGrossTurnoverCeiling(t *testing.T) {
 func TestGrossTurnoverIsCumulativeYearToDate(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
-	productID, variantID := newBigTicket(t, ctx(), fx)
+	fx = newBigTicket(t, ctx(), fx)
 
-	sellAndPost(t, ctx(), fx, productID, variantID, 2, "2026-01-20") // 4 M
-	sellAndPost(t, ctx(), fx, productID, variantID, 1, "2026-02-20") // +2 M → breach
+	sellAndPost(t, ctx(), fx, 2, "2026-01-20") // 4 M
+	sellAndPost(t, ctx(), fx, 1, "2026-02-20") // +2 M → breach
 
 	jan, err := testMods.finance.Service().GrossTurnoverBasis(ctx(), 2026, 1)
 	if err != nil {
@@ -163,8 +169,8 @@ func TestGrossTurnoverIsCumulativeYearToDate(t *testing.T) {
 func TestTaxPackageVariantsDiffer(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
-	productID, variantID := newBigTicket(t, ctx(), fx)
-	sellAndPost(t, ctx(), fx, productID, variantID, 3, "2026-01-10") // 6 M → breach
+	fx = newBigTicket(t, ctx(), fx)
+	sellAndPost(t, ctx(), fx, 3, "2026-01-10") // 6 M → breach
 
 	svc := testMods.finance.Service()
 	actual, actualName, err := svc.TaxPackage(ctx(), fx.branchID, 2026, 1, financeapp.PackageActual)
@@ -225,10 +231,10 @@ func toLower(s string) string {
 func TestGrossTurnoverIncludesLastDayOfMonth(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
-	productID, variantID := newBigTicket(t, ctx(), fx)
+	fx = newBigTicket(t, ctx(), fx)
 
 	// 31 January — the last day of the month, and the only turnover there is.
-	sellAndPost(t, ctx(), fx, productID, variantID, 1, "2026-01-31")
+	sellAndPost(t, ctx(), fx, 1, "2026-01-31")
 
 	basis, err := testMods.finance.Service().GrossTurnoverBasis(ctx(), 2026, 1)
 	if err != nil {
@@ -240,5 +246,85 @@ func TestGrossTurnoverIncludesLastDayOfMonth(t *testing.T) {
 	}
 	if len(basis.Orders) != 1 {
 		t.Fatalf("orders = %d, want 1", len(basis.Orders))
+	}
+}
+
+// TestCappedViewIsConsistentEverywhere is the guarantee that matters: an
+// order pushed outside the ceiling must not be counted ANYWHERE in the
+// limited working paper. Not in profit & loss, not in the balance sheet, not
+// in the trial balance, not in VAT. One exclusion list, applied once, at the
+// single point every report reads its totals from.
+func TestCappedViewIsConsistentEverywhere(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	fx = newBigTicket(t, ctx(), fx)
+
+	// 2 M + 2 M fit; the third 2 M breaches and is dropped whole.
+	sellAndPost(t, ctx(), fx, 1, "2026-01-10")
+	sellAndPost(t, ctx(), fx, 1, "2026-01-15")
+	sellAndPost(t, ctx(), fx, 1, "2026-01-20")
+
+	svc := testMods.finance.Service()
+	basis, err := svc.GrossTurnoverBasis(ctx(), 2026, 1)
+	if err != nil {
+		t.Fatalf("basis: %v", err)
+	}
+	if basis.ExcludedTurnover != bigTicketPrice {
+		t.Fatalf("excluded turnover = %d, want %d", basis.ExcludedTurnover, bigTicketPrice)
+	}
+
+	// Both workbooks are rendered from this same call — the test therefore
+	// checks the figures the sheets actually carry, not a parallel formula.
+	full, err := svc.Reports(ctx(), fx.branchID, 2026, 1, financeapp.PackageActual)
+	if err != nil {
+		t.Fatalf("actual reports: %v", err)
+	}
+	capped, err := svc.Reports(ctx(), fx.branchID, 2026, 1, financeapp.PackageCapped)
+	if err != nil {
+		t.Fatalf("capped reports: %v", err)
+	}
+
+	// 1. Profit & loss: revenue drops by exactly the excluded turnover.
+	if got := full.ProfitLoss.Revenue - capped.ProfitLoss.Revenue; got != bigTicketPrice {
+		t.Fatalf("revenue drop = %d, want %d", got, bigTicketPrice)
+	}
+	// 2. COGS drops too — the excluded sale took its cost with it. Removing
+	//    revenue alone would leave the margin nonsensical.
+	if capped.ProfitLoss.Cogs >= full.ProfitLoss.Cogs {
+		t.Fatalf("COGS did not drop: full=%d capped=%d",
+			full.ProfitLoss.Cogs, capped.ProfitLoss.Cogs)
+	}
+	// 3. The balance sheet still balances after whole entries were removed.
+	if !capped.Balance.Balanced {
+		t.Fatalf("limited balance sheet does not balance: assets=%d liab+eq=%d",
+			capped.Balance.TotalAssets, capped.Balance.TotalLiaEq)
+	}
+	// 4. Trial balance drops as well, and stays square.
+	var fullDebit, capDebit, capCredit int64
+	for _, r := range full.Trial {
+		fullDebit += r.Debit
+	}
+	for _, r := range capped.Trial {
+		capDebit += r.Debit
+		capCredit += r.Credit
+	}
+	if capDebit >= fullDebit {
+		t.Fatalf("trial balance debit did not drop: full=%d capped=%d", fullDebit, capDebit)
+	}
+	if capDebit != capCredit {
+		t.Fatalf("limited trial balance is lopsided: %d vs %d", capDebit, capCredit)
+	}
+	// 5. The VAT working paper lists only the surviving rows.
+	if len(capped.Detail) >= len(full.Detail) {
+		t.Fatalf("VAT rows not filtered: full=%d capped=%d",
+			len(full.Detail), len(capped.Detail))
+	}
+	// 6. Every sheet agrees with the SAME exclusion list.
+	if capped.ProfitLoss.Revenue != basis.IncludedTurnover {
+		t.Fatalf("profit & loss revenue %d disagrees with the ceiling working %d",
+			capped.ProfitLoss.Revenue, basis.IncludedTurnover)
+	}
+	if capped.Summary.PpnOut > full.Summary.PpnOut {
+		t.Fatal("limited VAT payable exceeds the real books")
 	}
 }

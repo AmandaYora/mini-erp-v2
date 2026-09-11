@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"context"
+	"strings"
 
 	"mini-erp/internal/modules/finance/contracts"
 )
@@ -61,4 +62,106 @@ func (r *Repository) TurnoverEntries(ctx context.Context, from, to string) ([]Tu
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// footingChunk bounds how many entry ids go into one IN (...) list.
+const footingChunk = 1000
+
+// AccountFootingsExcluding returns account footings for the window with the
+// given journal entries removed.
+//
+// Implemented as (full − excluded) rather than a giant `NOT IN (...)`:
+// footings are plain sums, so subtracting the excluded slice is exact, and
+// the excluded side pages through ids in chunks instead of building one
+// enormous predicate. Both sides run the SAME window and commercial filter,
+// so the subtraction can never drift.
+//
+// Every report in this module funnels through AccountFootings, which is why
+// excluding here is enough to keep an excluded transaction out of EVERY
+// sheet at once — profit & loss, balance sheet, trial balance, VAT summary.
+func (r *Repository) AccountFootingsExcluding(ctx context.Context, branchID int64, from, to string, excluded []int64) (map[int64][2]int64, error) {
+	full, err := r.AccountFootings(ctx, branchID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if len(excluded) == 0 {
+		return full, nil
+	}
+	drop, err := r.footingsOfEntries(ctx, branchID, from, to, excluded)
+	if err != nil {
+		return nil, err
+	}
+	for id, d := range drop {
+		f := full[id]
+		f[0] -= d[0]
+		f[1] -= d[1]
+		if f[0] == 0 && f[1] == 0 {
+			delete(full, id)
+			continue
+		}
+		full[id] = f
+	}
+	return full, nil
+}
+
+// footingsOfEntries sums debit/credit per account for the named entries,
+// restricted to the same window as the full footing query.
+func (r *Repository) footingsOfEntries(ctx context.Context, branchID int64, from, to string, ids []int64) (map[int64][2]int64, error) {
+	out := map[int64][2]int64{}
+	seen := make(map[int64]bool, len(ids))
+	uniq := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniq = append(uniq, id)
+	}
+	for start := 0; start < len(uniq); start += footingChunk {
+		end := start + footingChunk
+		if end > len(uniq) {
+			end = len(uniq)
+		}
+		chunk := uniq[start:end]
+		conds := "e.branch_id = ?"
+		args := []any{branchID}
+		if from != "" {
+			conds += " AND e.entry_date >= ?"
+			args = append(args, from)
+		}
+		if to != "" {
+			conds += " AND e.entry_date <= ?"
+			args = append(args, to)
+		}
+		placeholders := strings.Repeat("?,", len(chunk)-1) + "?"
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := r.db.QueryContext(ctx,
+			`SELECT l.account_id, COALESCE(SUM(l.debit), 0), COALESCE(SUM(l.credit), 0)
+			 FROM finance_journal_lines l
+			 JOIN finance_journal_entries e ON e.id = l.entry_id
+			 WHERE `+conds+commercialOnly+` AND e.id IN (`+placeholders+`)
+			 GROUP BY l.account_id`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, debit, credit int64
+			if err := rows.Scan(&id, &debit, &credit); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			f := out[id]
+			f[0] += debit
+			f[1] += credit
+			out[id] = f
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	return out, nil
 }

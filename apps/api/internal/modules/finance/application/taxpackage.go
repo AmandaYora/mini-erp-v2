@@ -36,7 +36,7 @@ var packageMetas = map[string]packageMeta{
 	},
 	PackageCapped: {
 		fileSuffix: "peredaran-terbatas",
-		dataLabel:  "Dibatasi plafon peredaran bruto Rp4.800.000.000 per tahun pajak",
+		dataLabel:  "Dibatasi plafon peredaran bruto Rp4.800.000.000 per tahun pajak — seluruh angka sudah mengeluarkan order di luar plafon",
 	},
 }
 

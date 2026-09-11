@@ -57,6 +57,18 @@ func (b *TurnoverBasis) IsExcluded(entryID int64) bool { return b.excludedEntrie
 // ExcludedCount returns how many journal entries the ceiling removes.
 func (b *TurnoverBasis) ExcludedCount() int { return len(b.excludedEntries) }
 
+// ExcludedEntryIDs lists the removed journal entries. Every report in the
+// limited working paper is built from THIS one list, so a dropped order
+// cannot survive in one sheet while vanishing from another.
+func (b *TurnoverBasis) ExcludedEntryIDs() []int64 {
+	out := make([]int64, 0, len(b.excludedEntries))
+	for id := range b.excludedEntries {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // entryOrders is the attribution of one journal entry to the sales orders
 // whose economics it carries.
 type entryOrders struct {

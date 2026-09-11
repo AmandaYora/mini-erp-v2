@@ -34,14 +34,41 @@ type TrialRow struct {
 	Credit int64  `json:"credit"`
 }
 
+// bookScope selects WHICH journals a report reads.
+//
+// The zero value (fullBooks) is the real books. A scope carrying excluded
+// entry ids produces the gross-turnover-limited view, and because every
+// report below funnels through Service.footings, an excluded transaction
+// disappears from ALL of them at once — profit & loss, balance sheet, trial
+// balance, VAT summary, fiscal reconciliation. There is no second path a
+// dropped order could still be counted through.
+type bookScope struct {
+	excluded []int64
+}
+
+// fullBooks is the ordinary, unfiltered view.
+var fullBooks = bookScope{}
+
+// footings is the ONE place reports read account totals from.
+func (s *Service) footings(ctx context.Context, branchID int64, from, to string, sc bookScope) (map[int64][2]int64, error) {
+	if len(sc.excluded) == 0 {
+		return s.repo.AccountFootings(ctx, branchID, from, to)
+	}
+	return s.repo.AccountFootingsExcluding(ctx, branchID, from, to, sc.excluded)
+}
+
 // TrialBalance lists every touched account with footings for a month.
 func (s *Service) TrialBalance(ctx context.Context, branchID int64, year, month int) ([]TrialRow, error) {
+	return s.trialBalanceScoped(ctx, branchID, year, month, fullBooks)
+}
+
+func (s *Service) trialBalanceScoped(ctx context.Context, branchID int64, year, month int, sc bookScope) ([]TrialRow, error) {
 	if !validYearMonth(year, month) {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
 	}
 	start := monthStart(year, month)
 	end := monthEnd(year, month)
-	footings, err := s.repo.AccountFootings(ctx, branchID, start, end)
+	footings, err := s.footings(ctx, branchID, start, end, sc)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -97,7 +124,7 @@ func (s *Service) ProfitLoss(ctx context.Context, branchID int64, from, to strin
 	if err != nil {
 		return nil, err
 	}
-	rep, err := s.profitLoss(ctx, branchID, start, end)
+	rep, err := s.profitLoss(ctx, branchID, start, end, fullBooks)
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +132,8 @@ func (s *Service) ProfitLoss(ctx context.Context, branchID int64, from, to strin
 	return rep, nil
 }
 
-func (s *Service) profitLoss(ctx context.Context, branchID int64, start, end string) (*ProfitLoss, error) {
-	footings, err := s.repo.AccountFootings(ctx, branchID, start, end)
+func (s *Service) profitLoss(ctx context.Context, branchID int64, start, end string, sc bookScope) (*ProfitLoss, error) {
+	footings, err := s.footings(ctx, branchID, start, end, sc)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -157,10 +184,14 @@ type BalanceSheet struct {
 
 // BalanceSheet computes lifetime footings through a date.
 func (s *Service) BalanceSheet(ctx context.Context, branchID int64, date string) (*BalanceSheet, error) {
+	return s.balanceSheetScoped(ctx, branchID, date, fullBooks)
+}
+
+func (s *Service) balanceSheetScoped(ctx context.Context, branchID int64, date string, sc bookScope) (*BalanceSheet, error) {
 	if _, err := timeutil.ParseDateInput(strings.TrimSpace(date)); err != nil {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "date", Message: "format tanggal harus YYYY-MM-DD"}})
 	}
-	footings, err := s.repo.AccountFootings(ctx, branchID, "", date+" 23:59:59")
+	footings, err := s.footings(ctx, branchID, "", date+" 23:59:59", sc)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -189,7 +220,7 @@ func (s *Service) BalanceSheet(ctx context.Context, branchID int64, date string)
 	}
 	// Retained earnings: lifetime P&L through the date. Without this, profit
 	// would vanish from equity and the sheet could never balance.
-	rep, err := s.profitLoss(ctx, branchID, "1000-01-01 00:00:00", date+" 23:59:59")
+	rep, err := s.profitLoss(ctx, branchID, "1000-01-01 00:00:00", date+" 23:59:59", sc)
 	if err != nil {
 		return nil, err
 	}
@@ -298,6 +329,10 @@ type TaxSummary struct {
 
 // TaxSummary nets PPN Keluaran credits against PPN Masukan debits.
 func (s *Service) TaxSummary(ctx context.Context, branchID int64, year, month int) (*TaxSummary, error) {
+	return s.taxSummaryScoped(ctx, branchID, year, month, fullBooks)
+}
+
+func (s *Service) taxSummaryScoped(ctx context.Context, branchID int64, year, month int, sc bookScope) (*TaxSummary, error) {
 	if !validYearMonth(year, month) {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
 	}
@@ -309,7 +344,7 @@ func (s *Service) TaxSummary(ctx context.Context, branchID int64, year, month in
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	footings, err := s.repo.AccountFootings(ctx, branchID, monthStart(year, month), monthEnd(year, month))
+	footings, err := s.footings(ctx, branchID, monthStart(year, month), monthEnd(year, month), sc)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -470,7 +505,7 @@ func (s *Service) Margin(ctx context.Context, branchID int64, from, to string) (
 	if err != nil {
 		return nil, err
 	}
-	rep, err := s.profitLoss(ctx, branchID, start, end)
+	rep, err := s.profitLoss(ctx, branchID, start, end, fullBooks)
 	if err != nil {
 		return nil, err
 	}

@@ -91,11 +91,18 @@ type FiscalLine struct {
 // fiscal = commercial + Σ corrections. Balance-sheet corrections list but
 // stay profit-neutral (reklasifikasi tidak mengubah laba).
 func (s *Service) FiscalSummary(ctx context.Context, branchID int64, from, to string) (*FiscalSummaryResult, error) {
+	return s.fiscalSummaryScoped(ctx, branchID, from, to, fullBooks)
+}
+
+// fiscalSummaryScoped reconciles within the given book scope. Only the
+// COMMERCIAL leg narrows: fiscal corrections are typed journals with no
+// sales order behind them, so the turnover ceiling never touches them.
+func (s *Service) fiscalSummaryScoped(ctx context.Context, branchID int64, from, to string, sc bookScope) (*FiscalSummaryResult, error) {
 	start, end, err := validateRange(from, to)
 	if err != nil {
 		return nil, err
 	}
-	commercial, err := s.profitLoss(ctx, branchID, start, end)
+	commercial, err := s.profitLoss(ctx, branchID, start, end, sc)
 	if err != nil {
 		return nil, err
 	}

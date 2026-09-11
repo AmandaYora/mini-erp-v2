@@ -739,34 +739,52 @@ Revamp memilih sebaliknya: **entry semacam itu dipertahankan**, lalu didaftarkan
 *Transaksi Dikecualikan*. Tidak ada pilihan yang eksak di sini; yang bisa dilakukan adalah
 menampakkannya, bukan menyembunyikannya.
 
-### 12.5 Keluaran — dua paket terpisah, satu `.xlsx` masing-masing
+### 12.5 Keluaran — dua paket terpisah, isi sheet SAMA
 
 Istilah **"Layer 1"/"Layer 2" hanya hidup di level aplikasi** (konstanta `PackageActual` /
 `PackageCapped`, query param `variant`). Istilah itu **tidak pernah muncul** di nama berkas, nama
 sheet, maupun sel mana pun — kertas kerja yang diserahkan ke konsultan pajak harus menjelaskan
-dirinya sendiri, bukan menyebut saklar internal yang hanya bermakna di dalam kode ini.
+dirinya sendiri, bukan menyebut saklar internal.
 
-| | `paket-pajak-YYYY-MM-data-riil.xlsx` | `paket-pajak-YYYY-MM-peredaran-terbatas.xlsx` |
+**Kedua paket membawa lima sheet laporan yang sama**, dirender oleh fungsi penulis yang sama:
+Untung Rugi · Posisi Harta & Hutang · Cek Saldo Akun · Rincian PPN · Rekonsiliasi Fiskal.
+Yang membedakan hanya **scope** saat angkanya dihitung, bukan cara menyajikannya.
+
+| | `...-data-riil.xlsx` | `...-peredaran-terbatas.xlsx` |
 |---|---|---|
-| Ringkasan | ✅ (PPN, laba komersial & fiskal) | ✅ (plafon, terpakai, sisa, jumlah dikecualikan) |
-| Untung Rugi | ✅ | — |
-| Posisi Harta & Hutang | ✅ | **sengaja tidak ada** |
-| Cek Saldo Akun | ✅ | **sengaja tidak ada** |
-| Peredaran Bruto (per order, kumulatif) | — | ✅ |
-| Transaksi Dikecualikan (+ alasan) | — | ✅ |
-| Rincian PPN | ✅ seluruhnya | ✅ hanya yang di dalam plafon |
-| Rekonsiliasi Fiskal | ✅ | — |
+| Ringkasan | ✅ | ✅ + dasar pembatasan (plafon, terpakai, sisa) |
+| Untung Rugi · Neraca · Neraca Saldo · Rincian PPN · Rekonsiliasi Fiskal | ✅ penuh | ✅ **sudah tereliminasi** |
+| Peredaran Bruto (per order + kumulatif) | — | ✅ tambahan |
+| Transaksi Dikecualikan (+ alasan) | — | ✅ tambahan |
 
-**Kenapa paket terbatas tidak memuat neraca dan neraca saldo.** Begitu transaksi utuh dibuang,
-posisi keuangan tidak lagi menggambarkan keadaan perusahaan yang sebenarnya. Mencetaknya justru
-mengundang pembaca memperlakukan simulasi sebagai posisi nyata. Paket terbatas menjawab satu
-pertanyaan saja — berapa peredaran bruto yang masuk plafon, dan transaksi mana yang keluar — dan
-membawa jejak audit lengkapnya.
+Dua sheet terakhir **ditambahkan di atas**, bukan menggantikan apa pun: angka terbatas yang tidak
+bisa ditelusuri balik ke aturannya bukan kertas kerja, hanya angka yang lebih kecil.
+
+#### Bagaimana konsistensinya dijamin
+
+Setiap laporan di modul ini membaca total lewat **satu** fungsi, `Service.footings`. Mengeliminasi
+di titik itu membuat order yang dibuang hilang dari **seluruh** sheet sekaligus — laba rugi,
+neraca, neraca saldo, PPN, rekonsiliasi fiskal. Tidak ada jalur kedua yang masih bisa
+menghitungnya.
+
+Di atasnya, `Service.Reports(ctx, branchID, year, month, variant)` menghitung **semua** angka satu
+paket dalam satu scope, dan **kedua** builder merender dari struct yang sama. Keduanya tidak bisa
+menyimpang ke rumus berbeda karena keduanya tidak punya rumus berbeda.
+
+Eliminasi di tingkat SQL dilakukan sebagai `(penuh − yang dikecualikan)`, bukan `NOT IN (...)`
+raksasa: footing adalah penjumlahan biasa sehingga pengurangannya eksak, dan sisi "dikecualikan"
+dipecah per 1.000 id. Kedua sisi memakai jendela tanggal dan filter komersial yang sama persis.
 
 ### 12.6 Verifikasi
 
-`internal/integration/turnover_test.go` (MySQL nyata):
-`TestGrossTurnoverCeiling` (plafon menggigit, order dibuang utuh, uang tidak hilang dari
-pembagian) · `TestGrossTurnoverIsCumulativeYearToDate` (Februari terkena plafon **hanya** karena
-Januari dihitung lebih dulu — inti sifat tahunan) · `TestTaxPackageVariantsDiffer` (dua artefak
-`.xlsx` berbeda, nama berkas tidak membocorkan kosakata "layer", varian tak dikenal ditolak).
+`internal/integration/turnover_test.go` (MySQL nyata, 5 test):
+
+- `TestGrossTurnoverCeiling` — plafon menggigit, order dibuang utuh, uang tidak hilang dari pembagian
+- `TestGrossTurnoverIsCumulativeYearToDate` — Februari terkena plafon **hanya** karena Januari dihitung lebih dulu (inti sifat tahunan)
+- `TestGrossTurnoverIncludesLastDayOfMonth` — transaksi hari terakhir bulan tetap terhitung (batas DATETIME)
+- `TestTaxPackageVariantsDiffer` — dua artefak `.xlsx` berbeda, nama berkas tidak membocorkan kosakata "layer", varian tak dikenal ditolak
+- `TestCappedViewIsConsistentEverywhere` — **jaminan intinya**: order yang dikecualikan tidak terhitung di mana pun. Pendapatan turun persis sebesar yang dikecualikan, **HPP ikut turun**, neraca tetap seimbang, neraca saldo tetap balance dan ikut turun, baris PPN ikut tersaring, dan angka laba-rugi cocok dengan kertas kerja plafon.
+
+> Fixture-nya mengambil stok dari **penerimaan barang**, bukan dari penyesuaian stok. Stok hasil
+> penyesuaian tidak berbiaya, sehingga pengirimannya membukukan HPP nol — dengan fixture seperti
+> itu klaim "HPP ikut turun" tidak akan pernah benar-benar teruji.
