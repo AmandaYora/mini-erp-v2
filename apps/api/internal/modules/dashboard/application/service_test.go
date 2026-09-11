@@ -159,6 +159,10 @@ func (f *fakeSales) OrderParties(_ context.Context, _ []int64) (map[int64]int64,
 	return map[int64]int64{}, nil
 }
 
+func (f *fakeSales) SummariesByIDs(_ context.Context, _ []int64) (map[int64]*salescontracts.OrderSummary, error) {
+	return map[int64]*salescontracts.OrderSummary{}, nil
+}
+
 type fakePurchasing struct {
 	statusCalls int
 	statuses    map[string]int64

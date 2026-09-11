@@ -124,3 +124,13 @@ func (s *Service) OrderParties(ctx context.Context, ids []int64) (map[int64]int6
 func trimDate(s string) string {
 	return strings.TrimSpace(s)
 }
+
+// SummariesByIDs resolves many orders to lightweight rows in one read (A3
+// batch shape). Finance labels the gross-turnover working paper with it.
+func (s *Service) SummariesByIDs(ctx context.Context, ids []int64) (map[int64]*contracts.OrderSummary, error) {
+	out, err := s.repo.SummariesByIDs(ctx, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}

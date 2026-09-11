@@ -338,3 +338,36 @@ func nullIfEmpty(s string) any {
 	}
 	return s
 }
+
+// OrderIDsByReturns maps return id -> originating sales order id in one
+// grouped read. Unknown ids are simply absent from the result.
+func (r *Repository) OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	seen := make(map[int64]bool, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		args = append(args, id)
+	}
+	if len(args) == 0 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(args)-1) + "?"
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, sales_order_id FROM sales_returns WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, orderID int64
+		if err := rows.Scan(&id, &orderID); err != nil {
+			return nil, err
+		}
+		out[id] = orderID
+	}
+	return out, rows.Err()
+}

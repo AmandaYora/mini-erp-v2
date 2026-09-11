@@ -217,3 +217,42 @@ func nullIfEmpty(s string) any {
 	}
 	return s
 }
+
+// OrderIDsByPayments maps payment id -> the SALES order ids it settles.
+//
+// Only `sales` allocations are returned. Sales-return allocations point at a
+// return document, and that return is already attributed to its own order by
+// the salesreturn module — following both would attribute one economic
+// transaction twice.
+func (r *Repository) OrderIDsByPayments(ctx context.Context, ids []int64) (map[int64][]int64, error) {
+	out := map[int64][]int64{}
+	seen := make(map[int64]bool, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, contracts.OrderSales)
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		args = append(args, id)
+	}
+	if len(args) == 1 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(args)-2) + "?"
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT payment_id, order_id FROM payment_allocations
+		 WHERE order_type = ? AND payment_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var paymentID, orderID int64
+		if err := rows.Scan(&paymentID, &orderID); err != nil {
+			return nil, err
+		}
+		out[paymentID] = append(out[paymentID], orderID)
+	}
+	return out, rows.Err()
+}

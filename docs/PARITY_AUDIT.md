@@ -688,3 +688,85 @@ Sapuan lanjutan menemukan kasus sejenis pada lokasi stok (`TestLocationBranchSco
 disiapkan. Selama itu belum ada, tidak ada riwayat, diff, atau jalur rollback untuk seluruh repo,
 dan `.gitignore` masih perlu ditambahi `apps/api/storage/` sebelum commit pertama (isinya
 `whatsapp_session.db` — sesi WhatsApp terautentikasi — dan foto produk unggahan pengguna).
+
+---
+
+## 12. Paket Kertas Kerja Pajak — Plafon Peredaran Bruto (2026-09-11)
+
+Legacy punya dua versi ekspor pajak lewat parameter `layer`: `layer 1` = data riil,
+`layer 2` = "Dibatasi Rp4,8 M (simulasi UMKM)". Revamp semula **tidak membawanya** (tercatat
+sebagai keputusan bisnis terbuka, PRD §5 no. 7). Pemilik memutuskan membawanya
+**2026-09-11**, dengan mekanisme yang dirancang ulang — bukan port 1:1.
+
+### 12.1 Tiga koreksi terhadap perilaku legacy
+
+| # | Legacy | Revamp | Alasan |
+|---|---|---|---|
+| 1 | Plafon diterapkan pada **rentang tanggal yang diminta** | **Kumulatif tahun pajak** (1 Jan → akhir bulan diminta) | Rp4,8 M adalah ambang **tahunan** (PP23). Karena paket revamp dicetak per bulan, meniru legacy membuat plafon sebulan praktis tak pernah kena — layer 2 diam-diam identik dengan layer 1 |
+| 2 | Urutan exclusion **acak-stabil `CRC32(id_order)`** | **Kronologis** (tanggal, lalu id) | Untuk plafon berjalan setahun, order yang menembus plafon adalah yang **belakangan**, bukan sampel pseudo-acak yang tidak bisa dijelaskan ke pemeriksa |
+| 3 | Lingkup mengikuti filter laporan | **Selalu seluruh cabang** | PP23 melekat pada **wajib pajak**, bukan cabang. Menjumlahkan plafon per cabang bisa melewati plafon perusahaan tanpa ketahuan |
+
+### 12.2 Yang dipertahankan dari legacy — dan kenapa
+
+Unit yang dibuang adalah **ORDER**, bukan satu jurnal. Satu penjualan tersebar di beberapa entry
+(pendapatan + HPP di SJ, kas + piutang di pembayaran); membuang jurnal pendapatan saja akan
+menyisakan HPP-nya sehingga marjin jadi janggal. Karena yang dibuang jurnal **utuh**
+(debit = kredit), seluruh laporan tetap seimbang. Order yang menembus plafon dibuang
+**seutuhnya**, tidak dipotong pas-plafon — memotong berarti mengarang penjualan yang tidak pernah
+terjadi pada nilai itu.
+
+### 12.3 Tanpa migrasi, tanpa kolom baru
+
+Atribusi jurnal → order **diturunkan saat laporan dibuat**, lewat tiga kontrak batch baru
+(`DeliveryClient.OrderIDsByNotes`, `PaymentClient.OrderIDsByPayments`,
+`SalesReturnClient.OrderIDsByReturns`) plus `SalesOrderClient.SummariesByIDs` untuk pelabelan.
+Tidak ada kolom `order_id` yang didenormalisasi ke `finance_journal_lines`, sehingga:
+
+- tidak ada backfill untuk jurnal lama — data historis langsung ikut terhitung;
+- tidak ada kolom yang bisa **melenceng** dari kenyataan;
+- biaya query **konstan**: satu pembacaan jurnal + maksimal empat pembacaan berkelompok,
+  berapa pun panjang rentangnya. Bukan satu query per order (N+1 yang justru dihindari).
+
+Retur penjualan masuk sebagai pendapatan **negatif**, jadi peredaran bruto otomatis bersih dari
+retur tanpa penanganan khusus.
+
+### 12.4 Batas yang diakui terbuka
+
+Satu entry pembayaran di revamp hanya punya 2 baris (kas + piutang) berapa pun jumlah alokasinya,
+sehingga sebuah pelunasan bisa menyangkut order **di dalam dan di luar** plafon sekaligus.
+Legacy membuang seluruh entry seperti itu — ikut menghapus kas milik order yang masih masuk.
+Revamp memilih sebaliknya: **entry semacam itu dipertahankan**, lalu didaftarkan terbuka di sheet
+*Transaksi Dikecualikan*. Tidak ada pilihan yang eksak di sini; yang bisa dilakukan adalah
+menampakkannya, bukan menyembunyikannya.
+
+### 12.5 Keluaran — dua paket terpisah, satu `.xlsx` masing-masing
+
+Istilah **"Layer 1"/"Layer 2" hanya hidup di level aplikasi** (konstanta `PackageActual` /
+`PackageCapped`, query param `variant`). Istilah itu **tidak pernah muncul** di nama berkas, nama
+sheet, maupun sel mana pun — kertas kerja yang diserahkan ke konsultan pajak harus menjelaskan
+dirinya sendiri, bukan menyebut saklar internal yang hanya bermakna di dalam kode ini.
+
+| | `paket-pajak-YYYY-MM-data-riil.xlsx` | `paket-pajak-YYYY-MM-peredaran-terbatas.xlsx` |
+|---|---|---|
+| Ringkasan | ✅ (PPN, laba komersial & fiskal) | ✅ (plafon, terpakai, sisa, jumlah dikecualikan) |
+| Untung Rugi | ✅ | — |
+| Posisi Harta & Hutang | ✅ | **sengaja tidak ada** |
+| Cek Saldo Akun | ✅ | **sengaja tidak ada** |
+| Peredaran Bruto (per order, kumulatif) | — | ✅ |
+| Transaksi Dikecualikan (+ alasan) | — | ✅ |
+| Rincian PPN | ✅ seluruhnya | ✅ hanya yang di dalam plafon |
+| Rekonsiliasi Fiskal | ✅ | — |
+
+**Kenapa paket terbatas tidak memuat neraca dan neraca saldo.** Begitu transaksi utuh dibuang,
+posisi keuangan tidak lagi menggambarkan keadaan perusahaan yang sebenarnya. Mencetaknya justru
+mengundang pembaca memperlakukan simulasi sebagai posisi nyata. Paket terbatas menjawab satu
+pertanyaan saja — berapa peredaran bruto yang masuk plafon, dan transaksi mana yang keluar — dan
+membawa jejak audit lengkapnya.
+
+### 12.6 Verifikasi
+
+`internal/integration/turnover_test.go` (MySQL nyata):
+`TestGrossTurnoverCeiling` (plafon menggigit, order dibuang utuh, uang tidak hilang dari
+pembagian) · `TestGrossTurnoverIsCumulativeYearToDate` (Februari terkena plafon **hanya** karena
+Januari dihitung lebih dulu — inti sifat tahunan) · `TestTaxPackageVariantsDiffer` (dua artefak
+`.xlsx` berbeda, nama berkas tidak membocorkan kosakata "layer", varian tak dikenal ditolak).

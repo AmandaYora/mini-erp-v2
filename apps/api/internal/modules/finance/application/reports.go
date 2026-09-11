@@ -330,6 +330,11 @@ func (s *Service) TaxSummary(ctx context.Context, branchID int64, year, month in
 
 // TaxDetailRow is one revenue posting for export.
 type TaxDetailRow struct {
+	// EntryID and OrderID make each row traceable back to the journal entry
+	// and the sales order behind it. The gross-turnover working paper needs
+	// both to show only the rows that sit under the ceiling.
+	EntryID          int64  `json:"entryId"`
+	OrderID          int64  `json:"orderId"`
 	Date             string `json:"date"`
 	Number           string `json:"number"`
 	Memo             string `json:"memo"`
@@ -358,16 +363,23 @@ func (s *Service) TaxDetail(ctx context.Context, branchID int64, year, month int
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	invoices := map[int64][2]string{}
-	noteOrders := map[int64]int64{}
-	getSO := func(noteID int64) (string, string) {
-		soID, ok := noteOrders[noteID]
-		if !ok {
-			if note, err := s.delivery.GetByID(ctx, noteID); err == nil && note != nil {
-				soID = note.SalesOrderID
-			}
-			noteOrders[noteID] = soID
+	// Resolve note -> sales order for every delivery entry in ONE read, so
+	// the row loop below never queries per note. The order id is also
+	// carried on each row, which is what lets the gross-turnover working
+	// paper keep only the rows under the ceiling.
+	noteIDs := make([]int64, 0, len(entries))
+	for _, e := range entries {
+		if e.SourceType == SourceDelivery {
+			noteIDs = append(noteIDs, e.SourceID)
 		}
+	}
+	noteOrders, err := s.delivery.OrderIDsByNotes(ctx, noteIDs)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	invoices := map[int64][2]string{}
+	getSO := func(noteID int64) (string, string) {
+		soID := noteOrders[noteID]
 		if soID == 0 {
 			return "", ""
 		}
@@ -389,7 +401,7 @@ func (s *Service) TaxDetail(ctx context.Context, branchID int64, year, month int
 		if err != nil {
 			return nil, apperror.Internal(err)
 		}
-		row := TaxDetailRow{Date: e.Date, Number: e.Number, Memo: e.Memo}
+		row := TaxDetailRow{EntryID: e.ID, OrderID: noteOrders[e.SourceID], Date: e.Date, Number: e.Number, Memo: e.Memo}
 		for _, l := range full.Lines {
 			if rev != nil && l.AccountID == rev.ID {
 				row.Revenue += l.Credit - l.Debit

@@ -62,7 +62,7 @@ export default function TaxDetailPage() {
   );
   const rows = data ?? [];
   const [downloading, setDownloading] = useState(false);
-  const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadingPack, setDownloadingPack] = useState<"actual" | "capped" | null>(null);
 
   function apply(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -81,15 +81,24 @@ export default function TaxDetailPage() {
     }
   }
 
-  async function handleDownloadZip() {
-    setDownloadingZip(true);
+  // Dua paket TERPISAH, bukan satu berkas dengan saklar: isinya berbeda.
+  // "Data riil" membawa pembukuan penuh; "peredaran terbatas" membawa dasar
+  // perhitungan plafon PP23 plus daftar transaksi yang dikecualikan, tanpa
+  // neraca — begitu transaksi dibuang, posisi keuangan tidak lagi
+  // menggambarkan keadaan perusahaan yang sebenarnya.
+  async function handleDownloadPackage(variant: "actual" | "capped") {
+    setDownloadingPack(variant);
     try {
-      await financeReportsService.downloadTaxPackage(year, month);
-      toast.success("Paket pajak diunduh");
+      await financeReportsService.downloadTaxPackage(year, month, variant);
+      toast.success(
+        variant === "capped"
+          ? "Paket peredaran terbatas diunduh"
+          : "Paket data riil diunduh",
+      );
     } catch (err) {
       toast.danger("Gagal mengunduh paket pajak", toApiError(err).message);
     } finally {
-      setDownloadingZip(false);
+      setDownloadingPack(null);
     }
   }
 
@@ -113,10 +122,23 @@ export default function TaxDetailPage() {
                 {downloading ? "Mengunduh…" : "Unduh CSV"}
               </Button>
               <Button
-                onClick={() => void handleDownloadZip()}
-                disabled={downloadingZip}
+                variant="secondary"
+                onClick={() => void handleDownloadPackage("capped")}
+                disabled={downloadingPack !== null}
+                title="Peredaran bruto dibatasi plafon Rp4,8 M per tahun pajak, seluruh cabang"
               >
-                {downloadingZip ? "Mengunduh…" : "Paket Pajak (ZIP)"}
+                {downloadingPack === "capped"
+                  ? "Mengunduh…"
+                  : "Paket Peredaran Terbatas"}
+              </Button>
+              <Button
+                onClick={() => void handleDownloadPackage("actual")}
+                disabled={downloadingPack !== null}
+                title="Pembukuan komersial apa adanya"
+              >
+                {downloadingPack === "actual"
+                  ? "Mengunduh…"
+                  : "Paket Data Riil"}
               </Button>
             </div>
           ) : undefined

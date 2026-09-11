@@ -184,3 +184,40 @@ func (r *Repository) CountMissingTaxInvoice(ctx context.Context, branchID int64)
 		branchID).Scan(&n)
 	return n, err
 }
+
+// SummariesByIDs resolves many orders to lightweight rows in one read.
+// Unknown ids are absent from the result.
+func (r *Repository) SummariesByIDs(ctx context.Context, orderIDs []int64) (map[int64]*contracts.OrderSummary, error) {
+	out := map[int64]*contracts.OrderSummary{}
+	seen := make(map[int64]bool, len(orderIDs))
+	args := make([]any, 0, len(orderIDs))
+	for _, id := range orderIDs {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		args = append(args, id)
+	}
+	if len(args) == 0 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(args)-1) + "?"
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, number, party_id, order_date, due_date, grand_total, status
+		 FROM sales_orders WHERE id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var s contracts.OrderSummary
+		var orderDate, due sql.NullTime
+		if err := rows.Scan(&s.ID, &s.Number, &s.PartyID, &orderDate, &due, &s.GrandTotal, &s.Status); err != nil {
+			return nil, err
+		}
+		s.OrderDate, s.DueDate = formatNullTime(orderDate), formatNullTime(due)
+		row := s
+		out[s.ID] = &row
+	}
+	return out, rows.Err()
+}

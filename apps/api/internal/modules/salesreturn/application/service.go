@@ -907,3 +907,12 @@ func (s *Service) List(ctx context.Context, branchID, soID int64, status string,
 	}
 	return &ListResult{Returns: returns, Total: total}, nil
 }
+
+// OrderIDsByReturns maps return id -> originating sales order id.
+func (s *Service) OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64]int64, error) {
+	out, err := s.repo.OrderIDsByReturns(ctx, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}

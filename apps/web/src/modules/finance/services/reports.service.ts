@@ -47,6 +47,14 @@ import type {
   TrialBalanceReport,
 } from "@/modules/finance/types";
 
+/** Ambil nama berkas dari Content-Disposition supaya server tetap pemilik
+ * penamaan — klien tidak menebak-nebak varian paket. */
+function fileNameFrom(header: unknown): string | null {
+  if (typeof header !== "string") return null;
+  const m = header.match(/filename="([^"]+)"/);
+  return m ? m[1] : null;
+}
+
 export const financeReportsService = {
   trialBalance: (year: number, month: number) =>
     apiGet<TrialBalanceReport>("/api/v1/finance/reports/trial-balance", {
@@ -135,17 +143,32 @@ export const financeReportsService = {
       to,
     }),
 
-  /** Unduh paket pajak — ZIP berisi ringkasan + rincian PPN + rekonsiliasi. */
-  downloadTaxPackage: async (year: number, month: number): Promise<void> => {
+  /**
+   * Unduh paket kertas kerja pajak (.xlsx).
+   *
+   * `variant` adalah saklar tingkat APLIKASI, bukan label dokumen — nama
+   * berkas datang dari server dan menggambarkan isinya sendiri, sehingga
+   * istilah internal tidak pernah sampai ke tangan konsultan pajak.
+   *   "actual" → pembukuan komersial apa adanya
+   *   "capped" → peredaran bruto dibatasi plafon tahunan
+   */
+  downloadTaxPackage: async (
+    year: number,
+    month: number,
+    variant: "actual" | "capped" = "actual",
+  ): Promise<void> => {
     const res = await httpClient.get("/api/v1/finance/export/tax-package", {
-      params: { year, month },
+      params: { year, month, variant },
       responseType: "blob",
     });
-    const blob = new Blob([res.data], { type: "application/zip" });
+    const blob = new Blob([res.data], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `paket-pajak-${year}-${String(month).padStart(2, "0")}.zip`;
+    a.download = fileNameFrom(res.headers["content-disposition"])
+      ?? `paket-pajak-${year}-${String(month).padStart(2, "0")}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();

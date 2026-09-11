@@ -129,6 +129,9 @@ type SalesReturnClient interface {
 	// ListByBranch lists the branch's returns (any status), newest first.
 	// Finance reads it for the derived posting queue (no posting table).
 	ListByBranch(ctx context.Context, branchID int64) ([]*Return, error)
+	// OrderIDsByReturns maps return id -> originating sales order id in one
+	// grouped read, for journal-to-order attribution in finance.
+	OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64]int64, error)
 }
 
 // ReturnsClient is the narrow projection consumed by the payment module.

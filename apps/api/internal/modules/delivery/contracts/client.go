@@ -107,6 +107,11 @@ type DeliveryClient interface {
 	// ListConfirmed lists confirmed notes newest-first, bounded by limit.
 	// Finance reads it for the derived posting queue (no posting table).
 	ListConfirmed(ctx context.Context, branchID int64, limit int) ([]*DeliveryNote, error)
+	// OrderIDsByNotes maps note id -> sales order id in one grouped read.
+	// Finance uses it to attribute journal entries to the economic
+	// transaction behind them; a per-note GetByID loop would be the N+1
+	// this exists to avoid.
+	OrderIDsByNotes(ctx context.Context, ids []int64) (map[int64]int64, error)
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

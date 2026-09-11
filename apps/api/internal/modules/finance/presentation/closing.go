@@ -3,6 +3,7 @@ package presentation
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"mini-erp/internal/modules/finance/application"
 	"mini-erp/internal/shared/apperror"
@@ -240,19 +241,29 @@ func (h *Handler) CashSummary(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Ringkas kas", map[string]any{"rows": rows, "total": total})
 }
 
-// TaxPackage handles GET /api/v1/finance/export/tax-package?year=&month=.
+// TaxPackage handles
+// GET /api/v1/finance/export/tax-package?year=&month=&variant=.
+//
+// variant selects WHICH working paper is produced (default: the actual
+// books). The parameter is an application-level switch — the produced file
+// names itself by its content, never by the switch.
 func (h *Handler) TaxPackage(w http.ResponseWriter, r *http.Request) {
 	year, month, appErr := yearMonth(r)
 	if appErr != nil {
 		response.Fail(w, appErr)
 		return
 	}
-	raw, name, err := h.svc.TaxPackage(r.Context(), branchID(r), year, month)
+	variant := strings.TrimSpace(r.URL.Query().Get("variant"))
+	if variant == "" {
+		variant = application.PackageActual
+	}
+	raw, name, err := h.svc.TaxPackage(r.Context(), branchID(r), year, month, variant)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Type",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)

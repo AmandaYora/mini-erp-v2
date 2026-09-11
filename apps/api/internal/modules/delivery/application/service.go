@@ -648,3 +648,13 @@ func (s *Service) ListConfirmed(ctx context.Context, branchID int64, limit int) 
 	}
 	return res.Notes, nil
 }
+
+// OrderIDsByNotes maps note id -> sales order id in one grouped read.
+// Finance uses it to attribute journal entries to the order behind them.
+func (s *Service) OrderIDsByNotes(ctx context.Context, ids []int64) (map[int64]int64, error) {
+	out, err := s.repo.OrderIDsByNotes(ctx, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}

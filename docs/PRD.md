@@ -96,7 +96,7 @@ terkait mulai didesain.
 | 4 | Product | Harga beli wajib diisi juga saat *update* (bukan cuma saat create)? Upload bulk boleh melewati validasi form? |
 | 5 | Purchasing/Sales | Filter tanggal akhir-hari (`date_to`) diperbaiki agar tidak memotong data hari terakhir? |
 | 6 | Sales/POS | Keranjang POS perlu bertahan (draft) saat halaman refresh? |
-| 7 | Finance | Paket ekspor pajak versi "dibatasi Rp4,8 M" dibawa ke sistem baru? (**konsultasikan ke konsultan pajak** — bukan keputusan teknis) |
+| 7 | Finance | ✅ **Diputuskan pemilik 2026-09-11: dibawa**, dengan mekanisme baru (lihat `PARITY_AUDIT.md` §12). Kapabilitasnya ada; **kebijakan pemakaiannya tetap urusan konsultan pajak** — sistem menyajikan angka, bukan menentukan boleh/tidaknya |
 | 8 | Finance | DPP mana yang benar saat tarif pajak order kosong (nol vs subtotal)? |
 | 9 | Finance | Berapa rentang tanggal terpanjang yang benar-benar dibutuhkan untuk sekali unduh berkas pajak? |
 | 10 | Lintas UI | Bahasa antarmuka: Indonesia sepenuhnya (disarankan), atau campuran seperti sekarang? |

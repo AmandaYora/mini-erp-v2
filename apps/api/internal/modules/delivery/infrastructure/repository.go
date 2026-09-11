@@ -370,3 +370,43 @@ func nullIfZero(v int64) any {
 	}
 	return v
 }
+
+// OrderIDsByNotes maps note id -> sales order id in one grouped read.
+// Unknown ids are simply absent from the result.
+func (r *Repository) OrderIDsByNotes(ctx context.Context, ids []int64) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	args, ok := dedupeIDs(ids)
+	if !ok {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(args)-1) + "?"
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, sales_order_id FROM delivery_notes WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, orderID int64
+		if err := rows.Scan(&id, &orderID); err != nil {
+			return nil, err
+		}
+		out[id] = orderID
+	}
+	return out, rows.Err()
+}
+
+// dedupeIDs drops zero and duplicate ids, returning them as query args.
+// ok is false when nothing is left to ask for — callers skip the query.
+func dedupeIDs(ids []int64) ([]any, bool) {
+	seen := make(map[int64]bool, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		args = append(args, id)
+	}
+	return args, len(args) > 0
+}

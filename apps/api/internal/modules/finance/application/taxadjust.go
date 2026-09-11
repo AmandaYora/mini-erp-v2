@@ -1,13 +1,9 @@
 package application
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"encoding/csv"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
@@ -146,78 +142,4 @@ type FiscalSummaryResult struct {
 	FiscalProfit int64        `json:"fiscalProfit"`
 	From         string       `json:"from"`
 	To           string       `json:"to"`
-}
-
-// TaxPackage bundles the month's tax working papers as a ZIP: PPN summary,
-// PPN detail (SPT working paper), and the fiscal worksheet. Deliberately no
-// Rp4,8 M threshold logic (PRD §5 no. 7, open business decision) — the
-// package carries the numbers, policy stays with the tax consultant.
-func (s *Service) TaxPackage(ctx context.Context, branchID int64, year, month int) ([]byte, string, error) {
-	if !validYearMonth(year, month) {
-		return nil, "", apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
-	}
-	sum, err := s.TaxSummary(ctx, branchID, year, month)
-	if err != nil {
-		return nil, "", err
-	}
-	detail, err := s.TaxDetail(ctx, branchID, year, month)
-	if err != nil {
-		return nil, "", err
-	}
-	start, end := monthStart(year, month)[:10], monthEnd(year, month)[:10]
-	fiscal, err := s.FiscalSummary(ctx, branchID, start, end)
-	if err != nil {
-		return nil, "", err
-	}
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	writeCSV := func(name string, header []string, rows [][]string) error {
-		w, err := zw.Create(name)
-		if err != nil {
-			return err
-		}
-		cw := csv.NewWriter(w)
-		if err := cw.Write(header); err != nil {
-			return err
-		}
-		for _, r := range rows {
-			if err := cw.Write(r); err != nil {
-				return err
-			}
-		}
-		cw.Flush()
-		return cw.Error()
-	}
-	if err := writeCSV("ringkasan-ppn.csv",
-		[]string{"tahun", "bulan", "ppn_keluaran", "ppn_masukan", "kurang_bayar"},
-		[][]string{{strconv.Itoa(year), strconv.Itoa(month),
-			strconv.FormatInt(sum.PpnOut, 10), strconv.FormatInt(sum.PpnIn, 10),
-			strconv.FormatInt(sum.Payable, 10)}}); err != nil {
-		return nil, "", apperror.Internal(err)
-	}
-	det := make([][]string, 0, len(detail))
-	for _, r := range detail {
-		det = append(det, []string{r.Date, r.Number, r.Memo, r.TaxInvoiceNumber, r.TaxInvoiceDate,
-			strconv.FormatInt(r.Revenue, 10), strconv.FormatInt(r.Ppn, 10)})
-	}
-	if err := writeCSV("rincian-ppn.csv",
-		[]string{"tanggal", "nomor", "keterangan", "no_faktur", "tgl_faktur", "omzet", "ppn"}, det); err != nil {
-		return nil, "", apperror.Internal(err)
-	}
-	fis := make([][]string, 0, len(fiscal.Lines)+1)
-	fis = append(fis, []string{"KOMERSIL", "", "", "", strconv.FormatInt(fiscal.Commercial.Profit, 10)})
-	for _, l := range fiscal.Lines {
-		fis = append(fis, []string{l.Code, l.Name, l.Type,
-			strconv.FormatInt(l.Debit, 10), strconv.FormatInt(l.Effect, 10)})
-	}
-	fis = append(fis, []string{"FISKAL", "", "", "", strconv.FormatInt(fiscal.FiscalProfit, 10)})
-	if err := writeCSV("rekonsiliasi-fiskal.csv",
-		[]string{"kode", "akun", "tipe", "nominal", "efek_laba"}, fis); err != nil {
-		return nil, "", apperror.Internal(err)
-	}
-	if err := zw.Close(); err != nil {
-		return nil, "", apperror.Internal(err)
-	}
-	name := fmt.Sprintf("paket-pajak-%04d-%02d.zip", year, month)
-	return buf.Bytes(), name, nil
 }

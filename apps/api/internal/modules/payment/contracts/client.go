@@ -84,6 +84,10 @@ type PaymentClient interface {
 	// ListActive lists active payments newest-first, bounded by limit.
 	// Finance reads it for the derived posting queue (no posting table).
 	ListActive(ctx context.Context, branchID int64, limit int) ([]*Payment, error)
+	// OrderIDsByPayments maps payment id -> the sales order ids it settles,
+	// in one grouped read. A payment may settle SEVERAL orders, so the
+	// value is a slice: callers must not assume one order per payment.
+	OrderIDsByPayments(ctx context.Context, ids []int64) (map[int64][]int64, error)
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

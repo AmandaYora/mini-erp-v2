@@ -91,6 +91,10 @@ type SalesOrderClient interface {
 	// OrderParties maps order ids to their party ids in one grouped read
 	// (A3) for balance computation over many returns. Unknown ids absent.
 	OrderParties(ctx context.Context, ids []int64) (map[int64]int64, error)
+	// SummariesByIDs resolves many orders to lightweight rows in one read.
+	// Finance uses it to label the gross-turnover working paper without a
+	// GetByID per order. Unknown ids are absent.
+	SummariesByIDs(ctx context.Context, ids []int64) (map[int64]*OrderSummary, error)
 }
 
 // OrderSummary is a lightweight document row for balance computation
