@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS finance_inventory_cost_movements;
+DROP TABLE IF EXISTS business_expenses;
+DROP TABLE IF EXISTS finance_tax_report_snapshots;
+DROP TABLE IF EXISTS finance_tax_periods;
+DROP TABLE IF EXISTS finance_journal_lines;
+DROP TABLE IF EXISTS finance_journal_entries;
+DROP TABLE IF EXISTS finance_document_sequences;
+DROP TABLE IF EXISTS finance_periods;
+DROP TABLE IF EXISTS finance_account_mappings;
+DROP TABLE IF EXISTS finance_accounts;

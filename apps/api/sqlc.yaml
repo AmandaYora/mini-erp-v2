@@ -1,0 +1,135 @@
+version: "2"
+sql:
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/audit/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/audit/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/auth/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/auth/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/branch/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/branch/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/company/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/company/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/dashboard/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/dashboard/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/delivery/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/delivery/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/finance/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/finance/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/goodsreceipt/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/goodsreceipt/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/media/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/media/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/party/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/party/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/payment/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/payment/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/product/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/product/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/purchasereturn/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/purchasereturn/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/purchasing/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/purchasing/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/reporting/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/reporting/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/sales/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/sales/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/salesreturn/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/salesreturn/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/stock/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/stock/infrastructure/sqlc"
+  - engine: "mysql"
+    schema: "migrations"
+    queries: "internal/modules/user/infrastructure/queries"
+    gen:
+      go:
+        package: "sqlc"
+        out: "internal/modules/user/infrastructure/sqlc"

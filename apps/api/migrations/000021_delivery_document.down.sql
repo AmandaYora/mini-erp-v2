@@ -1,0 +1,12 @@
+ALTER TABLE delivery_notes
+  DROP COLUMN confirmed_by,
+  DROP COLUMN confirmed_at,
+  DROP COLUMN dispatched_by,
+  DROP COLUMN dispatched_at,
+  DROP COLUMN drop_location_note,
+  DROP COLUMN recipient_signature_missing_reason,
+  DROP COLUMN recipient_signature_status,
+  DROP COLUMN recipient_name,
+  DROP COLUMN warehouse_staff_name,
+  DROP COLUMN vehicle_plate,
+  DROP COLUMN driver_name;

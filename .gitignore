@@ -1,0 +1,40 @@
+# --- Dependencies & build output ---
+node_modules/
+dist/
+build/
+coverage/
+tmp/
+/dist/api
+apps/api/tmp/
+apps/web/dist/
+
+# --- Rahasia ---
+# .env memuat JWT_SECRET dan kunci object storage. .env.example (tanpa nilai
+# rahasia) sengaja TIDAK diabaikan supaya orang lain tahu variabel apa saja
+# yang dibutuhkan.
+.env
+.env.*
+!.env.example
+*.local
+
+# --- Data runtime, bukan kode ---
+# apps/api/storage/ diisi saat aplikasi berjalan:
+#   - whatsapp_session.db  → sesi WhatsApp yang SUDAH terautentikasi. Bocor =
+#     siapa pun bisa mengirim pesan sebagai nomor bisnis itu.
+#   - product/, payment/, delivery/ → berkas unggahan pengguna.
+# Tidak satu pun boleh masuk version control.
+apps/api/storage/
+uploads/
+
+# --- Log & artefak lokal ---
+*.log
+npm-debug.log*
+*.test
+*.out
+
+# --- Editor & OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,22 @@
+{
+  "name": "mini-erp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "mini-erp — monorepo (Dimas standard)",
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "cd apps/api && air",
+    "build:web": "npm run build -w apps/web",
+    "build:api": "cd apps/api && go build -o ../../dist/api ./cmd/server",
+    "migrate:up": "node scripts/migrate.mjs up",
+    "migrate:down": "node scripts/migrate.mjs down 1",
+    "migrate:create": "cd apps/api && migrate create -ext sql -dir migrations -seq",
+    "sqlc:generate": "cd apps/api && sqlc generate",
+    "arch:check": "node scripts/arch-check.mjs",
+    "verify": "cd apps/api && go build ./... && go vet ./... && go test ./... && cd ../web && npx tsc --noEmit && npm run lint && npm run test && cd ../.. && node scripts/arch-check.mjs"
+  }
+}
