@@ -12,7 +12,7 @@ punya ID, setiap ID punya kriteria terima, uji, dan **bukti**. Dokumen ini boleh
 
 ## CHECKPOINT — PROGRAM SELESAI, 2026-10-20 (BACA INI DULU SAAT MELANJUTKAN)
 
-**Posisi:** 95 dari 96 tugas tercentang (`npm run plan:check`); **nol tugas terbuka**, satu terblokir: **G-02** (cabang kerja + satu commit per tugas — lihat bawah).
+**Posisi:** 96 dari 96 tugas tercentang (`npm run plan:check`); **nol tugas terbuka, nol terblokir**. G-02 ditutup dengan 5 commit per area di cabang `feat/paritas-gelombang-1-3` (lihat §7).
 Gelombang 1, 2, 3, Fase 4 dan Z-01 (audit ulang penutup) selesai. Tabel penutupan ada di §10; arsip audit per butir di `AUDIT-Z01.md` (folder ini).
 
 **Gerbang akhir (gabungan run 2026-10-19/20 pada kode final):** integrasi Go penuh lulus (`node scripts/verify.mjs`; satu tes dashboard yang bergantung jam UTC-vs-Jakarta
@@ -21,8 +21,7 @@ e2e penuh 87 lulus / 2 dilewati (dua `test.fixme` lama K1/K2) / 0 gagal. Catatan
 `node scripts/verify.mjs && npm run test:e2e` pada pohon yang bersih. Batas waktu vitest dinaikkan ke 20 dtk (`apps/web/vitest.config.ts`) karena tes jsdom berat timeout 5 dtk saat paralel.
 
 **Yang BELUM selesai / perlu dikerjakan pemilik (di luar kemampuan program ini):**
-1. **G-02 / baseline commit:** pohon kerja punya ±489 berkas berubah yang belum di-commit sejak sebelum program, ditambah seluruh pekerjaan program ini; git menolak repo ("dubious ownership":
-   `git config --global --add safe.directory H:/dimasprasetio/SAAS/mini-erp-revamp`). Putuskan cara meng-commit (disarankan: satu commit baseline "paritas gelombang 1-3", atau pecah per area), lalu tetapkan cabang kerja.
+1. **Review & merge cabang `feat/paritas-gelombang-1-3`** (5 commit per area; belum di-push). Bila git menolak repo ("dubious ownership"): `git config --global --add safe.directory H:/dimasprasetio/SAAS/mini-erp-revamp`.
 2. **Konfirmasi akuntan/pemilik atas keputusan default (ADR-0018 dan §7):** arah Dr/Cr reklasifikasi saldo kredit retur (K-04a) dan jurnal pemakaian uang muka (N-41, sumber posting `payment`);
    asumsi usaha PKP (D4); D1 (Knowledge/RAG tetap dibuang); PR-08 (kolom inline impor produk → error, bukan migrasi otomatis); retur beli dibandingkan dengan tanggal terima paling awal; pesan WhatsApp masuk tetap company-wide (AS-01).
 3. **Tahap produksi (bukan bagian PLAN ini):** ETL produksi (Tahap K), gladi cutover (Tahap L), verifikasi cetak fisik (Surat Transfer Barang, struk), bangun ulang APK `POS_URL` bila domain berubah (RUNBOOK §5c).
@@ -99,12 +98,12 @@ Pelaksana **tidak boleh menunggu**: kerjakan *default*, catat di §7, dan tandai
   - Terima: semua hijau; angka baseline (jumlah test, ratchet) tercatat.
   - Uji: —
   - Bukti: Baseline (tercatat setelah K-01..K-06, bukan murni sebelum): verify.mjs Go penuh hijau (integrasi 1564-1658s), vitest 109 file/626 test, ui-ratchet total={arbitrary:1,loadingText:1,rawTable:0,rawInput:0,linkButton:0,segmented:0,hex:0}, e2e 53 spec (51 lulus, 2 skip). Satu-satunya kegagalan baseline murni: arch-check rule D pada http-abort.test.ts (diperbaiki, §7)
-- [~] **G-02** — Cabang kerja & disiplin commit
+- [x] **G-02** — Cabang kerja & disiplin commit
   - Sumber: protokol §0
   - Aksi: kerjakan di cabang `feat/paritas-gelombang-N`; satu commit per ID tugas (`feat(K-01): …`); jangan menyentuh berkas di luar scope tugas.
   - Terima: riwayat git memetakan commit ↔ ID tugas.
   - Uji: —
-  - Bukti: Tidak terpenuhi: bukti memakai nama test + perintah, bukan commit
+  - Bukti: Cabang feat/paritas-gelombang-1-3 (dari main 78a15f9) dengan 5 commit per area, tiap pesan memuat daftar ID tugas yang disentuh: 7721dae (api), ecdd398 (web), 6e50883 (e2e+CI), 1f07af1 (tooling), 705c4b9 (docs). PENYIMPANGAN dari 'satu commit per ID': pohon kerja sudah memuat ±489 berkas perubahan lokal sebelum program dan perubahan program tercampur di berkas yang sama, jadi dikelompokkan per area, bukan per ID (dicatat §7). Tidak ada push.
   - Blokir: Repo punya ±489 file berubah belum di-commit sejak sebelum program ini dan git menolak repo (dubious ownership); satu commit per ID akan mencampur perubahan lama. Dibutuhkan: pemilik meng-commit/menyelesaikan baseline lalu menetapkan cabang kerja.
 
 ---
@@ -751,6 +750,7 @@ Format: `- [ ] **N-01** — judul` + Sumber/Aksi/Terima/Uji/Bukti seperti tugas 
 | 2026-10-19 | RT-03 | Supir dan petugas gudang wajib pada SJ pengganti (validasi di `delivery.CreateReplacement`), kecuali setting `delivery_require_evidence=false`; tukar POS di konter dikecualikan. | Konsisten dengan SJ biasa dan legacy. | Claude (RT-03) |
 | 2026-10-19 | PO-03 | Faktur pajak PO disimpan terpisah (`tax_invoice_*`); PPN Masukan tetap memakai `supplier_invoice_number/date` (sama seperti laporan pajak legacy). Penanggung jawab divalidasi: user aktif ber-akses cabang. Tarif pajak per baris (`items[].taxRate`) menimpa tarif order hanya bila order kena pajak; disimpan sebagai snapshot `tax_rate` baris. Kolom baru lewat migrasi `000022_purchasing_tax_invoice`. | Paritas legacy tanpa mengubah laporan FN-04. | Claude (PO-03) |
 | | | | | |
+| 2026-10-20 | G-02 | Ditutup dengan 5 commit per area di cabang `feat/paritas-gelombang-1-3` (bukan satu commit per ID); tidak di-push | Perubahan program tercampur dengan ±489 berkas lokal yang belum ter-commit di berkas yang sama; per-ID tidak dapat dipisah secara jujur. Pemetaan ID tugas ada di badan tiap pesan commit | Claude (atas permintaan pemilik) |
 | 2026-10-20 | Z-01 / penutup | Program dinyatakan selesai: 95/96 tugas ✔, G-02 terblokir (menunggu baseline commit pemilik). Gerbang akhir dijalankan terpisah (Go penuh, web, e2e) karena mesin sibuk dan satu run berantai mati di tengah; tes dashboard bergantung-jam diperbaiki; vitest testTimeout 5→20 dtk | Hasil hijau pada kode final; saran: satu run bersih gabungan sebelum rilis | Claude |
 | 2026-10-19 | Gelombang 2 | Gerbang Gelombang 2 dinyatakan selesai: verify.mjs HIJAU + e2e 52 lulus/2 skip/0 gagal pada kode final (termasuk N-42). Agen mencentang tugasnya sendiri; pemilik sesi menjalankan gerbang dan menyesuaikan 5 tes lama | Protokol §0 butir 9 | Claude |
 | 2026-10-19 | PY-01 | Daftar pihak berpiutang/berhutang dihitung dari dokumen order tanpa menetto retur; label pihak hanya kode+nama (tanpa HP) | Menjaga satu grup query alokasi per halaman (tanpa N+1); retur dinetto di layar detail pihak (`party-balances`) | Claude (agen stok) |
