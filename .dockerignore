@@ -3,6 +3,12 @@ node_modules
 dist
 build
 tmp
+apps/api/storage
+apps/api/tmp
+.github
+analysis
+docs
+knowledge
 .git
-.env
+.env*
 *.md

@@ -1,10 +1,50 @@
+# F6-2: satu container app, database di host (standar Dimas). Proxy TLS di host,
+# bukan di compose (lihat infra/nginx/nginx.conf sebagai templat host).
 services:
   app:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile
+      args:
+        VERSION: ${APP_VERSION:-dev}
+    image: mini-erp:${APP_VERSION:-dev}
+    restart: unless-stopped
+    env_file:
+      - .env
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Bind mount agar mudah di-backup; berisi media/ (disajikan) + _private/
+      # (sesi WA, tak disajikan). Pemilik host harus 10001 (chown saat setup).
+      - ./data/storage:/data/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - "no-new-privileges:true"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  migrate:
+    image: mini-erp:${APP_VERSION:-dev}
+    profiles: ["ops"]
+    entrypoint: ["migrate", "-path", "/app/migrations", "-database", "mysql://${DB_DSN}"]
+    command: ["up"]
     env_file:
       - .env
     extra_hosts:

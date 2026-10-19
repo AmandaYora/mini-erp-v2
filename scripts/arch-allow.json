@@ -1,0 +1,215 @@
+{
+  "_comment": "Known, reasoned exceptions to scripts/arch-check rules (F8-15). Each entry needs a reason; a stale entry fails arch-check so this list only shrinks.",
+  "allow": [
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/auth/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/company/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/delivery/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/finance/application/expenses.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/finance/application/opening_inventory.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary (K-05): the completion journal and its cost-only ledger rows co-commit with the audit row inside the repository's CreateEntry hook, which receives *sql.Tx (ADR-0011). Removed with posting.go when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/finance/application/posting.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/finance/application/readiness.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/finance/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/finance/presentation/handler.go",
+      "match": "presentation must not import infrastructure",
+      "reason": "The service returns infrastructure row types (Expense/Transfer/EntryFilter) that the handler renders. Fixed by moving them to contracts during the sqlc migration of this module (F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/media/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/payment/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/purchasereturn/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/salesreturn/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/stock/application/movelocation.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/stock/application/opening.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/stock/application/post.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/stock/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/stock/application/transactions.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/stock/presentation/handler.go",
+      "match": "presentation must not import infrastructure",
+      "reason": "The service returns infrastructure row types (Expense/Transfer/EntryFilter) that the handler renders. Fixed by moving them to contracts during the sqlc migration of this module (F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/user/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
+      "file": "apps/api/internal/modules/user/domain/permissions.go",
+      "match": "domain may import only stdlib, own domain, shared/money|timeutil (mini-erp/internal/modules/user/contracts)",
+      "reason": "domain/permissions.go aggregates the module's OWN contracts.PermissionCatalog for the seed (F1-6); same-module, no cross-module reach."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/assistant/assistant.module.go",
+      "match": "SetContext",
+      "reason": "Lifecycle, not wiring: binds the bot's long-lived goroutines to the application context before Boot (F8-17)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/audit/audit.module.go",
+      "match": "SetNameResolvers",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/delivery/delivery.module.go",
+      "match": "SetPayments",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/goodsreceipt/goodsreceipt.module.go",
+      "match": "SetPayments",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/payment/payment.module.go",
+      "match": "SetReverser",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/product/product.module.go",
+      "match": "SetStockState",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/purchasereturn/purchasereturn.module.go",
+      "match": "SetPayments",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/purchasereturn/purchasereturn.module.go",
+      "match": "SetReverser",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/purchasing/purchasing.module.go",
+      "match": "SetDependents",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/sales/sales.module.go",
+      "match": "SetDependents",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/salesreturn/salesreturn.module.go",
+      "match": "SetPayments",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/salesreturn/salesreturn.module.go",
+      "match": "SetCosts",
+      "reason": "Genuine construction cycle: finance (cost ledger) is built after salesreturn because it reads salesreturn contracts; closed by Wire and asserted by Modules.Verify."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/salesreturn/salesreturn.module.go",
+      "match": "SetReverser",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "S",
+      "file": "apps/api/internal/modules",
+      "match": "module dependency cycle: delivery,finance,goodsreceipt,payment,purchasereturn,purchasing,sales,salesreturn",
+      "reason": "Known cycle through late-bound edges: payment<->returns, delivery/goodsreceipt->payment, orders<->dependents, finance reverser (documented in bootstrap/wire.go, asserted by Modules.Verify). The exact member list is matched, so a new member or a split fails the check."
+    }
+  ]
+}

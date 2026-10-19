@@ -1,0 +1,65 @@
+{
+  "_comment": "Hand-written SQL allowed by ADR-0012 (rule R). Each entry: file, reason, adr, review date.",
+  "allow": [
+    {
+      "file": "apps/api/internal/modules/branch/infrastructure/search_raw.go",
+      "reason": "Branch list/count filter ANDs one (code|name|city LIKE) group per whitespace-separated search word: the number of conditions is variable, sqlc.narg/slice cannot express it. Covered by TestSqlcBranchListCount.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/payment/infrastructure/listfilter.go",
+      "reason": "Payment ListFiltered/CountFiltered: dynamic filter (variable-arity search words, optional party-id IN-list OR-ed with the text match, optional date range and allocation sub-select) built once by listquery so list and count cannot drift; sqlc.narg/slice cannot express a per-word condition list. Covered by TestSqlcPaymentListFiltered and TestF3aPaymentListFilters.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/purchasing/infrastructure/list_raw.go",
+      "reason": "Purchase order List/ListAfter/Count: variable-arity search (one LIKE per word OR-ed with an IN of caller-resolved supplier ids) and a whitelisted dynamic ORDER BY; sqlc.narg/slice cannot express either. Filter is built once by listquery so list, count and export cannot drift. Covered by TestSqlcPurchasingListFilters and TestF3aSalesOrderListFilters-style list tests.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/product/infrastructure/search_raw.go",
+      "reason": "Product ListProducts/CountProducts: one (code|name LIKE) group per whitespace-separated search word ANDed with optional status/type/tracked/category filters; the number of conditions follows the word count, sqlc.narg/slice cannot express it. Filter built once so list and count cannot drift. Covered by TestSqlcProductListCount.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/party/infrastructure/search_raw.go",
+      "reason": "Party ListParties/CountParties/SearchIDs/ListMemberTypes: variable-arity per-word LIKE filter built once by listquery (code|name|phone|email|address) so list, count and search cannot drift; sqlc.narg/slice cannot express a per-word condition list. Covered by TestSqlcParty* characterization tests.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/sales/infrastructure/list_raw.go",
+      "reason": "Sales order List/ListAfter/Count: variable-arity search (one LIKE per word OR-ed with an IN of caller-resolved party ids) and a whitelisted dynamic ORDER BY; sqlc.narg/slice cannot express either. Filter built once by listquery so list, count and export cannot drift. Covered by TestSqlcSales* and TestF3aOrdersList.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/purchasereturn/infrastructure/listfilter.go",
+      "reason": "Purchase return ListFiltered/CountFiltered: variable-arity search (one (number|notes LIKE) group per whitespace-separated search word) plus optional status CSV, PO id and return-date range; sqlc.narg/slice cannot express a per-word condition list. Filter is built once by listquery so list and count cannot drift. Covered by TestSqlcPurchaseReturnLists.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/salesreturn/infrastructure/listfilter.go",
+      "reason": "Sales return ListFiltered/CountFiltered: variable-arity search (one (number|notes LIKE) group per whitespace-separated search word) plus optional status CSV, SO id and return-date range; sqlc.narg/slice cannot express a per-word condition list. Filter is built once by listquery so list and count cannot drift. Covered by TestSqlcSalesReturnListsAndReports.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/delivery/infrastructure/listfilter.go",
+      "reason": "Delivery ListFiltered/CountFiltered/WaitingReturn: variable-arity search (one (number|recipient|driver|plate LIKE) group per whitespace-separated search word) plus optional status CSV, order/return ids, kind, date range and a 4-way age-band switch; sqlc.narg/slice cannot express either. WaitingReturn stays sargable on (branch,status,kind,date). Covered by TestSqlcDeliveryLists.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    },
+    {
+      "file": "apps/api/internal/modules/user/infrastructure/list_raw.go",
+      "reason": "User ListUsers/CountUsers: one (username|full_name|email LIKE) group per whitespace-separated search word plus an optional reserved-holder NOT EXISTS exclusion; the condition count follows the word count, sqlc.narg/slice cannot express it. Same builder shape for list and count so they cannot drift. Covered by TestSqlcUserList.",
+      "adr": "knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md",
+      "review": "2027-04-11"
+    }
+  ]
+}

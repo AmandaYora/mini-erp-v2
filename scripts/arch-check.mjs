@@ -1,116 +1,53 @@
 #!/usr/bin/env node
-// Architecture guardrails for the Go modular monolith (PRD §6 poin 9).
-// Fails (exit 1) on the first violated rule, listing every offending site.
+// Architecture guardrails for the Go modular monolith (PRD §6 poin 9, F8-15).
+// Exit 1 when any rule is violated; every offending site is listed.
 //
 // Rules:
-//   A. contracts-only boundary — a .go file inside internal/modules/<m>/ may only
-//      import another module's `contracts/` package. Same-module imports are free,
-//      as are shared/, config/, database/, router/, server/.
-//   B. single-tenant takeout (ADR-0009) — `company_id`, `companyId`, `idCompany`
-//      must not appear anywhere under apps/api (docs may discuss legacy).
-//   C. per-module sqlc — every `sql:` block in sqlc.yaml must read queries from
-//      and write generated code to the SAME module's infrastructure/ dir, so no
-//      module can import another module's generated queries.
-//   D. single HTTP client — `axios` may only be imported by
-//      apps/web/src/shared/services/http-client.ts.
+//   A  contracts-only boundary: a module (and anything outside the composition
+//      roots) may import another module only through its `contracts/` package;
+//      the bare module-root package is not public either (A').
+//   B  single-tenant takeout (ADR-0009): no company_id/companyId/idCompany tokens.
+//   C  per-module sqlc: sqlc.yaml has one block per SQL-owning module whose
+//      schema is exactly that module's baseline migration(s); modules marked
+//      "migrated" in scripts/sqlc-migration-status.json must have queries and
+//      generated sqlc/db.go; "pending" ones must not (so the status ratchets).
+//   D  single HTTP client: axios only inside shared/services/http-client.ts.
+//   E  layer direction: domain<-(stdlib, shared/money|timeutil only);
+//      infrastructure !-> application|presentation; application !-> presentation
+//      and database/sql; presentation !-> infrastructure; shared !-> modules.
+//   F  no cross-module FOREIGN KEY in migrations.
+//   K  contracts/ never import application|infrastructure|presentation|domain.
+//   M  the {"success": envelope literal lives only in shared/response.
+//   P  single money kernel (ADR-0010): lineEconomics|CalcLine|prorate only in shared/money.
+//   R  no raw QueryContext/ExecContext/... in sqlc-migrated modules (allow-list
+//      scripts/raw-sql-allow.json).
+//   S  the module dependency graph (auth/user/audit ignored) is acyclic.
+//   T  table ownership: a module's SQL may only name tables created by its own
+//      baseline migration (000NNN_<module>.up.sql).
+//   W  no Set* methods on a module's Module type (late-bound wiring).
 //
-// Usage: node scripts/arch-check.mjs [repo-root]   (default: repo root)
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { join, sep, dirname } from "node:path";
+// Known exceptions live in scripts/arch-allow.json (each needs a reason; a
+// stale entry fails the check, so the list only shrinks).
+//
+// Usage: node scripts/arch-check.mjs [repo-root]
+//        node scripts/arch-check.mjs --self-test   (proves every rule fires on fixtures)
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkRepo } from "./arch-check/lib.mjs";
+import { runSelfTest } from "./arch-check/self-test.mjs";
 
-const ROOT = process.argv[2] ?? dirname(dirname(fileURLToPath(import.meta.url)));
-const API = join(ROOT, "apps/api");
-const WEB = join(ROOT, "apps/web");
-const MODULES = join(API, "internal/modules");
-
-let failures = 0;
-function bad(rule, file, detail) {
-  process.stdout.write(`  ✗ [${rule}] ${file}${detail ? ` — ${detail}` : ""}\n`);
-  failures++;
+const args = process.argv.slice(2);
+if (args.includes("--self-test")) {
+  const { failed, total } = await runSelfTest((l) => process.stdout.write(l + "\n"));
+  process.stdout.write(failed ? `\narch-check self-test: ${failed}/${total} FAILED.\n` : `arch-check self-test: OK (${total} cases).\n`);
+  process.exit(failed ? 1 : 0);
 }
 
-function walk(dir, out = []) {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e);
-    if (statSync(p).isDirectory()) out = walk(p, out);
-    else out.push(p);
-  }
-  return out;
-}
-
-// --- Rule A: contracts-only imports ---------------------------------------
-if (existsSync(MODULES)) {
-  const mods = readdirSync(MODULES).filter((m) => statSync(join(MODULES, m)).isDirectory());
-  for (const f of walk(MODULES).filter((f) => f.endsWith(".go"))) {
-    const rel = f.split(`internal${sep}modules${sep}`)[1] ?? "";
-    const own = rel.split(sep)[0];
-    const src = readFileSync(f, "utf8");
-    for (const m of mods) {
-      if (m === own) continue;
-      // import of another module that is NOT its contracts/ package
-      const re = new RegExp(`mini-erp/internal/modules/${m}/(?!contracts[/"\\s])([a-zA-Z0-9_/]*)`, "g");
-      let hit;
-      while ((hit = re.exec(src)) !== null) {
-        bad("A", f, `imports ${m}/${hit[1] || "(root)"} instead of ${m}/contracts`);
-      }
-    }
-  }
-}
-
-// --- Rule B: no tenancy leftovers in code -----------------------------------
-// Comments are stripped first: discussing the takeout (e.g. "tanpa
-// company_id (ADR-0009)") must not trip the guard — only real code counts.
-function stripComments(src, isGo) {
-  let out = src.replace(/\/\*[\s\S]*?\*\//g, "");
-  const marker = isGo ? "//" : "--";
-  return out
-    .split("\n")
-    .map((line) => {
-      const idx = line.indexOf(marker);
-      return idx === -1 ? line : line.slice(0, idx);
-    })
-    .join("\n");
-}
-
-if (existsSync(API)) {
-  for (const f of walk(API).filter((f) => /\.(go|sql)$/.test(f))) {
-    const src = stripComments(readFileSync(f, "utf8"), f.endsWith(".go"));
-    for (const pat of ["company_id", "companyId", "idCompany", "id_company"]) {
-      if (src.includes(pat)) bad("B", f, `contains forbidden tenancy token \`${pat}\``);
-    }
-  }
-}
-
-// --- Rule C: per-module sqlc -----------------------------------------------
-{
-  const yaml = readFileSync(join(API, "sqlc.yaml"), "utf8");
-  const queries = [...yaml.matchAll(/queries:\s*"([^"]+)"/g)].map((m) => m[1]);
-  const outs = [...yaml.matchAll(/out:\s*"([^"]+)"/g)].map((m) => m[1]);
-  if (queries.length !== outs.length || queries.length === 0) {
-    bad("C", "apps/api/sqlc.yaml", "queries/blocks mismatch or empty");
-  } else {
-    queries.forEach((q, i) => {
-      const qm = (q.match(/internal\/modules\/([^/]+)\/infrastructure\/queries/) || [])[1];
-      const om = (outs[i].match(/internal\/modules\/([^/]+)\/infrastructure\/sqlc/) || [])[1];
-      if (!qm || !om || qm !== om) bad("C", "apps/api/sqlc.yaml", `block ${i}: queries=${q} out=${outs[i]}`);
-    });
-  }
-}
-
-// --- Rule D: single axios import --------------------------------------------
-if (existsSync(WEB)) {
-  for (const f of walk(join(WEB, "src")).filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))) {
-    if (f.endsWith(join("shared", "services", "http-client.ts"))) continue;
-    const src = readFileSync(f, "utf8");
-    if (/from\s+["']axios["']|require\(["']axios["']\)/.test(src)) {
-      bad("D", f, "imports axios directly — use shared/services/http-client.ts");
-    }
-  }
-}
-
-if (failures > 0) {
-  process.stdout.write(`\narch-check: ${failures} violation(s).\n`);
+const ROOT = resolve(args.find((a) => !a.startsWith("--")) ?? dirname(dirname(fileURLToPath(import.meta.url))));
+const violations = checkRepo(ROOT);
+for (const x of violations) process.stdout.write(`  ✗ [${x.rule}] ${x.file}${x.detail ? ` — ${x.detail}` : ""}\n`);
+if (violations.length > 0) {
+  process.stdout.write(`\narch-check: ${violations.length} violation(s).\n`);
   process.exit(1);
 }
-process.stdout.write("arch-check: OK (A contracts-only, B no-tenancy, C per-module sqlc, D single http-client).\n");
+process.stdout.write("arch-check: OK (A contracts-only, B no-tenancy, C sqlc, D http-client, E layers, F no cross-FK, K contracts leak, M envelope, P money, R raw SQL, S acyclic, T table ownership, W no setters).\n");

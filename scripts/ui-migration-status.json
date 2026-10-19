@@ -1,0 +1,221 @@
+{
+  "note": "Dihasilkan scripts/ui-ratchet.mjs. Angka hanya boleh turun.",
+  "total": {
+    "arbitrary": 1,
+    "loadingText": 1,
+    "rawTable": 0,
+    "rawInput": 0,
+    "linkButton": 0,
+    "segmented": 0,
+    "hex": 0
+  },
+  "scopes": {
+    "app": {
+      "arbitrary": 1,
+      "loadingText": 1,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "assistant": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "audit": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "auth": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "branches": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "company": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "dashboard": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "delivery": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "finance": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "goodsreceipt": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "ops": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "party": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "payment": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "pos": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "products": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "purchasereturn": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "purchasing": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "reporting": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "sales": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "salesreturn": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "shared": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "stock": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    },
+    "users": {
+      "arbitrary": 0,
+      "loadingText": 0,
+      "rawTable": 0,
+      "rawInput": 0,
+      "linkButton": 0,
+      "segmented": 0,
+      "hex": 0
+    }
+  }
+}

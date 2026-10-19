@@ -1,0 +1,4 @@
+{
+  "_comment": "Known, reported frontend/backend permission mismatches. Each entry keeps contract-check green but is printed as a warning on every run; delete the entry when the frontend is fixed.",
+  "permissions": {}
+}
