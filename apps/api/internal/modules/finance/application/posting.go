@@ -2,14 +2,18 @@ package application
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
-	"math"
+	"strconv"
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	"mini-erp/internal/modules/finance/contracts"
+	"mini-erp/internal/modules/finance/infrastructure"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
+	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/timeutil"
 )
 
@@ -24,8 +28,20 @@ const (
 	SourceSalesReturn    = "sales_return"
 	SourcePurchaseReturn = "purchase_return"
 	SourceExpense        = "business_expense"
-	SourceManual         = "manual"
-	SourceReversal       = "reversal"
+	// SourceSalesReturnSettlement / SourcePurchaseReturnSettlement journal the
+	// return value kept as a party balance (K-04a): source_doc_id is the
+	// settlement row id (the return itself is journalled under its own type).
+	// customer_credit: Dr Piutang / Cr Uang Muka Pelanggan; supplier_credit:
+	// Dr Uang Muka Supplier / Cr Hutang. Cash-moving settlements (refund,
+	// collect_payment) are journalled by the payment module, never here.
+	SourceSalesReturnSettlement    = "sales_return_settlement"
+	SourcePurchaseReturnSettlement = "purchase_return_settlement"
+	// SourceStockMovement journals stock adjustments (opname differences) and
+	// write-offs from the cost ledger; source_doc_id is the stock movement id
+	// (these movements have no document of their own).
+	SourceStockMovement = "stock_movement"
+	SourceManual        = "manual"
+	SourceReversal      = "reversal"
 	// SourceOpening marks the one-time cutover balance journal per branch
 	// (source_doc_id = branch_id). No opening table exists by design: the
 	// opening IS a journal, so every report reads it with zero UNIONs.
@@ -36,13 +52,6 @@ const (
 	// never see fiscal corrections.
 	SourceTaxAdjustment = "tax_adjustment"
 )
-
-// line is one balanced leg under construction (account resolved already).
-type line struct {
-	accountID int64
-	debit     int64
-	credit    int64
-}
 
 // normalizeEntryDate validates YYYY-MM-DD and returns it for storage
 // (MySQL coerces date-only into midnight DATETIME).
@@ -55,10 +64,6 @@ func normalizeEntryDate(raw, field string) (string, error) {
 		return "", apperror.Validation("", []apperror.FieldError{{Field: field, Message: "format tanggal harus YYYY-MM-DD"}})
 	}
 	return raw, nil
-}
-
-func round(f float64) int64 {
-	return int64(math.Round(f))
 }
 
 // Preview builds the compound entry for a source document without writing.
@@ -79,6 +84,33 @@ func (s *Service) Preview(ctx context.Context, branchID int64, docType string, d
 // (drained to completion) so COGS-bearing builders never silently book zero
 // for want of a sync the operator forgot.
 func (s *Service) Post(ctx context.Context, actorID, branchID int64, docType string, docID int64) (*contracts.JournalEntry, error) {
+	var out *contracts.JournalEntry
+	err := doclock.Lock("post:"+docType+":"+strconv.FormatInt(docID, 10), func() error {
+		e, err := s.postLocked(ctx, actorID, branchID, docType, docID)
+		out = e
+		return err
+	})
+	return out, err
+}
+
+func (s *Service) postLocked(ctx context.Context, actorID, branchID int64, docType string, docID int64) (*contracts.JournalEntry, error) {
+	return s.postDocument(ctx, actorID, branchID, docType, docID, false)
+}
+
+// PostCatchUp journals a document whose own month is already closed into
+// today's (open) period, marked "Susulan" (A-4): the closed month is not
+// touched, the books stay complete. Idempotent like Post.
+func (s *Service) PostCatchUp(ctx context.Context, actorID, branchID int64, docType string, docID int64) (*contracts.JournalEntry, error) {
+	var out *contracts.JournalEntry
+	err := doclock.Lock("post:"+docType+":"+strconv.FormatInt(docID, 10), func() error {
+		e, err := s.postDocument(ctx, actorID, branchID, docType, docID, true)
+		out = e
+		return err
+	})
+	return out, err
+}
+
+func (s *Service) postDocument(ctx context.Context, actorID, branchID int64, docType string, docID int64, catchUp bool) (*contracts.JournalEntry, error) {
 	if existing, err := s.repo.EntryBySource(ctx, branchID, docType, docID); err != nil {
 		return nil, apperror.Internal(err)
 	} else if existing != nil {
@@ -97,18 +129,28 @@ func (s *Service) Post(ctx context.Context, actorID, branchID int64, docType str
 	if err != nil {
 		return nil, err
 	}
-	entry, err := s.insertEntry(ctx, actorID, branchID, date, memo, docType, docID, lines)
+	if catchUp {
+		date = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
+		memo = "Susulan: " + memo
+	}
+	entry, err := s.insertEntry(ctx, actorID, branchID, date, memo, docType, docID, lines, "journals.post")
 	if err != nil {
+		// A racing twin (another instance, or the lock bypassed) already wrote
+		// the journal: post is idempotent, so hand back that one.
+		if ae, ok := err.(*apperror.AppError); ok && ae.Code == apperror.CodeConflict {
+			if existing, lerr := s.repo.EntryBySource(ctx, branchID, docType, docID); lerr == nil && existing != nil {
+				return existing, nil
+			}
+		}
 		return nil, err
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "journals.post", Entity: "journal", EntityID: entry.ID, BranchID: branchID, ActorID: actorID, Note: entry.Number})
 	return entry, nil
 }
 
 // needsCosting reports whether the document's lines read the cost ledger.
 func needsCosting(docType string) bool {
 	switch docType {
-	case SourceDelivery, SourceSalesReturn, SourcePurchaseReturn:
+	case SourceDelivery, SourceSalesReturn, SourcePurchaseReturn, SourceStockMovement:
 		return true
 	default:
 		return false
@@ -132,7 +174,19 @@ func (s *Service) drainCosting(ctx context.Context, branchID int64) error {
 }
 
 // insertEntry numbers, period-checks, and stores one balanced entry.
-func (s *Service) insertEntry(ctx context.Context, actorID, branchID int64, date, memo, sourceType string, sourceID int64, lines []*contracts.JournalLine) (*contracts.JournalEntry, error) {
+//
+// The audit row (action) is written inside the journal's own transaction
+// (ADR-0011): a failing trail rolls the entry back, and a replay that never
+// reaches the insert writes no second row.
+func (s *Service) insertEntry(ctx context.Context, actorID, branchID int64, date, memo, sourceType string, sourceID int64, lines []*contracts.JournalLine, action string) (*contracts.JournalEntry, error) {
+	return s.insertEntryWith(ctx, actorID, branchID, date, memo, sourceType, sourceID, lines, action, nil, nil)
+}
+
+// insertEntryWith is insertEntry with two optional extras: extraMeta is merged
+// into the audit metadata, and extra runs inside the journal's transaction
+// (FN-07 stores the fiscal-correction class there, so entry and class commit
+// together).
+func (s *Service) insertEntryWith(ctx context.Context, actorID, branchID int64, date, memo, sourceType string, sourceID int64, lines []*contracts.JournalLine, action string, extraMeta map[string]any, extra func(ctx context.Context, tx *sql.Tx, id int64) error) (*contracts.JournalEntry, error) {
 	if len(date) < 7 {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "date", Message: "format tanggal harus YYYY-MM-DD"}})
 	}
@@ -151,15 +205,38 @@ func (s *Service) insertEntry(ctx context.Context, actorID, branchID int64, date
 		return nil, err
 	}
 	year := date[:4]
-	number, err := s.nextNumber(ctx, branchID, "JV", year)
+	b, err := s.branches.GetByID(ctx, branchID)
 	if err != nil {
-		return nil, err
+		return nil, apperror.Internal(err)
 	}
+	if b == nil {
+		return nil, apperror.NotFound("Cabang")
+	}
+	// The number is allocated inside the insert transaction (no gap after a
+	// failed insert).
 	id, err := s.repo.CreateEntry(ctx, &contracts.JournalEntry{
-		Number: number, BranchID: branchID, Date: date, Memo: memo,
+		BranchID: branchID, Date: date, Memo: memo,
+		Numbering:  &contracts.Numbering{Prefix: "JV", BranchCode: b.Code, Year: year},
 		SourceType: sourceType, SourceID: sourceID, Lines: lines,
-	}, actorID)
+	}, actorID, func(ctx context.Context, tx *sql.Tx, id int64, number string) error {
+		meta := map[string]any{"date": date, "sourceType": sourceType, "sourceId": sourceID, "total": debit, "lines": len(lines)}
+		for k, v := range extraMeta {
+			meta[k] = v
+		}
+		if extra != nil {
+			if err := extra(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: action, Entity: "journal", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number,
+			Metadata: meta,
+		})
+	})
 	if err != nil {
+		if errors.Is(err, infrastructure.ErrPeriodClosed) {
+			return nil, apperror.Conflict("Periode sudah ditutup")
+		}
 		return nil, dberr.Map(err)
 	}
 	return s.repo.GetEntry(ctx, id)
@@ -168,6 +245,14 @@ func (s *Service) insertEntry(ctx context.Context, actorID, branchID int64, date
 // Reverse books the mirror entry and flags the original. Reversals of
 // reversals are rejected — write a manual entry instead.
 func (s *Service) Reverse(ctx context.Context, actorID, branchID, entryID int64, reason string) (*contracts.JournalEntry, error) {
+	return s.reverse(ctx, actorID, branchID, entryID, reason, true)
+}
+
+// reverse books the mirror (dimensions copied, scope inherited) and flags the
+// original in one transaction with a CAS. requeue says whether the source
+// document returns to the posting queue (the default: it is re-posted from
+// its current data) or stays out (cancelled documents).
+func (s *Service) reverse(ctx context.Context, actorID, branchID, entryID int64, reason string, requeue bool) (*contracts.JournalEntry, error) {
 	orig, err := s.repo.GetEntry(ctx, entryID)
 	if err != nil {
 		return nil, apperror.Internal(err)
@@ -184,23 +269,51 @@ func (s *Service) Reverse(ctx context.Context, actorID, branchID, entryID int64,
 	if strings.TrimSpace(reason) == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "wajib diisi"}})
 	}
+	// The mirror carries the original's product/variant/party dimensions, so
+	// margin and counterparty reports net to zero without status filters.
 	mirror := make([]*contracts.JournalLine, 0, len(orig.Lines))
 	for _, l := range orig.Lines {
 		mirror = append(mirror, &contracts.JournalLine{
 			AccountID: l.AccountID, Debit: l.Credit, Credit: l.Debit,
+			ProductID: l.ProductID, VariantID: l.VariantID, PartyID: l.PartyID,
+			Description: "Balik – " + l.Description,
 		})
 	}
 	date := timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
-	rev, err := s.insertEntry(ctx, actorID, branchID, date,
-		"Balik "+orig.Number+": "+strings.TrimSpace(reason),
-		SourceReversal, orig.ID, mirror)
-	if err != nil {
+	if err := s.requireOpenPeriod(ctx, branchID, date); err != nil {
 		return nil, err
 	}
-	if err := s.repo.MarkReversed(ctx, orig.ID, rev.ID); err != nil {
+	b, err := s.branches.GetByID(ctx, branchID)
+	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "journals.reverse", Entity: "journal", EntityID: rev.ID, BranchID: branchID, ActorID: actorID, Note: rev.Number})
+	if b == nil {
+		return nil, apperror.NotFound("Cabang")
+	}
+	revID, err := s.repo.ReverseEntry(ctx, &contracts.JournalEntry{
+		BranchID: branchID, Date: date,
+		Numbering:  &contracts.Numbering{Prefix: "JV", BranchCode: b.Code, Year: date[:4]},
+		Memo:       "Balik " + orig.Number + ": " + strings.TrimSpace(reason),
+		SourceType: SourceReversal, SourceID: orig.ID, Scope: orig.Scope, Lines: mirror,
+	}, orig.ID, requeue, actorID, func(ctx context.Context, tx *sql.Tx, id int64, number string) error {
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: "journals.reverse", Entity: "journal", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number,
+			Metadata: map[string]any{"reversedEntryId": orig.ID, "reversedNumber": orig.Number, "reason": strings.TrimSpace(reason)},
+		})
+	})
+	if err != nil {
+		if errors.Is(err, infrastructure.ErrAlreadyReversed) {
+			return nil, apperror.Conflict("Jurnal sudah dibalik")
+		}
+		if errors.Is(err, infrastructure.ErrPeriodClosed) {
+			return nil, apperror.Conflict("Periode sudah ditutup")
+		}
+		return nil, dberr.Map(err)
+	}
+	rev, err := s.repo.GetEntry(ctx, revID)
+	if err != nil || rev == nil {
+		return nil, apperror.Internal(errors.New("mirror vanished after insert"))
+	}
 	return rev, nil
 }
 
@@ -235,11 +348,10 @@ func (s *Service) Manual(ctx context.Context, actorID, branchID int64, date, mem
 		}
 		lines = append(lines, &contracts.JournalLine{AccountID: a.ID, Debit: l.Debit, Credit: l.Credit})
 	}
-	entry, err := s.insertEntry(ctx, actorID, branchID, date, strings.TrimSpace(memo), "", 0, lines)
+	entry, err := s.insertEntry(ctx, actorID, branchID, date, strings.TrimSpace(memo), "", 0, lines, "journals.manual")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "journals.manual", Entity: "journal", EntityID: entry.ID, BranchID: branchID, ActorID: actorID, Note: entry.Number})
 	return entry, nil
 }
 
@@ -264,7 +376,7 @@ type ListEntriesResult struct {
 // ListEntries searches entries newest-first (lines loaded on detail only).
 // Raw YYYY-MM-DD bounds normalize to full-day datetimes here — passing them
 // raw would silently drop the `to` day (OQ-A32 class).
-func (s *Service) ListEntries(ctx context.Context, branchID int64, from, to string, accountID int64, page, limit int) (*ListEntriesResult, error) {
+func (s *Service) ListEntries(ctx context.Context, branchID int64, from, to string, accountID int64, page, limit int, filter ...infrastructure.EntryFilter) (*ListEntriesResult, error) {
 	if from != "" {
 		if _, err := timeutil.ParseDateInput(strings.TrimSpace(from)); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "from", Message: "format tanggal harus YYYY-MM-DD"}})
@@ -277,11 +389,11 @@ func (s *Service) ListEntries(ctx context.Context, branchID int64, from, to stri
 		}
 		to = strings.TrimSpace(to) + " 23:59:59"
 	}
-	total, err := s.repo.CountEntries(ctx, branchID, from, to, accountID)
+	total, err := s.repo.CountEntries(ctx, branchID, from, to, accountID, filter...)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	entries, err := s.repo.ListEntries(ctx, branchID, from, to, accountID, limit, (page-1)*limit, false)
+	entries, err := s.repo.ListEntries(ctx, branchID, from, to, accountID, limit, (page-1)*limit, false, filter...)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -289,4 +401,24 @@ func (s *Service) ListEntries(ctx context.Context, branchID int64, from, to stri
 		entries = []*contracts.JournalEntry{}
 	}
 	return &ListEntriesResult{Entries: entries, Total: total}, nil
+}
+
+// ReverseForSource reverses the live journal of a cancelled source document
+// (payments, returns). Idempotent and safe to call for documents never
+// journalled. The document is NOT re-queued (requeue=0): it is cancelled.
+func (s *Service) ReverseForSource(ctx context.Context, actorID, branchID int64, docType string, docID int64, reason string) (bool, error) {
+	entry, err := s.repo.EntryBySource(ctx, branchID, docType, docID)
+	if err != nil {
+		return false, apperror.Internal(err)
+	}
+	if entry == nil {
+		return false, nil
+	}
+	if _, err := s.reverse(ctx, actorID, branchID, entry.ID, reason, false); err != nil {
+		if ae, ok := err.(*apperror.AppError); ok && ae.Code == apperror.CodeConflict && strings.Contains(ae.Message, "sudah dibalik") {
+			return false, nil // a concurrent canceller already did it
+		}
+		return false, err
+	}
+	return true, nil
 }

@@ -3,6 +3,7 @@ package presentation
 import (
 	"net/http"
 
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/response"
 )
@@ -42,7 +43,7 @@ func (h *Handler) Commit(w http.ResponseWriter, r *http.Request, maxBytes int64)
 		return
 	}
 	defer func() { _ = fh.Close() }()
-	res, err := h.svc.CommitImport(r.Context(), actorID(r), fh)
+	res, err := h.svc.CommitImport(r.Context(), authcontracts.ActorID(r), fh)
 	if err != nil {
 		response.FailErr(w, err)
 		return

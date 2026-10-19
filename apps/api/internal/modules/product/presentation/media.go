@@ -2,8 +2,10 @@ package presentation
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	mediacontracts "mini-erp/internal/modules/media/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/httpx"
@@ -55,17 +57,43 @@ func (h *Handler) MediaUpload(w http.ResponseWriter, r *http.Request, media medi
 		return
 	}
 	defer func() { _ = fh.Close() }()
-	if !strings.HasPrefix(header.Header.Get("Content-Type"), "image/") {
-		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "file", Message: "hanya gambar (JPG/PNG/WebP)"}}))
-		return
+	// Optional form fields: sort_order (gallery position, 0-9999) and
+	// is_primary (make this photo the primary one; the first photo of a
+	// product is primary anyway). Both are validated before any byte is stored.
+	sortOrder := 0
+	if raw := strings.TrimSpace(r.FormValue("sort_order")); raw != "" {
+		n, convErr := strconv.Atoi(raw)
+		if convErr != nil || n < 0 || n > 9999 {
+			response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "sort_order", Message: "harus angka 0-9999"}}))
+			return
+		}
+		sortOrder = n
+	}
+	wantPrimary := false
+	if raw := strings.ToLower(strings.TrimSpace(r.FormValue("is_primary"))); raw != "" {
+		switch raw {
+		case "1", "true":
+			wantPrimary = true
+		case "0", "false":
+		default:
+			response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "is_primary", Message: "harus true atau false"}}))
+			return
+		}
 	}
 	f, err := media.Upload(r.Context(), mediacontracts.OwnerProduct, id, mediacontracts.Upload{
 		OriginalName: header.Filename, MIME: header.Header.Get("Content-Type"), Content: fh,
-		Accept: []string{"image/"},
-	}, actorID(r))
+		Accept: []string{"image/jpeg", "image/png", "image/webp"}, SortOrder: sortOrder,
+	}, authcontracts.ActorID(r))
 	if err != nil {
 		response.FailErr(w, err)
 		return
+	}
+	if wantPrimary && !f.IsPrimary {
+		if err := media.SetPrimary(r.Context(), mediacontracts.OwnerProduct, id, f.ID, authcontracts.ActorID(r)); err != nil {
+			response.FailErr(w, err)
+			return
+		}
+		f.IsPrimary = true
 	}
 	url, err := media.GetURL(r.Context(), f)
 	if err != nil {
@@ -91,7 +119,7 @@ func (h *Handler) MediaSetPrimary(w http.ResponseWriter, r *http.Request, media 
 		response.FailErr(w, err)
 		return
 	}
-	if err := media.SetPrimary(r.Context(), mediacontracts.OwnerProduct, id, mediaID, actorID(r)); err != nil {
+	if err := media.SetPrimary(r.Context(), mediacontracts.OwnerProduct, id, mediaID, authcontracts.ActorID(r)); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -114,7 +142,7 @@ func (h *Handler) MediaArchive(w http.ResponseWriter, r *http.Request, media med
 		response.FailErr(w, err)
 		return
 	}
-	if err := media.Archive(r.Context(), mediacontracts.OwnerProduct, id, mediaID, actorID(r)); err != nil {
+	if err := media.Archive(r.Context(), mediacontracts.OwnerProduct, id, mediaID, authcontracts.ActorID(r)); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -152,5 +180,6 @@ func mediaView(url string, f *mediacontracts.MediaFile) map[string]any {
 	return map[string]any{
 		"id": f.ID, "originalName": f.OriginalName, "mime": f.MIME,
 		"sizeBytes": f.SizeBytes, "isPrimary": f.IsPrimary, "url": url,
+		"width": f.Width, "height": f.Height, "originalSizeBytes": f.OriginalSizeBytes,
 	}
 }

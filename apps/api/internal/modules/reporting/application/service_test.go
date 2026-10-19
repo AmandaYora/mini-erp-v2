@@ -16,11 +16,41 @@ type fakeFinance struct {
 	dailyTo        string
 	dailyBranch    int64
 	netProfitCalls int
+	inventoryCalls int
+	positions      []financecontracts.InventoryPosition
+	positionsTotal int64
 	points         []financecontracts.DailyPoint
 }
 
+func (f *fakeFinance) OpeningPosted(_ context.Context, _ int64) (bool, error) { return false, nil }
+
+func (f *fakeFinance) UncostedCount(_ context.Context, _ int64) (int64, error) { return 0, nil }
+
+func (f *fakeFinance) AverageUnitCost(_ context.Context, _, _, _ int64) (int64, error) { return 0, nil }
+
 func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, _ string) (int64, int64, error) {
 	return 0, 0, nil
+}
+
+func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string) (map[string]int64, error) {
+	net := map[string]int64{"cash": 1000, "receivable": 500, "payable": -300, "inventory": 700}
+	out := map[string]int64{}
+	for _, k := range keys {
+		out[k] = net[k]
+	}
+	return out, nil
+}
+
+func (f *fakeFinance) AccountBalances(_ context.Context, _ int64, codes []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(codes))
+	for _, c := range codes {
+		out[c] = 0
+	}
+	return out, nil
+}
+
+func (f *fakeFinance) InventoryTotal(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
 }
 
 func (f *fakeFinance) NetProfit(_ context.Context, _ int64, _, _ string) (int64, int64, int64, error) {
@@ -29,7 +59,8 @@ func (f *fakeFinance) NetProfit(_ context.Context, _ int64, _, _ string) (int64,
 }
 
 func (f *fakeFinance) InventoryValue(_ context.Context, _ int64) ([]financecontracts.InventoryPosition, int64, error) {
-	return nil, 0, nil
+	f.inventoryCalls++
+	return f.positions, f.positionsTotal, nil
 }
 
 func (f *fakeFinance) DailyTrend(_ context.Context, branchID int64, from, to string) ([]financecontracts.DailyPoint, error) {
@@ -88,5 +119,19 @@ func TestSalesTrendValidation(t *testing.T) {
 				t.Fatal("validation must fail before any finance call")
 			}
 		})
+	}
+}
+
+// TestInventoryIsThinAliasOfFinance (F8-11): reporting adds no valuation of its
+// own; the report is exactly what finance.InventoryValue returned.
+func TestInventoryIsThinAliasOfFinance(t *testing.T) {
+	pos := []financecontracts.InventoryPosition{{ProductID: 1, ProductName: "A", Qty: 2, AvgCost: 5, Value: 10}}
+	fin := &fakeFinance{positions: pos, positionsTotal: 10}
+	rep, err := NewService(fin).Inventory(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fin.inventoryCalls != 1 || rep.Total != 10 || len(rep.Positions) != 1 || rep.Positions[0] != pos[0] {
+		t.Fatalf("not a pass-through: calls=%d rep=%+v", fin.inventoryCalls, rep)
 	}
 }

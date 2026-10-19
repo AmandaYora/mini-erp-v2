@@ -130,6 +130,33 @@ func buildWorkbook(f *excelize.File, first string) ([]byte, error) {
 }
 
 // packageFileName names the artefact after what it CONTAINS.
-func packageFileName(variant string, year, month int) string {
-	return fmt.Sprintf("paket-pajak-%04d-%02d-%s.xlsx", year, month, packageMetas[variant].fileSuffix)
+//
+// A whole calendar month keeps the familiar "YYYY-MM" stem; any other range is
+// named by its two dates.
+func packageFileName(variant string, from, to string) string {
+	suffix := packageMetas[variant].fileSuffix
+	if isWholeMonth(from, to) {
+		return fmt.Sprintf("paket-pajak-%s-%s.xlsx", from[:7], suffix)
+	}
+	return fmt.Sprintf("paket-pajak-%s_%s-%s.xlsx", from, to, suffix)
+}
+
+// isWholeMonth reports whether [from, to] is exactly one calendar month.
+func isWholeMonth(from, to string) bool {
+	if len(from) != 10 || len(to) != 10 || from[:7] != to[:7] || from[8:] != "01" {
+		return false
+	}
+	y, _ := strconv.Atoi(from[:4])
+	m, _ := strconv.Atoi(from[5:7])
+	return validYearMonth(y, m) && to == monthEnd(y, m)[:10]
+}
+
+// periodLabelOf renders the tax period for the cover sheet: "Oktober 2026" for a
+// whole month, otherwise "2026-10-05 s/d 2026-11-20".
+func periodLabelOf(from, to string) string {
+	if isWholeMonth(from, to) {
+		m, _ := strconv.Atoi(from[5:7])
+		return fmt.Sprintf("%s %s", monthLabel(m), from[:4])
+	}
+	return from + " s/d " + to
 }

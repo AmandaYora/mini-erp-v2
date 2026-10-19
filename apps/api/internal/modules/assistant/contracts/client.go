@@ -26,6 +26,12 @@ const (
 	ModeRule     = "rule_based"
 )
 
+// Tool execution statuses (assistant_tool_executions.status).
+const (
+	ToolSuccess = "success"
+	ToolFailed  = "failed"
+)
+
 // Authorization is one whitelisted WhatsApp sender.
 type Authorization struct {
 	ID             int64
@@ -80,5 +86,6 @@ func PermissionCatalog() []usercontracts.PermissionSeed {
 	return []usercontracts.PermissionSeed{
 		{Code: "assistant.view", Name: "Asisten: Lihat"},
 		{Code: "assistant.manage", Name: "Asisten: Kelola"},
+		{Code: "assistant.simulate", Name: "Asisten: Simulasi"},
 	}
 }

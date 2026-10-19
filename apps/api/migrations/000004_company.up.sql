@@ -1,27 +1,26 @@
--- Modul `company` (L1): profil + pengaturan perusahaan tunggal (singleton).
--- Tanpa tabel `companies`, tanpa company_id (ADR-0009). Tanpa zona waktu/mata uang/
--- bahasa/feature-flag (konstanta aplikasi — ADR-0006, KI-28/KI-33).
+-- Baseline modul company (F4-1): skema akhir hasil rantai migrasi 000001-000072.
+-- Dibangkitkan scripts/squash-baseline.mjs dari SHOW CREATE TABLE; diverifikasi scripts/schema-compare.mjs.
 
-CREATE TABLE company_profile (
-  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  name       VARCHAR(150) NOT NULL,
-  legal_name VARCHAR(150) NULL,
-  address    VARCHAR(255) NULL,
-  city       VARCHAR(100) NULL,
-  phone      VARCHAR(30)  NULL,
-  email      VARCHAR(255) NULL,
-  tax_id     VARCHAR(50)  NULL,
-  created_at DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  updated_at DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  created_by BIGINT UNSIGNED NULL,
-  updated_by BIGINT UNSIGNED NULL,
-  PRIMARY KEY (id)
-);
+CREATE TABLE `company_profile` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `legal_name` varchar(255) DEFAULT NULL,
+  `address` varchar(255) DEFAULT NULL,
+  `city` varchar(100) DEFAULT NULL,
+  `phone` varchar(30) DEFAULT NULL,
+  `email` varchar(255) DEFAULT NULL,
+  `tax_id` varchar(50) DEFAULT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `created_by` bigint unsigned DEFAULT NULL,
+  `updated_by` bigint unsigned DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE company_settings (
-  setting_key   VARCHAR(100) NOT NULL,
-  setting_value TEXT NULL,
-  updated_at    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  updated_by    BIGINT UNSIGNED NULL,
-  PRIMARY KEY (setting_key)
-);
+CREATE TABLE `company_settings` (
+  `setting_key` varchar(100) NOT NULL,
+  `setting_value` text,
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_by` bigint unsigned DEFAULT NULL,
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

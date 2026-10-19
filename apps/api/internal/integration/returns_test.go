@@ -25,10 +25,18 @@ func deliverAll(t *testing.T, ctx context.Context, fx shopFixture, soID int64, q
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
 	}
-	if _, err := m.delivery.Service().Confirm(ctx, 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	in := deliveryapp.ConfirmInput{}
+	if so, err := m.sales.Service().GetByID(ctx, soID); err == nil && so != nil && so.PaymentTerms == "cod" {
+		in.Settlement = codSettle // cash-terms orders must settle when completed
+	}
+	if _, err := m.delivery.Service().Confirm(ctx, 0, fx.branchID, dn.ID, in); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 }
+
+// codSettle converts a cash-terms order to net when its last shipment goes out
+// (keeps the order unpaid, like the pre-settlement behaviour tests rely on).
+var codSettle = &deliveryapp.Settlement{Mode: deliveryapp.SettleSwitchToNet, DueDate: "2026-12-31"}
 
 // createSalesReturn drafts a full-line return for qty units.
 func createSalesReturn(t *testing.T, fx shopFixture, soID int64, qty float64) *salesreturncontracts.SalesReturn {
@@ -108,9 +116,9 @@ func TestReturnFullDiscountTaxToZero(t *testing.T) {
 		switch l.AccountCode {
 		case "4100":
 			dr4100 += l.Debit
-		case "2200":
+		case "2100":
 			dr2200 += l.Debit
-		case "1200":
+		case "1100":
 			cr1200 += l.Credit
 		}
 	}
@@ -212,7 +220,7 @@ func TestDeliveryEmptiesStockBooksFullCOGS(t *testing.T) {
 		t.Fatalf("create delivery: %v", err)
 	}
 	confirmed, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{
-		RecipientName: "Ani", RecipientSignatureStatus: "signed",
+		RecipientName: "Ani", RecipientSignatureStatus: "signed", Settlement: codSettle,
 	})
 	if err != nil {
 		t.Fatalf("confirm delivery: %v", err)
@@ -236,7 +244,7 @@ func TestDeliveryEmptiesStockBooksFullCOGS(t *testing.T) {
 		switch l.AccountCode {
 		case "5000":
 			cogs += l.Debit
-		case "1300":
+		case "1200":
 			relief += l.Credit
 		}
 	}
@@ -275,7 +283,7 @@ func TestSalesReturnRestockUsesRecordedCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
 	}
-	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 	ret := createSalesReturn(t, fx, so.ID, 2)
@@ -288,7 +296,7 @@ func TestSalesReturnRestockUsesRecordedCost(t *testing.T) {
 	}
 	var restock int64
 	for _, l := range entry.Lines {
-		if l.AccountCode == "1300" {
+		if l.AccountCode == "1200" {
 			restock += l.Debit
 		}
 	}

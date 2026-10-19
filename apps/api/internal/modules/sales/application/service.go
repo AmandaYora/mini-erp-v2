@@ -2,18 +2,27 @@ package application
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
+	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
 	partycontracts "mini-erp/internal/modules/party/contracts"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
 	"mini-erp/internal/modules/sales/contracts"
-	"mini-erp/internal/modules/sales/domain"
 	"mini-erp/internal/modules/sales/infrastructure"
+	salesreturncontracts "mini-erp/internal/modules/salesreturn/contracts"
+	usercontracts "mini-erp/internal/modules/user/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
+	"mini-erp/internal/shared/doclock"
+	"mini-erp/internal/shared/listquery"
+	"mini-erp/internal/shared/money"
 	"mini-erp/internal/shared/timeutil"
 )
 
@@ -27,6 +36,24 @@ type Service struct {
 	pricing  partycontracts.PricingClient
 	branches branchcontracts.BranchClient
 	audit    auditcontracts.AuditClient
+	users    usercontracts.UserClient
+	// margin feeds the export summary (see MarginReader); nil = no margin line.
+	margin MarginReader
+	// dep holds what hangs off an order (shipments, payments, returns). They
+	// are built after the orders, so main wires them through SetDependents.
+	dep dependents
+}
+
+type dependents struct {
+	deliveries deliverycontracts.DeliveryClient
+	payments   paymentcontracts.PaymentClient
+	returns    salesreturncontracts.SalesReturnClient
+}
+
+// SetDependents closes the late-bound edge to the modules that build on an
+// order. Cancelling an order consults them; without them it refuses to cancel.
+func (s *Service) SetDependents(deliveries deliverycontracts.DeliveryClient, payments paymentcontracts.PaymentClient, returns salesreturncontracts.SalesReturnClient) {
+	s.dep = dependents{deliveries: deliveries, payments: payments, returns: returns}
 }
 
 // NewService wires sales use cases. All cross-module links are contracts.
@@ -37,8 +64,9 @@ func NewService(
 	pricing partycontracts.PricingClient,
 	branches branchcontracts.BranchClient,
 	audit auditcontracts.AuditClient,
+	users usercontracts.UserClient,
 ) *Service {
-	return &Service{repo: repo, parties: parties, products: products, pricing: pricing, branches: branches, audit: audit}
+	return &Service{repo: repo, parties: parties, products: products, pricing: pricing, branches: branches, audit: audit, users: users}
 }
 
 // GetByID resolves a document with lines and party name, or nil when missing.
@@ -75,28 +103,42 @@ func (s *Service) enrich(ctx context.Context, o *contracts.SalesOrder) (*contrac
 }
 
 // SetStatus moves confirmed→completed (delivery) or any open
-// document→cancelled. Branch-scoped via mustOwnBranch.
+// document→cancelled. Branch-scoped via mustOwnBranch. The move is a CAS from
+// the legal origin statuses; asking for the status the order already has is a
+// successful no-op, so a repeated request after a partial failure is safe.
 func (s *Service) SetStatus(ctx context.Context, branchID, id int64, status string, actorID int64) error {
 	o, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return err
 	}
+	var from []string
+	var refused string
 	switch status {
 	case contracts.StatusCompleted:
-		if o.Status != contracts.StatusConfirmed {
-			return apperror.Conflict("Order harus dikonfirmasi dulu")
-		}
+		from, refused = []string{contracts.StatusConfirmed}, "Order harus dikonfirmasi dulu"
 	case contracts.StatusCancelled:
-		if o.Status == contracts.StatusCompleted || o.Status == contracts.StatusCancelled {
-			return apperror.Conflict("Order sudah final")
-		}
+		from, refused = []string{contracts.StatusDraft, contracts.StatusConfirmed}, "Order sudah final"
 	default:
 		return apperror.Validation("", []apperror.FieldError{{Field: "status", Message: "status tidak dikenal"}})
 	}
-	if err := s.repo.SetStatus(ctx, id, status, actorID); err != nil {
+	if o.Status == status {
+		return nil
+	}
+	won, err := s.repo.Transition(ctx, id, from, status, actorID)
+	if err != nil {
 		return apperror.Internal(err)
 	}
-	return nil
+	if won {
+		return nil
+	}
+	cur, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	if cur != nil && cur.Status == status {
+		return nil
+	}
+	return apperror.Conflict(refused)
 }
 
 // mustOwnBranch loads the document and denies cross-branch access as missing.
@@ -120,22 +162,41 @@ type LineInput struct {
 	Qty             float64
 	DiscountPct     float64
 	DiscountNominal int64
+	// UnitPrice overrides the catalog price for this line (manual pricing,
+	// BR-08). Member-rule prices still win, and a manual price may never fall
+	// below the product's minimum selling price (BR-25).
+	UnitPrice      *int64
+	DiscountReason string
+	Note           string
+	// Taxable false exempts this line from the order's tax.
+	Taxable *bool
 }
 
 // OrderInput is the create/update payload.
 type OrderInput struct {
-	PartyID          int64
-	Channel          string
-	OrderDate        string
-	DueDate          string
-	PaymentTerms     string
-	TaxType          string
-	TaxRate          float64
-	Notes            string
-	ShipToAddressID  int64
+	PartyID         int64
+	Channel         string
+	OrderDate       string
+	DueDate         string
+	PaymentTerms    string
+	TaxType         string
+	TaxRate         float64
+	Notes           string
+	ShipToAddressID int64
+	// Ad-hoc ship-to (SL-01): a one-off address typed on the order, snapshotted
+	// without touching the customer's address book. Used only when
+	// ShipToAddressID is 0; ShipToAddress (the text) is then required.
+	ShipToLabel     string
+	ShipToRecipient string
+	ShipToPhone     string
+	ShipToAddress   string
+	// AssignedUserID is the person in charge of the order (SL-09); 0 = none.
+	AssignedUserID   int64
 	TaxInvoiceNumber string
 	TaxInvoiceDate   string
-	Items            []LineInput
+	// ClientRef makes creation idempotent per client cart (<= 64 chars).
+	ClientRef string
+	Items     []LineInput
 }
 
 type pricedLine struct {
@@ -163,18 +224,29 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 	}
 	quote, err := s.pricing.Quote(ctx, in.PartyID, productIDs)
 	if err != nil {
-		return nil, "", []apperror.FieldError{{Field: "items", Message: "gagal menghitung harga member"}}
+		msg := "gagal menghitung harga member"
+		var ae *apperror.AppError
+		if errors.As(err, &ae) && ae.Message != "" {
+			msg = ae.Message
+		}
+		return nil, "", []apperror.FieldError{{Field: "items", Message: msg}}
 	}
 	quoted := map[int64]partycontracts.QuoteLine{}
 	for _, l := range quote.Lines {
 		quoted[l.ProductID] = l
 	}
+	// One batch read for every product on the document (F4-7): constant
+	// statements per request, not ~4 per line.
+	loaded, err := s.products.GetByIDs(ctx, productIDs)
+	if err != nil {
+		return nil, "", []apperror.FieldError{{Field: "items", Message: "gagal memuat produk"}}
+	}
 	seen := map[string]bool{}
 	var out []pricedLine
 	for i, line := range in.Items {
 		tag := "baris " + strconv.Itoa(i+1) + ": "
-		p, err := s.products.GetByID(ctx, line.ProductID)
-		if err != nil || p == nil || p.Status != "active" {
+		p := loaded[line.ProductID]
+		if p == nil || p.Status != "active" {
 			fail(tag + "produk tidak ditemukan")
 			continue
 		}
@@ -189,8 +261,8 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 			fail(tag + "varian tidak dikenal")
 			continue
 		}
-		factor, _, err := s.products.ResolveUOM(ctx, line.ProductID, line.UOM)
-		if err != nil {
+		factor, _, uomOK := p.UOMFactor(line.UOM)
+		if !uomOK {
 			fail(tag + "satuan tidak dikenal")
 			continue
 		}
@@ -212,14 +284,49 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 			continue
 		}
 		seen[key] = true
-		unit := p.SellingPrice
-		if q, ok := quoted[line.ProductID]; ok && q.Applied {
-			unit = q.MemberPrice
+		// Price source: a member rule wins; else a manual price; else the
+		// catalog. The minimum-price floor guards manual/catalog lines but never
+		// member prices (those are rule-governed).
+		unit, source := p.SellingPrice, contracts.PricingCatalog
+		if q, ok := quoted[line.ProductID]; ok && q.Error != "" && q.Error != "produk tidak ditemukan" {
+			// The member rule could not price this product (empty basis
+			// price, invalid unit conversion...): surface it on the line.
+			fail(tag + q.Error)
+			continue
 		}
-		net, _, tax, total := domain.CalcLine(line.Qty, unit, line.DiscountPct, line.DiscountNominal, in.TaxType, in.TaxRate)
+		if q, ok := quoted[line.ProductID]; ok && q.Applied {
+			unit, source = q.MemberPrice, contracts.PricingMemberRule
+		} else if line.UnitPrice != nil {
+			if *line.UnitPrice < 0 {
+				fail(tag + "harga tidak boleh negatif")
+				continue
+			}
+			unit, source = *line.UnitPrice, contracts.PricingManual
+		}
+		taxable := line.Taxable == nil || *line.Taxable
+		lineTaxType, lineTaxRate := in.TaxType, in.TaxRate
+		if !taxable {
+			lineTaxType, lineTaxRate = "none", 0
+		}
+		net, base, tax, total := money.LineAmounts(line.Qty, unit, line.DiscountPct, line.DiscountNominal, lineTaxType, lineTaxRate).Split()
 		if total < 0 {
 			fail(tag + "total baris negatif")
 			continue
+		}
+		if source != contracts.PricingMemberRule && p.MinSellingPrice > 0 &&
+			net < money.Round(float64(p.MinSellingPrice)*line.Qty) {
+			fail(tag + "harga " + p.Name + " di bawah harga minimum Rp" + strconv.FormatInt(p.MinSellingPrice, 10) + " per satuan dasar")
+			continue
+		}
+		if len(strings.TrimSpace(line.DiscountReason)) > 255 || len(strings.TrimSpace(line.Note)) > 255 {
+			fail(tag + "alasan diskon / catatan maksimal 255 karakter")
+			continue
+		}
+		var variantName, variantCode string
+		for _, v := range p.Variants {
+			if v.ID == line.VariantID {
+				variantName, variantCode = v.Name, v.Code
+			}
 		}
 		out = append(out, pricedLine{
 			item: &contracts.Item{
@@ -228,6 +335,11 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 				UOMFactor: factor, Qty: line.Qty, QtyBase: line.Qty * factor,
 				UnitPrice: unit, DiscountPct: line.DiscountPct,
 				DiscountNominal: line.DiscountNominal, LineTotal: total,
+				StockTracked: p.Tracked && p.Type != "jasa", ItemType: p.Type,
+				VariantName: variantName, VariantCode: variantCode, BaseUOM: p.BaseUOM,
+				PricingSource: source, BasePrice: p.SellingPrice,
+				DiscountReason: strings.TrimSpace(line.DiscountReason), Note: strings.TrimSpace(line.Note),
+				Taxable: taxable, TaxBase: base, TaxAmount: tax,
 			},
 			net: net, tax: tax, total: total,
 		})
@@ -264,8 +376,17 @@ func (s *Service) validateHeader(ctx context.Context, in OrderInput) ([]apperror
 	if in.Channel != contracts.ChannelRegular && in.Channel != contracts.ChannelPOS {
 		fail("channel", "harus regular atau pos")
 	}
-	if in.PaymentTerms != "net" && in.PaymentTerms != "cod" {
-		fail("paymentTerms", "harus net atau cod")
+	fields = append(fields, s.assignedUserErrors(ctx, in.AssignedUserID)...)
+	if in.PaymentTerms != "net" && in.PaymentTerms != "cod" && in.PaymentTerms != "prepaid" {
+		fail("paymentTerms", "harus net, cod, atau prepaid")
+	}
+	if in.PaymentTerms == "net" {
+		// Credit goes only to a known customer we can reach.
+		if in.PartyID == 0 {
+			fail("paymentTerms", "termin net tidak untuk penjualan tunai tanpa customer")
+		} else if p, err := s.parties.GetByID(ctx, in.PartyID); err == nil && p != nil && strings.TrimSpace(p.Phone) == "" {
+			fail("paymentTerms", "customer termin net wajib memiliki nomor telepon")
+		}
 	}
 	if in.PaymentTerms == "net" && strings.TrimSpace(in.DueDate) == "" {
 		fail("dueDate", "wajib diisi untuk termin net")
@@ -295,15 +416,80 @@ func (s *Service) validateHeader(ctx context.Context, in OrderInput) ([]apperror
 	return nil, nil
 }
 
-func resolveDate(raw string) string {
-	if strings.TrimSpace(raw) != "" {
-		return strings.TrimSpace(raw)
-	}
-	return timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
-}
-
 // CreateOrder validates, server-prices, numbers, and inserts a draft SO.
 func (s *Service) CreateOrder(ctx context.Context, actorID, branchID int64, in OrderInput) (*contracts.SalesOrder, error) {
+	o, _, err := s.CreateOrderIdempotent(ctx, actorID, branchID, in)
+	return o, err
+}
+
+// CreateOrderIdempotent is CreateOrder that also reports a replay: the same
+// ClientRef with the same content returns the order created the first time; the
+// same ClientRef with different content is a conflict.
+func (s *Service) CreateOrderIdempotent(ctx context.Context, actorID, branchID int64, in OrderInput) (*contracts.SalesOrder, bool, error) {
+	in.ClientRef = strings.TrimSpace(in.ClientRef)
+	if len(in.ClientRef) > 64 {
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "clientRef", Message: "maksimal 64 karakter"}})
+	}
+	if in.ClientRef != "" {
+		prior, err := s.priorByClientRef(ctx, branchID, in)
+		if err != nil || prior != nil {
+			return prior, prior != nil, err
+		}
+	}
+	o, err := s.createOrder(ctx, actorID, branchID, in)
+	if err != nil && in.ClientRef != "" && errors.Is(err, errDuplicateRef) {
+		// Lost the insert race to the same cart: serve the winner.
+		if prior, perr := s.priorByClientRef(ctx, branchID, in); perr == nil && prior != nil {
+			return prior, true, nil
+		}
+	}
+	return o, false, err
+}
+
+// priorByClientRef loads the order of this client reference and checks that it
+// carries the same content (party + positions + quantities).
+func (s *Service) priorByClientRef(ctx context.Context, branchID int64, in OrderInput) (*contracts.SalesOrder, error) {
+	o, err := s.repo.OrderByClientRef(ctx, branchID, in.ClientRef)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	if o == nil {
+		return nil, nil
+	}
+	o, err = s.enrich(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	if o.PartyID != in.PartyID || orderSignature(o.Items) != inputSignature(in.Items) {
+		return nil, apperror.Conflict("Referensi klien sudah dipakai untuk isi order yang berbeda")
+	}
+	return o, nil
+}
+
+func signature(rows []string) string {
+	sort.Strings(rows)
+	return strings.Join(rows, "|")
+}
+
+func orderSignature(items []*contracts.Item) string {
+	rows := make([]string, 0, len(items))
+	for _, it := range items {
+		rows = append(rows, fmt.Sprintf("%d:%d:%s:%g", it.ProductID, it.VariantID, it.UOM, it.Qty))
+	}
+	return signature(rows)
+}
+
+func inputSignature(items []LineInput) string {
+	rows := make([]string, 0, len(items))
+	for _, it := range items {
+		rows = append(rows, fmt.Sprintf("%d:%d:%s:%g", it.ProductID, it.VariantID, it.UOM, it.Qty))
+	}
+	return signature(rows)
+}
+
+var errDuplicateRef = errors.New("duplicate client ref")
+
+func (s *Service) createOrder(ctx context.Context, actorID, branchID int64, in OrderInput) (*contracts.SalesOrder, error) {
 	if in.Channel == "" {
 		in.Channel = contracts.ChannelRegular
 	}
@@ -329,16 +515,19 @@ func (s *Service) CreateOrder(ctx context.Context, actorID, branchID int64, in O
 	}
 	id, err := s.repo.CreateOrder(ctx, &contracts.SalesOrder{
 		Number: number, BranchID: branchID, PartyID: in.PartyID, Channel: in.Channel,
-		MemberCode: memberCode, OrderDate: resolveDate(in.OrderDate),
+		MemberCode: memberCode, OrderDate: timeutil.DateOrToday(in.OrderDate),
 		DueDate: strings.TrimSpace(in.DueDate), PaymentTerms: in.PaymentTerms,
 		TaxType: in.TaxType, TaxRate: in.TaxRate,
 		Subtotal: subtotal, DiscountTotal: discount, TaxTotal: tax, GrandTotal: grand,
 		Notes: in.Notes, Items: items,
 		ShipToAddressID: shipID, ShipToLabel: shipLabel, ShipToRecipient: shipRecipient,
-		ShipToPhone: shipPhone, ShipToAddress: shipAddr,
-		TaxInvoiceNumber: taxNo, TaxInvoiceDate: taxDate,
+		ShipToPhone: shipPhone, ShipToAddress: shipAddr, AssignedUserID: in.AssignedUserID,
+		TaxInvoiceNumber: taxNo, TaxInvoiceDate: taxDate, ClientRef: in.ClientRef,
 	}, actorID)
 	if err != nil {
+		if in.ClientRef != "" && dberr.IsDuplicate(err) {
+			return nil, errDuplicateRef
+		}
 		return nil, dberr.Map(err)
 	}
 	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.create", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number})
@@ -347,12 +536,69 @@ func (s *Service) CreateOrder(ctx context.Context, actorID, branchID int64, in O
 
 // UpdateOrder rewrites a draft SO (re-priced from live catalog/member rules).
 func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, in OrderInput) (*contracts.SalesOrder, error) {
+	var out *contracts.SalesOrder
+	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
+		res, err := s.updateOrderLocked(ctx, actorID, branchID, id, in)
+		out = res
+		return err
+	})
+	return out, err
+}
+
+// lightOnly reports whether an update leaves every economic field untouched:
+// party, channel, terms, tax and lines. Only then may it touch an order that
+// already has shipments, payments or returns.
+func (s *Service) lightOnly(existing *contracts.SalesOrder, in OrderInput) bool {
+	if in.Channel != "" && in.Channel != existing.Channel {
+		return false
+	}
+	if in.PartyID != existing.PartyID || in.PaymentTerms != existing.PaymentTerms ||
+		in.TaxType != existing.TaxType || in.TaxRate != existing.TaxRate {
+		return false
+	}
+	return orderSignature(existing.Items) == inputSignature(in.Items)
+}
+
+func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id int64, in OrderInput) (*contracts.SalesOrder, error) {
 	existing, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
 	}
-	if existing.Status != contracts.StatusDraft {
-		return nil, apperror.Conflict("Hanya draft yang bisa diubah")
+	if existing.Status != contracts.StatusDraft && existing.Status != contracts.StatusConfirmed {
+		return nil, apperror.Conflict("Order yang sudah selesai atau dibatalkan tidak bisa diubah")
+	}
+	existing, err = s.enrich(ctx, existing)
+	if err != nil {
+		return nil, err
+	}
+	if existing.Status == contracts.StatusConfirmed {
+		// Economic changes need a clean order; header notes/ship-to/due date/tax
+		// invoice stay editable while documents hang off it.
+		if err := s.assertNoDependents(ctx, id); err != nil {
+			var ae *apperror.AppError
+			if !errors.As(err, &ae) || ae.Code != apperror.CodeConflict || !s.lightOnly(existing, in) {
+				return nil, err
+			}
+			shipID, shipLabel, shipRecipient, shipPhone, shipAddr, taxNo, taxDate, serr := s.resolveShipTo(ctx, in)
+			if serr != nil {
+				return nil, serr
+			}
+			existing.DueDate = strings.TrimSpace(in.DueDate)
+			existing.Notes = in.Notes
+			existing.ShipToAddressID = shipID
+			existing.ShipToLabel, existing.ShipToRecipient = shipLabel, shipRecipient
+			existing.ShipToPhone, existing.ShipToAddress = shipPhone, shipAddr
+			existing.TaxInvoiceNumber, existing.TaxInvoiceDate = taxNo, taxDate
+			if fields := s.assignedUserErrors(ctx, in.AssignedUserID); len(fields) > 0 {
+				return nil, apperror.Validation("", fields)
+			}
+			existing.AssignedUserID = in.AssignedUserID
+			if err := s.repo.UpdateHeaderLight(ctx, existing, actorID); err != nil {
+				return nil, dberr.Map(err)
+			}
+			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number + " (header)"})
+			return s.GetByID(ctx, id)
+		}
 	}
 	if in.Channel == "" {
 		in.Channel = existing.Channel
@@ -372,7 +618,7 @@ func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, 
 	existing.PartyID = in.PartyID
 	existing.Channel = in.Channel
 	existing.MemberCode = memberCode
-	existing.OrderDate = resolveDate(in.OrderDate)
+	existing.OrderDate = timeutil.DateOrToday(in.OrderDate)
 	existing.DueDate = strings.TrimSpace(in.DueDate)
 	existing.PaymentTerms = in.PaymentTerms
 	existing.TaxType = in.TaxType
@@ -384,6 +630,7 @@ func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, 
 	existing.ShipToLabel, existing.ShipToRecipient = shipLabel, shipRecipient
 	existing.ShipToPhone, existing.ShipToAddress = shipPhone, shipAddr
 	existing.TaxInvoiceNumber, existing.TaxInvoiceDate = taxNo, taxDate
+	existing.AssignedUserID = in.AssignedUserID
 	existing.Items = nil
 	for _, l := range lines {
 		existing.Items = append(existing.Items, l.item)
@@ -397,7 +644,10 @@ func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, 
 
 // resolveShipTo snapshots the customer address (C2: frozen at write time,
 // never follows later master edits) and validates the tax invoice date
-// (C3). Zero address id means no ship-to (walk-in / ambil sendiri).
+// (C3). A saved address (ShipToAddressID) wins; otherwise an ad-hoc address
+// typed on the order (label/recipient/phone/text, SL-01) is snapshotted as-is
+// with address id 0 — walk-in orders may use it too. Neither = no ship-to
+// (walk-in / ambil sendiri).
 func (s *Service) resolveShipTo(ctx context.Context, in OrderInput) (addrID int64, label, recipient, phone, address, taxNo, taxDate string, err error) {
 	if in.ShipToAddressID != 0 {
 		a, err := s.parties.GetAddress(ctx, in.PartyID, in.ShipToAddressID)
@@ -408,6 +658,11 @@ func (s *Service) resolveShipTo(ctx context.Context, in OrderInput) (addrID int6
 			return 0, "", "", "", "", "", "", apperror.Validation("", []apperror.FieldError{{Field: "shipToAddressId", Message: "alamat kirim tidak ditemukan"}})
 		}
 		addrID, label, recipient, phone, address = a.ID, a.Label, a.Recipient, a.Phone, a.Text
+	} else if fields := adHocShipToErrors(in); len(fields) > 0 {
+		return 0, "", "", "", "", "", "", apperror.Validation("", fields)
+	} else {
+		label, recipient = strings.TrimSpace(in.ShipToLabel), strings.TrimSpace(in.ShipToRecipient)
+		phone, address = strings.TrimSpace(in.ShipToPhone), strings.TrimSpace(in.ShipToAddress)
 	}
 	taxNo = strings.TrimSpace(in.TaxInvoiceNumber)
 	if d := strings.TrimSpace(in.TaxInvoiceDate); d != "" {
@@ -419,40 +674,158 @@ func (s *Service) resolveShipTo(ctx context.Context, in OrderInput) (addrID int6
 	return addrID, label, recipient, phone, address, taxNo, taxDate, nil
 }
 
+// Column widths of the ship-to snapshot (sales_orders ship_to_*).
+const (
+	maxShipToLabel     = 120
+	maxShipToRecipient = 150
+	maxShipToPhone     = 30
+	maxShipToAddress   = 1000
+)
+
+// adHocShipToErrors validates a one-off ship-to: any detail without the
+// address text is refused (a recipient with nowhere to go is a typo).
+func adHocShipToErrors(in OrderInput) []apperror.FieldError {
+	label, recipient := strings.TrimSpace(in.ShipToLabel), strings.TrimSpace(in.ShipToRecipient)
+	phone, address := strings.TrimSpace(in.ShipToPhone), strings.TrimSpace(in.ShipToAddress)
+	if label == "" && recipient == "" && phone == "" && address == "" {
+		return nil
+	}
+	var fields []apperror.FieldError
+	fail := func(field, msg string) { fields = append(fields, apperror.FieldError{Field: field, Message: msg}) }
+	if address == "" {
+		fail("shipToAddress", "alamat kirim wajib diisi bila memakai alamat sekali pakai")
+	}
+	if len([]rune(address)) > maxShipToAddress {
+		fail("shipToAddress", "maksimal 1000 karakter")
+	}
+	if len([]rune(label)) > maxShipToLabel {
+		fail("shipToLabel", "maksimal 120 karakter")
+	}
+	if len([]rune(recipient)) > maxShipToRecipient {
+		fail("shipToRecipient", "maksimal 150 karakter")
+	}
+	if len([]rune(phone)) > maxShipToPhone {
+		fail("shipToPhone", "maksimal 30 karakter")
+	}
+	return fields
+}
+
 // ConfirmOrder locks a draft into confirmed (stock moves only at delivery).
+// A CAS from draft; confirming an order that is already confirmed is a replay
+// (the POS retries the same checkout) and succeeds without a second audit row.
 func (s *Service) ConfirmOrder(ctx context.Context, actorID, branchID, id int64) (*contracts.SalesOrder, error) {
 	existing, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
 	}
+	if existing.Status == contracts.StatusConfirmed {
+		return s.GetByID(ctx, id)
+	}
 	if existing.Status != contracts.StatusDraft {
 		return nil, apperror.Conflict("Hanya draft yang bisa dikonfirmasi")
 	}
-	if err := s.repo.SetStatus(ctx, id, contracts.StatusConfirmed, actorID); err != nil {
+	won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft}, contracts.StatusConfirmed, actorID)
+	if err != nil {
 		return nil, apperror.Internal(err)
+	}
+	if !won {
+		cur, err := s.repo.GetOrder(ctx, id)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if cur == nil || cur.Status != contracts.StatusConfirmed {
+			return nil, apperror.Conflict("Status order berubah, muat ulang")
+		}
+		return s.GetByID(ctx, id)
 	}
 	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.confirm", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number})
 	return s.GetByID(ctx, id)
 }
 
-// CancelOrder voids a draft or confirmed SO.
+// CancelOrder voids a draft or confirmed SO — only while nothing hangs off it.
+// Serialized per order; the status is re-read inside the lock, the dependents
+// are consulted (live shipments, active payments, live returns) and the move
+// is a CAS. A repeat on a cancelled order is a successful no-op.
 func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) (*contracts.SalesOrder, error) {
-	existing, err := s.mustOwnBranch(ctx, id, branchID)
+	if _, err := s.mustOwnBranch(ctx, id, branchID); err != nil {
+		return nil, err
+	}
+	var number string
+	var replayed bool
+	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
+		existing, err := s.mustOwnBranch(ctx, id, branchID)
+		if err != nil {
+			return err
+		}
+		number = existing.Number
+		switch existing.Status {
+		case contracts.StatusCancelled:
+			replayed = true
+			return nil
+		case contracts.StatusCompleted:
+			return apperror.Conflict("Order sudah final")
+		}
+		if err := s.assertNoDependents(ctx, id); err != nil {
+			return err
+		}
+		won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if !won {
+			cur, err := s.repo.GetOrder(ctx, id)
+			if err != nil {
+				return apperror.Internal(err)
+			}
+			if cur == nil || cur.Status != contracts.StatusCancelled {
+				return apperror.Conflict("Status order berubah, muat ulang")
+			}
+			replayed = true
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if existing.Status == contracts.StatusCompleted || existing.Status == contracts.StatusCancelled {
-		return nil, apperror.Conflict("Order sudah final")
+	if !replayed {
+		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.cancel", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number})
 	}
-	if err := s.repo.SetStatus(ctx, id, contracts.StatusCancelled, actorID); err != nil {
-		return nil, apperror.Internal(err)
-	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.cancel", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number})
 	return s.GetByID(ctx, id)
 }
 
-// ApproveCredit switches a confirmed COD order to net terms with a due date
-// (legacy approve-credit: pay_now/switch_to_net settlement path).
+// assertNoDependents refuses to cancel an order that already has live
+// shipments, active payments or live returns, naming what blocks it.
+func (s *Service) assertNoDependents(ctx context.Context, soID int64) error {
+	if s.dep.deliveries == nil || s.dep.payments == nil || s.dep.returns == nil {
+		return apperror.Internal(errDependentsNotWired)
+	}
+	if n, err := s.dep.deliveries.ActiveNoteCount(ctx, soID); err != nil {
+		return apperror.Internal(err)
+	} else if n > 0 {
+		return apperror.Conflict("Order sudah memiliki surat jalan (draf atau terkonfirmasi); batalkan surat jalannya dulu")
+	}
+	if used, err := s.dep.payments.HasActiveAllocations(ctx, paymentcontracts.OrderSales, soID); err != nil {
+		return apperror.Internal(err)
+	} else if used {
+		return apperror.Conflict("Order sudah memiliki pembayaran aktif; batalkan pembayarannya dulu")
+	}
+	if n, err := s.dep.returns.ActiveReturnCount(ctx, soID); err != nil {
+		return apperror.Internal(err)
+	} else if n > 0 {
+		return apperror.Conflict("Order sudah memiliki retur (draf atau terkonfirmasi); batalkan returnya dulu")
+	}
+	return nil
+}
+
+// errDependentsNotWired is a programmer error: bootstrap must call SetDependents.
+var errDependentsNotWired = errors.New("sales dependents not wired")
+
+// ApproveCredit switches a confirmed cash-terms order (cod OR prepaid) to net
+// terms with a due date (legacy approve-credit: any non-net order). It shares
+// the exact eligibility of SwitchToNet (SL-10 decision, PLAN §7): both accept
+// cod and prepaid, so the endpoint and the delivery settlement can never
+// disagree about which orders may go on credit. Who approved and when is
+// stamped on the order by the switch itself.
 func (s *Service) ApproveCredit(ctx context.Context, actorID, branchID, id int64, dueDate string) (*contracts.SalesOrder, error) {
 	existing, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
@@ -461,20 +834,45 @@ func (s *Service) ApproveCredit(ctx context.Context, actorID, branchID, id int64
 	if existing.Status != contracts.StatusConfirmed {
 		return nil, apperror.Conflict("Hanya order terkonfirmasi yang bisa disetujui kreditnya")
 	}
-	if existing.PaymentTerms != "cod" {
-		return nil, apperror.Conflict("Order ini bukan tunai")
+	if existing.PaymentTerms != "cod" && existing.PaymentTerms != "prepaid" {
+		return nil, apperror.Conflict("Order ini sudah bertermin tempo")
 	}
-	if strings.TrimSpace(dueDate) == "" {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "dueDate", Message: "wajib diisi"}})
-	}
-	if _, err := timeutil.ParseDateInput(strings.TrimSpace(dueDate)); err != nil {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "dueDate", Message: "format tanggal harus YYYY-MM-DD"}})
-	}
-	if err := s.repo.SetTerms(ctx, id, "net", strings.TrimSpace(dueDate), actorID); err != nil {
-		return nil, apperror.Internal(err)
+	if err := s.SwitchToNet(ctx, branchID, id, dueDate, actorID); err != nil {
+		return nil, err
 	}
 	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.approve_credit", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number})
 	return s.GetByID(ctx, id)
+}
+
+// SwitchToNet moves a confirmed cash-terms order (cod/prepaid) to net with a
+// due date, as a CAS on the terms. An order that already is net with the same
+// due date replays successfully; any other state is a conflict.
+func (s *Service) SwitchToNet(ctx context.Context, branchID, id int64, dueDate string, actorID int64) error {
+	if _, err := s.mustOwnBranch(ctx, id, branchID); err != nil {
+		return err
+	}
+	due := strings.TrimSpace(dueDate)
+	if due == "" {
+		return apperror.Validation("", []apperror.FieldError{{Field: "dueDate", Message: "wajib diisi"}})
+	}
+	if _, err := timeutil.ParseDateInput(due); err != nil {
+		return apperror.Validation("", []apperror.FieldError{{Field: "dueDate", Message: "format tanggal harus YYYY-MM-DD"}})
+	}
+	won, err := s.repo.SwitchToNet(ctx, id, due, actorID)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	if won {
+		return nil
+	}
+	cur, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	if cur != nil && cur.Status == contracts.StatusConfirmed && cur.PaymentTerms == "net" && strings.HasPrefix(cur.DueDate, due) {
+		return nil
+	}
+	return apperror.Conflict("Order tidak lagi berstatus terkonfirmasi dengan termin tunai")
 }
 
 // ListByParty lists a party's documents for balance computation.
@@ -495,18 +893,79 @@ type ListResult struct {
 	Total  int64
 }
 
-// List searches numbers with optional status/channel filters (branch-scoped).
-func (s *Service) List(ctx context.Context, branchID int64, search, status, channel string, page, limit int) (*ListResult, error) {
-	total, err := s.repo.Count(ctx, branchID, search, status, channel)
+// ListFilter is the filter set of the order list/export (see
+// infrastructure.ListFilter): search (number or customer), status CSV,
+// channel, payment terms, party, order-date range.
+type ListFilter = infrastructure.ListFilter
+
+// prepareFilter validates what the handler cannot and resolves the free-text
+// term to customer ids through the party contract (no cross-module join):
+// a row matches by number OR by one of those customers. Terms shorter than two
+// characters never search parties (decision A-15).
+func (s *Service) prepareFilter(ctx context.Context, f *ListFilter) error {
+	if err := listquery.ValidateEnum("paymentTerms", f.PaymentTerms, "cod", "net", "prepaid"); err != nil {
+		return err
+	}
+	if err := listquery.ValidateEnum("channel", f.Channel, contracts.ChannelRegular, contracts.ChannelPOS); err != nil {
+		return err
+	}
+	if err := s.preparePaymentFilter(f); err != nil {
+		return err
+	}
+	f.SearchPartyIDs = nil
+	if strings.TrimSpace(f.Search) != "" {
+		ids, err := s.parties.SearchIDs(ctx, partycontracts.PartyCustomer, f.Search, listquery.MaxIn)
+		if err != nil {
+			return err
+		}
+		f.SearchPartyIDs = ids
+	}
+	return nil
+}
+
+// decorateParties fills PartyName for a page in one batch read; walk-in reads
+// "Tunai". Best-effort for deleted parties (name stays empty).
+func (s *Service) decorateParties(ctx context.Context, orders []*contracts.SalesOrder) error {
+	ids := make([]int64, 0, len(orders))
+	for _, o := range orders {
+		ids = append(ids, o.PartyID)
+	}
+	names, err := s.parties.NamesByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, o := range orders {
+		if o.PartyID == 0 {
+			o.PartyName = "Tunai"
+			continue
+		}
+		o.PartyName = names[o.PartyID]
+	}
+	return nil
+}
+
+// List filters the branch's orders (newest first unless a whitelisted sort is
+// set); the count uses the identical where.
+func (s *Service) List(ctx context.Context, branchID int64, f ListFilter, page, limit int) (*ListResult, error) {
+	if err := s.prepareFilter(ctx, &f); err != nil {
+		return nil, err
+	}
+	if f.PaymentStatus != "" {
+		return s.listByPaymentStatus(ctx, branchID, f, page, limit)
+	}
+	total, err := s.repo.Count(ctx, branchID, f)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	orders, err := s.repo.List(ctx, branchID, search, status, channel, limit, (page-1)*limit)
+	orders, err := s.repo.List(ctx, branchID, f, limit, (page-1)*limit)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
 	if orders == nil {
 		orders = []*contracts.SalesOrder{}
+	}
+	if err := s.decorateParties(ctx, orders); err != nil {
+		return nil, err
 	}
 	return &ListResult{Orders: orders, Total: total}, nil
 }

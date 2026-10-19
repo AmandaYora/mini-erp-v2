@@ -12,7 +12,9 @@ func openingBook(t *testing.T, rows ...[]string) *bytes.Buffer {
 	t.Helper()
 	f := excelize.NewFile()
 	sheet := "opening"
-	f.SetSheetName("Sheet1", sheet)
+	if err := f.SetSheetName("Sheet1", sheet); err != nil {
+		t.Fatal(err)
+	}
 	headers := []string{"product_code", "variant_code", "location_code", "qty"}
 	for c, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(c+1, 1)
@@ -106,14 +108,14 @@ func TestReservationHoldRelease(t *testing.T) {
 		fx.locationID, 500, "uji-kunci-2", 60); err == nil {
 		t.Fatal("expected over-hold rejection, got nil")
 	}
-	if err := m.stock.Service().Release(ctx(), 0, "uji-kunci-1"); err != nil {
+	if err := m.stock.Service().Release(ctx(), 0, 0, "uji-kunci-1"); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 	if avail() != 50 {
 		t.Fatalf("available after release = %v, want 50", avail())
 	}
 	// Unknown keys succeed idempotently.
-	if err := m.stock.Service().Release(ctx(), 0, "tidak-ada"); err != nil {
+	if err := m.stock.Service().Release(ctx(), 0, 0, "tidak-ada"); err != nil {
 		t.Fatalf("release unknown: %v", err)
 	}
 }

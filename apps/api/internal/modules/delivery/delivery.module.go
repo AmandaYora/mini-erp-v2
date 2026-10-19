@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
 	"mini-erp/internal/modules/delivery/application"
 	"mini-erp/internal/modules/delivery/contracts"
@@ -30,10 +31,15 @@ func NewModule(
 	branches branchcontracts.BranchClient,
 	media mediacontracts.MediaClient,
 	audit auditcontracts.AuditClient,
+	settings application.Settings,
 ) *Module {
 	svc := application.NewService(infrastructure.NewRepository(db), sales, products, stock, branches, media, audit)
+	svc.SetSettings(settings)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc)}
 }
+
+// SetPayments wires the payment module (built after delivery) for settlement.
+func (m *Module) SetPayments(p application.Payments) { m.svc.SetPayments(p) }
 
 // Deliveries exposes the public contract to other modules.
 func (m *Module) Deliveries() contracts.DeliveryClient {
@@ -46,6 +52,12 @@ func (m *Module) Service() *application.Service {
 }
 
 // RegisterRoutes mounts endpoints with the auth-built permission wrapper.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, media mediacontracts.MediaClient, perm presentation.Permission, branchGuard func(http.Handler) http.Handler) {
+func (m *Module) RegisterRoutes(mux *http.ServeMux, media mediacontracts.MediaClient, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
 	presentation.RegisterRoutes(mux, m.handler, media, perm, branchGuard)
+}
+
+// Verify reports late-bound dependencies that bootstrap.Wire has not set, so a
+// forgotten edge fails at startup instead of at the first request.
+func (m *Module) Verify() error {
+	return m.svc.Verify()
 }

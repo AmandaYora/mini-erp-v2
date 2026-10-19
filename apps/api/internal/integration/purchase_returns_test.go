@@ -154,17 +154,17 @@ func TestPurchaseReturnBothDiffSigns(t *testing.T) {
 	}
 	legs := journalSums(dearEntry)
 	// relieved = 2 × 13500 = 27000; diff = 36000 − 27000 = +9000 → Cr 6200.
-	if legs["2100"] != [2]int64{39960, 0} {
-		t.Fatalf("2100 legs = %v, want debit 39960", legs["2100"])
+	if legs["2000"] != [2]int64{39960, 0} {
+		t.Fatalf("2100 legs = %v, want debit 39960", legs["2000"])
 	}
-	if legs["1400"] != [2]int64{0, 3960} {
-		t.Fatalf("1400 legs = %v, want credit 3960", legs["1400"])
+	if legs["1300"] != [2]int64{0, 3960} {
+		t.Fatalf("1400 legs = %v, want credit 3960", legs["1300"])
 	}
-	if legs["1300"] != [2]int64{0, 27000} {
-		t.Fatalf("1300 legs = %v, want credit 27000", legs["1300"])
+	if legs["1200"] != [2]int64{0, 27000} {
+		t.Fatalf("1300 legs = %v, want credit 27000", legs["1200"])
 	}
-	if legs["6200"] != [2]int64{0, 9000} {
-		t.Fatalf("6200 legs = %v, want credit 9000 (diff>0)", legs["6200"])
+	if legs["5300"] != [2]int64{0, 9000} {
+		t.Fatalf("6200 legs = %v, want credit 9000 (diff>0)", legs["5300"])
 	}
 
 	cheap, err := m.purchasereturn.Service().Create(ctx(), 0, fx.branchID, cheapPO, "2026-09-10", "",
@@ -185,16 +185,16 @@ func TestPurchaseReturnBothDiffSigns(t *testing.T) {
 	legs = journalSums(cheapEntry)
 	// relieved still 2 × 13500 = 27000 (average unchanged by returns);
 	// diff = 18000 − 27000 = −9000 → Dr 6200.
-	if legs["2100"] != [2]int64{19980, 0} {
-		t.Fatalf("2100 legs = %v, want debit 19980", legs["2100"])
+	if legs["2000"] != [2]int64{19980, 0} {
+		t.Fatalf("2100 legs = %v, want debit 19980", legs["2000"])
 	}
-	if legs["1400"] != [2]int64{0, 1980} {
-		t.Fatalf("1400 legs = %v, want credit 1980", legs["1400"])
+	if legs["1300"] != [2]int64{0, 1980} {
+		t.Fatalf("1400 legs = %v, want credit 1980", legs["1300"])
 	}
-	if legs["1300"] != [2]int64{0, 27000} {
-		t.Fatalf("1300 legs = %v, want credit 27000", legs["1300"])
+	if legs["1200"] != [2]int64{0, 27000} {
+		t.Fatalf("1300 legs = %v, want credit 27000", legs["1200"])
 	}
-	if legs["6200"] != [2]int64{9000, 0} {
-		t.Fatalf("6200 legs = %v, want debit 9000 (diff<0)", legs["6200"])
+	if legs["5300"] != [2]int64{9000, 0} {
+		t.Fatalf("6200 legs = %v, want debit 9000 (diff<0)", legs["5300"])
 	}
 }

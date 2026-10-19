@@ -10,6 +10,7 @@ import (
 	mediacontracts "mini-erp/internal/modules/media/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/httpx"
+	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
 )
@@ -22,20 +23,6 @@ type Handler struct {
 // NewHandler wires delivery endpoints.
 func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
-}
-
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
 }
 
 func noteView(n *contracts.DeliveryNote) map[string]any {
@@ -67,14 +54,26 @@ func noteView(n *contracts.DeliveryNote) map[string]any {
 // List handles GET /api/v1/deliveries.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	var soID int64
-	if raw := q.Get("salesOrderId"); raw != "" {
-		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
-			soID = id
-		}
+	c, err := listquery.ParseCommon(q, nil)
+	if err != nil {
+		response.FailErr(w, err)
+		return
 	}
-	res, err := h.svc.List(r.Context(), branchID(r), soID, q.Get("status"), page, limit)
+	page, limit := c.Page, c.Limit
+	soID, err := listquery.ParseID(q.Get("salesOrderId"), "salesOrderId")
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	srID, err := listquery.ParseID(q.Get("salesReturnId"), "salesReturnId")
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	res, err := h.svc.ListFiltered(r.Context(), authcontracts.BranchID(r), application.ListFilter{
+		Search: c.Search, Statuses: c.Statuses, SalesOrderID: soID, SalesReturnID: srID,
+		DocumentKind: q.Get("documentKind"), From: c.From, To: c.To,
+	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -101,7 +100,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		response.FailErr(w, appErr)
 		return
 	}
-	if n == nil || n.BranchID != branchID(r) {
+	if n == nil || n.BranchID != authcontracts.BranchID(r) {
 		response.Fail(w, apperror.NotFound("Surat jalan"))
 		return
 	}
@@ -118,12 +117,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		WarehouseStaffName string `json:"warehouseStaffName"`
 		DropLocationNote   string `json:"dropLocationNote"`
 		Notes              string `json:"notes"`
+		ClientRef          string `json:"clientRef"`
 		Items              []struct {
-			ProductID  int64   `json:"productId" validate:"required"`
-			VariantID  int64   `json:"variantId" validate:"required"`
-			LocationID int64   `json:"locationId" validate:"required"`
-			UOM        string  `json:"uom" validate:"required"`
-			Qty        float64 `json:"qty" validate:"required"`
+			ProductID      int64   `json:"productId" validate:"required"`
+			VariantID      int64   `json:"variantId" validate:"required"`
+			LocationID     int64   `json:"locationId"`
+			UOM            string  `json:"uom" validate:"required"`
+			Qty            float64 `json:"qty" validate:"required"`
+			ReservationKey string  `json:"reservationKey"`
 		} `json:"items" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
@@ -134,18 +135,28 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	for _, l := range in.Items {
 		lines = append(lines, application.LineInput{
 			ProductID: l.ProductID, VariantID: l.VariantID,
-			LocationID: l.LocationID, UOM: l.UOM, Qty: l.Qty,
+			LocationID: l.LocationID, UOM: l.UOM, Qty: l.Qty, ReservationKey: l.ReservationKey,
 		})
 	}
-	n, err := h.svc.Create(r.Context(), actorID(r), branchID(r), in.SalesOrderID, in.DeliveryDate, in.Notes, application.DocInput{
+	n, replayed, err := h.svc.CreateIdempotent(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.SalesOrderID, in.DeliveryDate, in.Notes, application.DocInput{
 		DriverName: in.DriverName, VehiclePlate: in.VehiclePlate,
 		WarehouseStaffName: in.WarehouseStaffName, DropLocationNote: in.DropLocationNote,
+		ClientRef: in.ClientRef,
 	}, lines)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
-	response.Created(w, "Surat jalan dibuat", noteView(n))
+	view := noteView(n)
+	if len(n.Warnings) > 0 {
+		view["warnings"] = n.Warnings
+	}
+	if replayed {
+		view["replayed"] = true
+		response.OK(w, "Surat jalan sudah dibuat sebelumnya", view)
+		return
+	}
+	response.Created(w, "Surat jalan dibuat", view)
 }
 
 // Confirm handles POST /api/v1/deliveries/{id}/confirm.
@@ -159,6 +170,14 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 		RecipientName                   string `json:"recipientName"`
 		RecipientSignatureStatus        string `json:"recipientSignatureStatus"`
 		RecipientSignatureMissingReason string `json:"recipientSignatureMissingReason"`
+		Settlement                      *struct {
+			Mode           string `json:"mode"`
+			Method         string `json:"method"`
+			PaymentDate    string `json:"paymentDate"`
+			Reference      string `json:"reference"`
+			AmountTendered int64  `json:"amountTendered"`
+			DueDate        string `json:"dueDate"`
+		} `json:"settlement"`
 	}
 	// Receipt evidence is optional: bare confirms (POS flow, existing
 	// callers) post an empty body.
@@ -168,10 +187,33 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	n, appErr := h.svc.Confirm(r.Context(), actorID(r), branchID(r), id, application.ConfirmInput{
+	ci := application.ConfirmInput{
 		RecipientName: in.RecipientName, RecipientSignatureStatus: in.RecipientSignatureStatus,
 		RecipientSignatureMissingReason: in.RecipientSignatureMissingReason,
-	})
+	}
+	if in.Settlement != nil {
+		// Paying on the spot needs payment.create; converting to net terms
+		// needs the credit-approval permission (legacy parity).
+		sess := authcontracts.SessionFromContext(r.Context())
+		need := "payment.create"
+		if in.Settlement.Mode == application.SettleSwitchToNet {
+			need = "sales.approve"
+		}
+		posOnly := false
+		if sess != nil && !sess.HasPermission(need) && need == "payment.create" && sess.HasPermission("sales.create") {
+			// The cashier of a POS counter takes the money on the spot; the
+			// service refuses this for any order that is not a POS order.
+			posOnly = true
+		} else if sess == nil || !sess.HasPermission(need) {
+			response.Fail(w, apperror.Forbidden())
+			return
+		}
+		ci.Settlement = &application.Settlement{PosOnly: posOnly,
+			Mode: in.Settlement.Mode, Method: in.Settlement.Method, PaymentDate: in.Settlement.PaymentDate,
+			Reference: in.Settlement.Reference, AmountTendered: in.Settlement.AmountTendered, DueDate: in.Settlement.DueDate,
+		}
+	}
+	n, appErr := h.svc.Confirm(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, ci)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -186,7 +228,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Surat jalan"))
 		return
 	}
-	n, appErr := h.svc.Cancel(r.Context(), actorID(r), branchID(r), id)
+	n, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -207,7 +249,7 @@ func (h *Handler) ProofUpload(w http.ResponseWriter, r *http.Request, media medi
 		return
 	}
 	defer func() { _ = fh.Close() }()
-	url, svcErr := h.svc.Proof(r.Context(), actorID(r), branchID(r), id, mediacontracts.Upload{
+	url, svcErr := h.svc.Proof(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, r.FormValue("purpose"), mediacontracts.Upload{
 		OriginalName: header.Filename, MIME: header.Header.Get("Content-Type"),
 		Content: fh, Accept: []string{"image/"},
 	})
@@ -225,7 +267,7 @@ func (h *Handler) Proofs(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Surat jalan"))
 		return
 	}
-	proofs, appErr := h.svc.Proofs(r.Context(), branchID(r), id)
+	proofs, appErr := h.svc.Proofs(r.Context(), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -247,7 +289,7 @@ func (h *Handler) WorkQueue(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	queue, err := h.svc.WorkQueue(r.Context(), branchID(r),
+	queue, err := h.svc.WorkQueue(r.Context(), authcontracts.BranchID(r),
 		q.Get("search"), q.Get("from"), q.Get("to"), q.Get("age"), limit)
 	if err != nil {
 		response.FailErr(w, err)
@@ -270,6 +312,7 @@ func (h *Handler) WorkQueue(w http.ResponseWriter, r *http.Request) {
 			"paymentTerms": o.PaymentTerms, "grandTotal": o.GrandTotal,
 			"lines": lines, "totalOrdered": o.TotalOrdered,
 			"totalDelivered": o.TotalDelivered, "pendingDrafts": o.PendingDrafts,
+			"itemCount": o.ItemCount,
 		})
 	}
 	waiting := make([]any, 0, len(queue.WaitingReturn))
@@ -279,6 +322,7 @@ func (h *Handler) WorkQueue(w http.ResponseWriter, r *http.Request) {
 			"orderNumber": n.OrderNumber, "partyName": n.PartyName,
 			"deliveryDate": n.DeliveryDate, "ageDays": n.AgeDays,
 			"driverName": n.DriverName, "vehiclePlate": n.VehiclePlate,
+			"hasSignedDocument": n.HasSignedDocument,
 		})
 	}
 	response.OK(w, "Antrian kerja pengiriman", map[string]any{
@@ -286,23 +330,15 @@ func (h *Handler) WorkQueue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
-// guarded adapts the branch guard into func-style middleware.
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
-}
-
 // RegisterRoutes mounts delivery endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, media mediacontracts.MediaClient, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/deliveries", perm("delivery.view", guarded(h.List, branchGuard)))
-	mux.Handle("GET /api/v1/deliveries/work-queue", perm("delivery.view", guarded(h.WorkQueue, branchGuard)))
-	mux.Handle("POST /api/v1/deliveries", perm("delivery.create", guarded(h.Create, branchGuard)))
-	mux.Handle("GET /api/v1/deliveries/{id}", perm("delivery.view", guarded(h.Get, branchGuard)))
-	mux.Handle("POST /api/v1/deliveries/{id}/confirm", perm("delivery.create", guarded(h.Confirm, branchGuard)))
-	mux.Handle("POST /api/v1/deliveries/{id}/cancel", perm("delivery.archive", guarded(h.Cancel, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, media mediacontracts.MediaClient, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/deliveries", perm("delivery.view", authcontracts.Guard(h.List, branchGuard)))
+	mux.Handle("GET /api/v1/deliveries/work-queue", perm("delivery.view", authcontracts.Guard(h.WorkQueue, branchGuard)))
+	mux.Handle("POST /api/v1/deliveries", perm("delivery.create", authcontracts.Guard(h.Create, branchGuard)))
+	mux.Handle("GET /api/v1/deliveries/{id}", perm("delivery.view", authcontracts.Guard(h.Get, branchGuard)))
+	mux.Handle("POST /api/v1/deliveries/{id}/confirm", perm("delivery.create", authcontracts.Guard(h.Confirm, branchGuard)))
+	mux.Handle("POST /api/v1/deliveries/{id}/cancel", perm("delivery.archive", authcontracts.Guard(h.Cancel, branchGuard)))
 	mux.Handle("POST /api/v1/deliveries/{id}/proof", perm("delivery.create",
-		func(w http.ResponseWriter, r *http.Request) { h.ProofUpload(w, r, media) }))
-	mux.Handle("GET /api/v1/deliveries/{id}/proofs", perm("delivery.view", guarded(h.Proofs, branchGuard)))
+		authcontracts.Guard(func(w http.ResponseWriter, r *http.Request) { h.ProofUpload(w, r, media) }, branchGuard)))
+	mux.Handle("GET /api/v1/deliveries/{id}/proofs", perm("delivery.view", authcontracts.Guard(h.Proofs, branchGuard)))
 }

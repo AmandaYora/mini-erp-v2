@@ -24,6 +24,8 @@ type Item struct {
 	UOMFactor  float64
 	Qty        float64
 	QtyBase    float64
+	// ReservationKey names the stock hold this line consumes (POS cart).
+	ReservationKey string
 }
 
 // DeliveryNote is one surat jalan against an SO.
@@ -51,7 +53,11 @@ type DeliveryNote struct {
 	SalesReturnID int64
 	Status        string
 	Notes         string
+	ClientRef     string
 	Items         []*Item
+	// Warnings are soft notices computed when a draft is created (DL-04, ADR-0018
+	// D2): never persisted, only returned by the create call.
+	Warnings []string
 }
 
 // Document kinds for delivery notes.
@@ -82,14 +88,37 @@ type ReplacementDraft struct {
 	VehiclePlate   string
 	WarehouseStaff string
 	DropNote       string
-	Items          []ReplacementLine
+	// AtCounter marks a replacement handed over at the POS counter in the same
+	// step as the return (RT-02): it has no crew, so the driver/staff rule
+	// (RT-03) does not apply.
+	AtCounter bool
+	Items     []ReplacementLine
 }
 
-// ReplacementConfirm carries receipt evidence for a replacement shipment.
+// ReplacementConfirm carries receipt evidence for a replacement shipment and,
+// optionally, the money collected on the spot for an exchange that costs more
+// than the returned goods (K-04e).
 type ReplacementConfirm struct {
 	RecipientName            string
 	RecipientSignatureStatus string
 	MissingReason            string
+	// Settlement is the pay_now surcharge collected with the hand-over. The
+	// salesreturn module validates it (charge kind, cap) before calling and
+	// passes the resolved Amount; nil = nothing collected now.
+	Settlement *ReplacementSettlement
+}
+
+// ReplacementSettlement is the surcharge payment of an exchange recorded when
+// its replacement shipment is confirmed. The payment is allocated to the
+// SALES RETURN (charge kind), not to the source order.
+type ReplacementSettlement struct {
+	// Amount is the money collected (must be > 0; salesreturn defaults it to
+	// the whole open surcharge before calling).
+	Amount         int64
+	Method         string
+	PaymentDate    string
+	Reference      string
+	AmountTendered int64
 }
 
 // DeliveryClient is the public surface of the delivery module.
@@ -99,6 +128,16 @@ type DeliveryClient interface {
 	// DeliveredQty sums confirmed-delivered base qty for one SO line
 	// position. Returns cap the source of every sales return.
 	DeliveredQty(ctx context.Context, soID, productID, variantID int64) (float64, error)
+	// ListBySO lists the order's shipments (all statuses, oldest first).
+	ListBySO(ctx context.Context, branchID, soID int64) ([]*DeliveryNote, error)
+	// ConfirmedQtyBefore sums, per "product/variant/uom", the line-UOM qty of
+	// the order's confirmed order-kind notes with an id below noteID. Finance
+	// uses it to split a line's value so that the notes add up to the line
+	// exactly (the note that completes a line takes the rounding remainder).
+	ConfirmedQtyBefore(ctx context.Context, soID, noteID int64) (map[string]float64, error)
+	// ActiveNoteCount counts the order's live (draft + confirmed) order-kind
+	// shipments. Sales uses it to refuse cancelling an order under them.
+	ActiveNoteCount(ctx context.Context, soID int64) (int64, error)
 	// CreateReplacement drafts a replacement shipment for an exchange
 	// return. No SO-status check: the order is already completed.
 	CreateReplacement(ctx context.Context, actorID, branchID int64, in ReplacementDraft) (*DeliveryNote, error)
@@ -107,11 +146,26 @@ type DeliveryClient interface {
 	// ListConfirmed lists confirmed notes newest-first, bounded by limit.
 	// Finance reads it for the derived posting queue (no posting table).
 	ListConfirmed(ctx context.Context, branchID int64, limit int) ([]*DeliveryNote, error)
+	// ListConfirmedAfter pages confirmed notes by ascending id after a cursor.
+	// Finance walks the whole set with it (no silent cap) to find what is
+	// still unjournalled.
+	ListConfirmedAfter(ctx context.Context, branchID, afterID int64, limit int) ([]*DeliveryNote, error)
 	// OrderIDsByNotes maps note id -> sales order id in one grouped read.
 	// Finance uses it to attribute journal entries to the economic
 	// transaction behind them; a per-note GetByID loop would be the N+1
 	// this exists to avoid.
 	OrderIDsByNotes(ctx context.Context, ids []int64) (map[int64]int64, error)
+	// TransportByOrders names the drivers and vehicle plates of the orders'
+	// live (draft + confirmed) order-kind shipments in one grouped read. Orders
+	// without a named driver/plate are absent.
+	TransportByOrders(ctx context.Context, orderIDs []int64) (map[int64]OrderTransport, error)
+}
+
+// OrderTransport is the driver/plate label of one order: the distinct names in
+// shipment order, joined with ", ".
+type OrderTransport struct {
+	Drivers string
+	Plates  string
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

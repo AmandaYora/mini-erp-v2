@@ -42,8 +42,8 @@ func TestMoveLocationOneStep(t *testing.T) {
 	}
 }
 
-// TestMoveLocationShortAbortsWhole: a short line moves nothing — the draft
-// stays behind for review, balances untouched.
+// TestMoveLocationShortAbortsWhole: a short line moves nothing and leaves no
+// document behind (the move is one transaction), balances untouched.
 func TestMoveLocationShortAbortsWhole(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
@@ -68,12 +68,12 @@ func TestMoveLocationShortAbortsWhole(t *testing.T) {
 	if bal.OnHand != 50 {
 		t.Fatalf("onhand = %v, want 50 (nothing moved)", bal.OnHand)
 	}
-	res, err := m.stock.Service().ListTransfers(ctx(), fx.branchID, "draft", 1, 10)
+	res, err := m.stock.Service().ListTransfers(ctx(), fx.branchID, "", 1, 10)
 	if err != nil {
-		t.Fatalf("list drafts: %v", err)
+		t.Fatalf("list transfers: %v", err)
 	}
-	if res.Total != 1 {
-		t.Fatalf("drafts = %d, want 1 left behind", res.Total)
+	if res.Total != 0 {
+		t.Fatalf("transfers = %d, want 0 (no draft or in-transit leftovers)", res.Total)
 	}
 }
 

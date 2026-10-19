@@ -7,9 +7,10 @@ import (
 	"net/http"
 
 	"mini-erp/internal/modules/assistant/application"
-	"mini-erp/internal/modules/assistant/contracts"
 	"mini-erp/internal/modules/assistant/infrastructure"
 	"mini-erp/internal/modules/assistant/presentation"
+	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
 	financecontracts "mini-erp/internal/modules/finance/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
@@ -25,10 +26,11 @@ type Module struct {
 }
 
 // NewModule builds the assistant over its own tables plus provider
-// contracts. The WA session file lives under storageDir.
+// contracts. The WA session file lives under sessionDir, a folder the API
+// never serves (it is the credential of the linked number).
 func NewModule(
 	db *sql.DB,
-	storageDir string,
+	sessionDir string,
 	branches branchcontracts.BranchClient,
 	products productcontracts.ProductClient,
 	purchasing purchasingcontracts.PurchaseOrderClient,
@@ -36,18 +38,14 @@ func NewModule(
 	stock stockcontracts.StockClient,
 	finance financecontracts.FinanceClient,
 	log *slog.Logger,
+	audit auditcontracts.AuditClient,
 ) *Module {
 	svc := application.NewService(
 		infrastructure.NewRepository(db),
-		infrastructure.NewGateway(storageDir, log),
-		branches, products, purchasing, sales, stock, finance, log,
+		infrastructure.NewGateway(sessionDir, log),
+		branches, products, purchasing, sales, stock, finance, log, audit,
 	)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc)}
-}
-
-// Assistant exposes the public contract to other modules.
-func (m *Module) Assistant() contracts.AssistantClient {
-	return m.svc
 }
 
 // Service exposes use cases to the dev seed (composition root privilege).
@@ -61,7 +59,13 @@ func (m *Module) Boot(ctx context.Context) {
 	m.svc.Boot(ctx)
 }
 
+// SetContext binds the bot's long-lived work to the application lifecycle.
+func (m *Module) SetContext(ctx context.Context) { m.svc.SetContext(ctx) }
+
+// Close stops the assistant (waits for in-flight replies, closes the gateway).
+func (m *Module) Close(ctx context.Context) { m.svc.Close(ctx) }
+
 // RegisterRoutes mounts endpoints with the auth-built permission wrapper.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, perm presentation.Permission, branchGuard func(http.Handler) http.Handler) {
+func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
 	presentation.RegisterRoutes(mux, m.handler, perm, branchGuard)
 }

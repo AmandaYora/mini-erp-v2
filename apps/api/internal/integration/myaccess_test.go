@@ -48,7 +48,7 @@ func TestBranchMyAccessOnlyActiveWithDefault(t *testing.T) {
 
 	u, err := m.user.Service().CreateUser(ctx(), 0, userapp.CreateUserInput{
 		Username: "kasir-uji", FullName: "Kasir Uji", Password: "rahasia-123",
-		RoleIDs:  []int64{mustTestRole(t)},
+		RoleIDs: []int64{mustTestRole(t)},
 		Branches: []usercontracts.BranchAccess{
 			{BranchID: fx.branchID, IsDefault: true},
 			{BranchID: br2.ID},
@@ -74,7 +74,7 @@ func TestBranchMyAccessOnlyActiveWithDefault(t *testing.T) {
 
 	plain, err := m.user.Service().CreateUser(ctx(), 0, userapp.CreateUserInput{
 		Username: "tanpa-akses", FullName: "Tanpa Akses", Password: "rahasia-123",
-		RoleIDs:  []int64{mustTestRole(t)},
+		RoleIDs: []int64{mustTestRole(t)},
 	})
 	if err != nil {
 		t.Fatalf("create plain user: %v", err)

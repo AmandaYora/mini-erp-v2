@@ -4,8 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
+
+	"mini-erp/internal/shared/signedurl"
 )
 
 // BlobDriver abstracts byte storage: local disk (dev) or S3 object storage
@@ -16,52 +21,101 @@ type BlobDriver interface {
 	Store(ctx context.Context, key string, content io.Reader, contentType, originalName string) error
 	// Remove deletes stored bytes. Missing keys are not an error.
 	Remove(ctx context.Context, key string)
-	// URLFor resolves a readable URL (local path or presigned S3 URL).
+	// URLFor resolves a readable URL (signed local path or presigned S3 URL).
 	URLFor(ctx context.Context, key string) (string, error)
 }
 
-// LocalDriver stores bytes under dir, served by Server.MountUploads.
+// MediaURLPrefix is the path under which the API serves local media. Exactly
+// one place (Server.MountMedia) serves it and every URL carries a signature.
+const MediaURLPrefix = "/media/"
+
+// URLWindow is the granularity of local URL expiry: every URL for the same
+// file issued in one window is identical, so browser caching keeps working.
+const URLWindow = time.Hour
+
+// LocalDriver stores bytes under dir. dir is the media folder only — never the
+// storage root, which also holds secrets such as the WhatsApp session.
 type LocalDriver struct {
-	dir string
+	dir    string
+	signer *signedurl.Signer
+	ttl    time.Duration
 }
 
-// NewLocalDriver prepares dir for storage.
-func NewLocalDriver(dir string) (*LocalDriver, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// NewLocalDriver prepares dir for storage. ttl is how long a URL stays valid
+// beyond its window boundary (config STORAGE_SIGNED_URL_TTL_SECONDS).
+func NewLocalDriver(dir string, signer *signedurl.Signer, ttl time.Duration) (*LocalDriver, error) {
+	if signer == nil {
+		return nil, fmt.Errorf("signer URL media wajib diisi")
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, err
 	}
-	return &LocalDriver{dir: dir}, nil
+	return &LocalDriver{dir: dir, signer: signer, ttl: ttl}, nil
+}
+
+// resolve maps a key to a file path inside dir. Keys are server-generated, but
+// rows loaded by a migration are not trusted absolutely: anything that would
+// land outside dir is refused.
+func (d *LocalDriver) resolve(key string) (string, error) {
+	if key == "" || strings.ContainsRune(key, 0) || strings.Contains(key, "\\") {
+		return "", fmt.Errorf("kunci berkas tidak valid")
+	}
+	full := filepath.Join(d.dir, filepath.FromSlash(key))
+	rel, err := filepath.Rel(d.dir, full)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("kunci berkas di luar folder media")
+	}
+	return full, nil
 }
 
 // Store writes content to dir/key (parent dirs created).
 func (d *LocalDriver) Store(_ context.Context, key string, content io.Reader, _ string, _ string) error {
-	full := filepath.Join(d.dir, filepath.FromSlash(key))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return err
-	}
-	out, err := os.Create(full)
+	full, err := d.resolve(key)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
-	written, err := io.Copy(out, content)
-	if err != nil {
-		_ = os.Remove(full)
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		return err
 	}
-	if written == 0 {
+	out, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o640)
+	if err != nil {
+		return err
+	}
+	written, copyErr := io.Copy(out, content)
+	// Close before any Remove: on Windows an open file cannot be deleted, and
+	// a swallowed Remove error would leave a partial or empty file behind.
+	closeErr := out.Close()
+	if copyErr != nil || closeErr != nil || written == 0 {
 		_ = os.Remove(full)
-		return fmt.Errorf("file kosong")
+		switch {
+		case copyErr != nil:
+			return copyErr
+		case closeErr != nil:
+			return closeErr
+		default:
+			return fmt.Errorf("file kosong")
+		}
 	}
 	return nil
 }
 
 // Remove deletes stored bytes. Missing files are not an error.
 func (d *LocalDriver) Remove(_ context.Context, key string) {
-	_ = os.Remove(filepath.Join(d.dir, filepath.FromSlash(key)))
+	if full, err := d.resolve(key); err == nil {
+		_ = os.Remove(full)
+	}
 }
 
-// URLFor returns the public path served under /uploads/.
+// URLFor returns a signed, expiring path under /media/. The browser cannot send
+// an Authorization header from an <img> or <a>, so the signature is the proof.
 func (d *LocalDriver) URLFor(_ context.Context, key string) (string, error) {
-	return "/uploads/" + key, nil
+	if _, err := d.resolve(key); err != nil {
+		return "", err
+	}
+	exp, sig := d.signer.Sign(key, URLWindow, d.ttl)
+	segs := strings.Split(key, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return fmt.Sprintf("%s%s?exp=%d&sig=%s", MediaURLPrefix, strings.Join(segs, "/"), exp, sig), nil
 }

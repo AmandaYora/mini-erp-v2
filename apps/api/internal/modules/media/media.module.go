@@ -9,6 +9,7 @@ import (
 	"mini-erp/internal/modules/media/application"
 	"mini-erp/internal/modules/media/contracts"
 	"mini-erp/internal/modules/media/infrastructure"
+	"mini-erp/internal/shared/signedurl"
 )
 
 // Module wires the media bounded context. It exposes no HTTP routes of its
@@ -21,7 +22,9 @@ type Module struct {
 }
 
 // NewModule builds media over its table plus the configured blob driver.
-func NewModule(db *sql.DB, storage config.Storage, storageDir string, audit auditcontracts.AuditClient) (*Module, error) {
+// mediaDir is the folder the API may serve (never the storage root); signer
+// signs the local URLs that browsers use to fetch files from it.
+func NewModule(db *sql.DB, storage config.Storage, mediaDir string, signer *signedurl.Signer, audit auditcontracts.AuditClient) (*Module, error) {
 	var driver infrastructure.BlobDriver
 	if storage.Driver == "s3" {
 		driver = infrastructure.NewS3Driver(infrastructure.S3Config{
@@ -29,9 +32,14 @@ func NewModule(db *sql.DB, storage config.Storage, storageDir string, audit audi
 			ForcePathStyle: storage.ForcePathStyle, AccessKeyID: storage.AccessKeyID,
 			SecretAccessKey: storage.SecretAccessKey, PublicBaseURL: storage.PublicBaseURL,
 			SignedURLTTLS: time.Duration(storage.SignedURLTTLSecs) * time.Second,
+			// Deletes stay inside this deployment's upload area and never
+			// touch protected legacy prefixes (F1-9).
+			UploadPrefixes:    []string{storage.UploadRoot, storage.ProductPrefix, storage.TransferPrefix, storage.DeliveryPrefix},
+			ProtectedPrefixes: storage.ProtectedPrefixes,
 		})
 	} else {
-		local, err := infrastructure.NewLocalDriver(storageDir)
+		local, err := infrastructure.NewLocalDriver(mediaDir, signer,
+			time.Duration(storage.SignedURLTTLSecs)*time.Second)
 		if err != nil {
 			return nil, err
 		}

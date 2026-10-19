@@ -2,12 +2,14 @@ package application
 
 import (
 	"context"
+	"database/sql"
 	"sort"
 	"strconv"
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
+	financecontracts "mini-erp/internal/modules/finance/contracts"
 	mediacontracts "mini-erp/internal/modules/media/contracts"
 	partycontracts "mini-erp/internal/modules/party/contracts"
 	"mini-erp/internal/modules/payment/contracts"
@@ -35,6 +37,26 @@ type Service struct {
 	branches        branchcontracts.BranchClient
 	media           mediacontracts.MediaClient
 	audit           auditcontracts.AuditClient
+	// reverser reverses the journal of a cancelled payment (set after finance
+	// is built; nil = not wired, cancellation still succeeds).
+	reverser financecontracts.SourceReverser
+}
+
+// SetReverser wires finance's source reverser (composition-root privilege).
+func (s *Service) SetReverser(r financecontracts.SourceReverser) { s.reverser = r }
+
+// reverseJournals reverses the books for cancelled payment legs. A failure never
+// undoes the cancellation: it is audited and surfaces as an orphan the
+// readiness gate reports.
+func (s *Service) reverseJournals(ctx context.Context, actorID, branchID int64, ids []int64, number string) {
+	if s.reverser == nil {
+		return
+	}
+	for _, id := range ids {
+		if _, err := s.reverser.ReverseForSource(ctx, actorID, branchID, "payment", id, "Pembayaran "+number+" dibatalkan"); err != nil {
+			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "payment", EntityID: id, BranchID: branchID, ActorID: actorID, Note: err.Error()})
+		}
+	}
 }
 
 // NewService wires payment use cases. All cross-module links are contracts.
@@ -135,6 +157,9 @@ type orderRef struct {
 	orderID     int64
 	grandTotal  int64
 	outstanding int64
+	// charge: a return that the customer owes us (exchange costing more), so
+	// its money flows in the normal direction, not as a refund.
+	charge bool
 }
 
 // resolveOrder validates one allocation target: exists, same branch+party,
@@ -145,6 +170,7 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 	var status string
 	var orderParty int64
 	var orderBranch int64
+	var charge bool
 	switch orderType {
 	case contracts.OrderPurchase:
 		o, err := s.purchasing.GetByID(ctx, orderID)
@@ -179,7 +205,10 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 		if so == nil {
 			return nil, apperror.NotFound("Order")
 		}
-		grand, status, orderParty, orderBranch = r.Total, r.Status, so.PartyID, r.Branch
+		// N-40: what was kept as customer balance is no longer refundable
+		// nor offsettable (CreditSettled is 0 for a charge-kind return).
+		grand, status, orderParty, orderBranch = r.Total-r.CreditSettled, r.Status, so.PartyID, r.Branch
+		charge = r.Kind == salesreturncontracts.KindCharge
 	case contracts.OrderPurchaseReturn:
 		r, err := s.purchaseReturns.GetReturn(ctx, orderID)
 		if err != nil {
@@ -195,7 +224,9 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 		if po == nil {
 			return nil, apperror.NotFound("Order")
 		}
-		grand, status, orderParty, orderBranch = r.Total, r.Status, po.PartyID, r.Branch
+		// N-40: what was kept as supplier balance is no longer refundable
+		// nor offsettable.
+		grand, status, orderParty, orderBranch = r.Total-r.CreditSettled, r.Status, po.PartyID, r.Branch
 	default:
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "orderType", Message: "tipe order tidak dikenal"}})
 	}
@@ -212,35 +243,110 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
+	if isReturnType(orderType) {
+		// N-41: the saldo spent on bills allocates onto the return too, but it is
+		// already out of `grand` (Total - CreditSettled); count only what was
+		// refunded or offset the ordinary way.
+		used, err := s.repo.CreditUsedForReturn(ctx, orderType, orderID)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		paid -= used
+	}
 	return &orderRef{orderType: orderType, orderID: orderID,
-		grandTotal: grand, outstanding: grand - paid}, nil
+		grandTotal: grand, outstanding: grand - paid, charge: charge}, nil
 }
 
-// Create records a payment. Empty allocations auto-fill FIFO (oldest
-// outstanding first); explicit allocations are validated line by line.
-// Overpay per order is rejected; the allocation sum must equal the amount.
-// Only confirmed/completed orders take money — drafts are not commitments.
+// CreateOption sets optional payment data.
+type CreateOption func(*createOptions)
+
+type createOptions struct {
+	clientRef      string
+	amountTendered int64
+	reference      string
+}
+
+// WithClientRef makes Create idempotent: the same reference returns the
+// payment it already created instead of recording a second one.
+func WithClientRef(ref string) CreateOption {
+	return func(o *createOptions) { o.clientRef = strings.TrimSpace(ref) }
+}
+
+// WithAmountTendered records the cash handed over (cash payments only).
+func WithAmountTendered(amount int64) CreateOption {
+	return func(o *createOptions) { o.amountTendered = amount }
+}
+
+// WithReference records the transfer/check reference number.
+func WithReference(ref string) CreateOption {
+	return func(o *createOptions) { o.reference = strings.TrimSpace(ref) }
+}
+
+// lockKey picks the serialization key for money movement: the party, or — for
+// walk-in payments with no party — the first allocated order, so unrelated
+// walk-in checkouts never queue behind one shared "party 0" lock.
+func lockKey(partyID int64, allocs []AllocationInput) string {
+	if partyID != 0 || len(allocs) == 0 {
+		return "party:" + strconv.FormatInt(partyID, 10)
+	}
+	t := allocs[0].OrderType
+	if t == "" {
+		t = contracts.OrderSales
+	}
+	return "wk:" + t + "/" + strconv.FormatInt(allocs[0].OrderID, 10)
+}
+
+// Create records a payment. Empty allocations auto-fill FIFO (oldest due
+// first); explicit allocations are validated line by line. Overpay per order
+// is rejected; the allocation sum must equal the amount. Only
+// confirmed/completed orders take money — drafts are not commitments.
 //
 // Serialized per party (doclock): two simultaneous payments cannot both read
-// the same outstanding figure and jointly overpay it.
-func (s *Service) Create(ctx context.Context, actorID, branchID, partyID int64, method, paidAt, notes string, amount int64, allocs []AllocationInput) (*contracts.Payment, error) {
+// the same outstanding figure and jointly overpay it. With a client reference
+// the call is idempotent.
+func (s *Service) Create(ctx context.Context, actorID, branchID, partyID int64, method, paidAt, notes string, amount int64, allocs []AllocationInput, opts ...CreateOption) (*contracts.Payment, error) {
+	var o createOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	out, _, err := s.createPayment(ctx, actorID, branchID, partyID, method, paidAt, notes, amount, allocs, o)
+	return out, err
+}
+
+func (s *Service) createPayment(ctx context.Context, actorID, branchID, partyID int64, method, paidAt, notes string, amount int64, allocs []AllocationInput, o createOptions) (*contracts.Payment, bool, error) {
 	var out *contracts.Payment
-	err := doclock.Lock("party:"+strconv.FormatInt(partyID, 10), func() error {
-		res, err := s.createLocked(ctx, actorID, branchID, partyID, method, paidAt, notes, amount, allocs)
+	var replayed bool
+	err := doclock.Lock(lockKey(partyID, allocs), func() error {
+		res, rep, err := s.createLocked(ctx, actorID, branchID, partyID, method, paidAt, notes, amount, allocs, o)
 		if err != nil {
 			return err
 		}
-		out = res
+		out, replayed = res, rep
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "payments.create", Entity: "payment", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
-	return out, nil
+	return out, replayed, nil
 }
 
-func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID int64, method, paidAt, notes string, amount int64, allocs []AllocationInput) (*contracts.Payment, error) {
+func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID int64, method, paidAt, notes string, amount int64, allocs []AllocationInput, o createOptions) (*contracts.Payment, bool, error) {
+	if len(o.clientRef) > 64 {
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "clientRef", Message: "maksimal 64 karakter"}})
+	}
+	if o.clientRef != "" {
+		existing, err := s.repo.PaymentByClientRef(ctx, branchID, o.clientRef)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if existing != nil {
+			if existing.PartyID != partyID || existing.Amount != amount {
+				return nil, false, apperror.Conflict("Referensi klien sudah dipakai untuk pembayaran lain")
+			}
+			out, err := s.enrich(ctx, existing)
+			return out, true, err
+		}
+	}
 	var party *partycontracts.Party
 	if partyID == 0 {
 		// Walk-in cash (POS tanpa customer): no master record exists, so a
@@ -251,14 +357,13 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 		var err error
 		party, err = s.parties.GetByID(ctx, partyID)
 		if err != nil {
-			return nil, apperror.Internal(err)
+			return nil, false, apperror.Internal(err)
 		}
 		if party == nil {
-			return nil, apperror.NotFound("Pihak")
+			return nil, false, apperror.NotFound("Pihak")
 		}
-		if party.Status != "active" {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "pihak sudah diarsipkan"}})
-		}
+		// An archived party can still settle what it owes (legacy BR-05):
+		// archiving stops NEW orders, it must not strand an open receivable.
 	}
 	var direction, orderType string
 	var allowedTypes map[string]bool
@@ -270,31 +375,42 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 		direction, orderType = contracts.DirectionOut, contracts.OrderPurchase
 		allowedTypes = map[string]bool{contracts.OrderPurchase: true, contracts.OrderPurchaseReturn: true}
 	default:
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "tipe pihak tidak dikenal"}})
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "tipe pihak tidak dikenal"}})
 	}
 	if amount <= 0 {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus lebih dari 0"}})
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus lebih dari 0"}})
 	}
-	if method != "cash" && method != "transfer" {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "method", Message: "harus cash atau transfer"}})
+	if method != contracts.MethodCash && method != contracts.MethodTransfer && method != contracts.MethodCheck {
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "method", Message: "harus cash, transfer, atau check"}})
+	}
+	if len(o.reference) > 100 {
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "reference", Message: "maksimal 100 karakter"}})
+	}
+	if o.amountTendered != 0 {
+		if method != contracts.MethodCash {
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amountTendered", Message: "hanya untuk pembayaran tunai"}})
+		}
+		if o.amountTendered < amount {
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amountTendered", Message: "uang diterima kurang dari nominal pembayaran"}})
+		}
 	}
 	if strings.TrimSpace(paidAt) != "" {
 		if _, err := timeutil.ParseDateInput(strings.TrimSpace(paidAt)); err != nil {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "paidAt", Message: "format tanggal harus YYYY-MM-DD"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "paidAt", Message: "format tanggal harus YYYY-MM-DD"}})
 		}
 	} else {
 		paidAt = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
 	}
 	if len(allocs) == 0 {
 		if partyID == 0 {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: "walk-in wajib alokasi eksplisit"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: "walk-in wajib alokasi eksplisit"}})
 		}
 		allocs = s.fifo(ctx, branchID, partyID, orderType, amount)
 		if len(allocs) == 0 {
 			if s.hasOpenBills(ctx, branchID, partyID, orderType) {
-				return nil, apperror.Conflict("Nominal melebihi total tagihan terbuka")
+				return nil, false, apperror.Conflict("Nominal melebihi total tagihan terbuka")
 			}
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: "tidak ada tagihan terbuka untuk dialokasi"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: "tidak ada tagihan terbuka untuk dialokasi"}})
 		}
 	}
 	var total int64
@@ -307,60 +423,81 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 			a.OrderType = orderType
 		}
 		if !allowedTypes[a.OrderType] {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: tag + "tipe order tidak sesuai pihak"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: tag + "tipe order tidak sesuai pihak"}})
 		}
 		// One payment, one money direction: normal bills flow with the
 		// party default, refunds flow back. Mixing both in one payment is
 		// the settle-credit endpoint's job, not this one's.
+		ref, err := s.resolveOrder(ctx, branchID, partyID, a.OrderType, a.OrderID)
+		if err != nil {
+			return nil, false, err
+		}
 		wantDir := direction
-		if isReturnType(a.OrderType) {
+		if isReturnType(a.OrderType) && !ref.charge {
 			wantDir = opposite(direction)
 		}
 		if i == 0 {
 			paymentDir = wantDir
 		} else if wantDir != paymentDir {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: "satu pembayaran satu arah (pisahkan tagihan dan refund)"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: "satu pembayaran satu arah (pisahkan tagihan dan refund)"}})
 		}
 		if a.Amount <= 0 {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: tag + "nominal harus lebih dari 0"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: tag + "nominal harus lebih dari 0"}})
 		}
 		key := a.OrderType + "/" + strconv.FormatInt(a.OrderID, 10)
 		if seen[key] {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: tag + "order ganda"}})
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "allocations", Message: tag + "order ganda"}})
 		}
 		seen[key] = true
-		ref, err := s.resolveOrder(ctx, branchID, partyID, a.OrderType, a.OrderID)
-		if err != nil {
-			return nil, err
-		}
 		if a.Amount > ref.outstanding {
-			return nil, apperror.Conflict("Melebihi sisa tagihan (" + tag + "sisa " + strconv.FormatInt(ref.outstanding, 10) + ")")
+			return nil, false, apperror.Conflict("Melebihi sisa tagihan (" + tag + "sisa " + strconv.FormatInt(ref.outstanding, 10) + ")")
 		}
 		total += a.Amount
 		stored = append(stored, &contracts.Allocation{OrderType: a.OrderType, OrderID: a.OrderID, Amount: a.Amount})
 	}
 	if total != amount {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus sama dengan total alokasi"}})
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus sama dengan total alokasi"}})
 	}
-	id, err := s.insertPayment(ctx, actorID, branchID, party, paymentDir, amount, method, strings.TrimSpace(paidAt), notes, stored)
+	id, err := s.insertPayment(ctx, actorID, branchID, party, paymentDir, amount, method, strings.TrimSpace(paidAt), notes, stored, o)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return s.GetByID(ctx, id)
+	out, err := s.GetByID(ctx, id)
+	return out, false, err
 }
 
-// insertPayment numbers and stores one payment row. Callers own validation;
-// method "offset" marks non-cash credit legs (settle-credit only).
-func (s *Service) insertPayment(ctx context.Context, actorID, branchID int64, party *partycontracts.Party, direction string, amount int64, method, paidAt, notes string, stored []*contracts.Allocation) (int64, error) {
+// numberedPayment builds one payment row with its allocated number. Callers
+// own validation; method "offset" marks non-cash credit legs (settle-credit).
+func (s *Service) numberedPayment(ctx context.Context, branchID int64, party *partycontracts.Party, direction string, amount int64, method, paidAt, notes string, stored []*contracts.Allocation, o createOptions) (*contracts.Payment, error) {
 	number, err := s.branches.NextDocumentNumber(ctx, branchID, branchcontracts.DocPayment)
 	if err != nil {
-		return 0, apperror.Internal(err)
+		return nil, apperror.Internal(err)
 	}
-	id, err := s.repo.CreatePayment(ctx, &contracts.Payment{
+	return &contracts.Payment{
 		Number: number, BranchID: branchID, PartyID: party.ID, PartyType: party.Type,
 		Direction: direction, Amount: amount, Method: method,
 		PaidAt: paidAt, Notes: notes, Allocations: stored,
-	}, actorID)
+		ClientRef: o.clientRef, AmountTendered: o.amountTendered, Reference: o.reference,
+	}, nil
+}
+
+func (s *Service) insertPayment(ctx context.Context, actorID, branchID int64, party *partycontracts.Party, direction string, amount int64, method, paidAt, notes string, stored []*contracts.Allocation, o createOptions) (int64, error) {
+	pay, err := s.numberedPayment(ctx, branchID, party, direction, amount, method, paidAt, notes, stored, o)
+	if err != nil {
+		return 0, err
+	}
+	// The trail co-commits with the payment (ADR-0011): an audit failure
+	// rolls the payment back instead of leaving money untrailed.
+	id, err := s.repo.CreatePayment(ctx, pay, actorID, func(ctx context.Context, tx *sql.Tx, id int64) error {
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: "payments.create", Entity: "payment", EntityID: id, BranchID: branchID, ActorID: actorID,
+			Note: pay.Number,
+			After: map[string]any{
+				"direction": direction, "method": method, "amount": amount,
+				"partyId": party.ID, "allocations": stored,
+			},
+		})
+	})
 	if err != nil {
 		return 0, dberr.Map(err)
 	}
@@ -378,85 +515,92 @@ func opposite(d string) string {
 	return contracts.DirectionIn
 }
 
-// fifo fills amount across the party's oldest outstanding orders first.
+// fifoCand is one open bill considered by FIFO allocation.
+type fifoCand struct {
+	id        int64
+	total     int64
+	orderDate string
+	dueDate   string
+}
+
+// due is the date a bill is ranked by: its due date when it has one (net
+// terms), else the order date.
+func (c fifoCand) due() string {
+	if c.dueDate != "" {
+		return c.dueDate
+	}
+	return c.orderDate
+}
+
+// sortFIFO orders open bills oldest-due first; ties fall back to the order
+// date, then the id (creation order). Pure and unit-tested.
+func sortFIFO(c []fifoCand) {
+	sort.SliceStable(c, func(i, j int) bool {
+		if c[i].due() != c[j].due() {
+			return c[i].due() < c[j].due()
+		}
+		if c[i].orderDate != c[j].orderDate {
+			return c[i].orderDate < c[j].orderDate
+		}
+		return c[i].id < c[j].id
+	})
+}
+
+// fifo fills amount across the party's open bills, oldest due first.
 // It returns nil when nothing is open (caller reports the empty case).
 // Paid totals batch in one query; a batch failure fails closed (nil →
 // caller reports overpay) rather than silently skipping rows.
 func (s *Service) fifo(ctx context.Context, branchID, partyID int64, orderType string, amount int64) []AllocationInput {
-	type row struct {
-		id, outstanding int64
-	}
-	var rows []row
+	var cands []fifoCand
 	if orderType == contracts.OrderPurchase {
 		orders, err := s.purchasing.ListByParty(ctx, branchID, partyID)
 		if err != nil {
 			return nil
 		}
-		type cand struct {
-			id, total int64
-		}
-		var cands []cand
-		for i := len(orders) - 1; i >= 0; i-- {
-			o := orders[i]
+		for _, o := range orders {
 			if o.Status == purchasingcontracts.StatusCancelled || o.Status == purchasingcontracts.StatusDraft {
 				continue
 			}
-			cands = append(cands, cand{id: o.ID, total: o.GrandTotal})
-		}
-		ids := make([]int64, 0, len(cands))
-		for _, c := range cands {
-			ids = append(ids, c.id)
-		}
-		paidByOrder, err := s.repo.PaidForOrders(ctx, contracts.OrderPurchase, ids)
-		if err != nil {
-			return nil
-		}
-		for _, c := range cands {
-			if outstanding := c.total - paidByOrder[c.id]; outstanding > 0 {
-				rows = append(rows, row{id: c.id, outstanding: outstanding})
-			}
+			cands = append(cands, fifoCand{id: o.ID, total: o.GrandTotal, orderDate: o.OrderDate, dueDate: o.DueDate})
 		}
 	} else {
 		orders, err := s.sales.ListByParty(ctx, branchID, partyID)
 		if err != nil {
 			return nil
 		}
-		type cand struct {
-			id, total int64
-		}
-		var cands []cand
-		for i := len(orders) - 1; i >= 0; i-- {
-			o := orders[i]
+		for _, o := range orders {
 			if o.Status == salescontracts.StatusCancelled || o.Status == salescontracts.StatusDraft {
 				continue
 			}
-			cands = append(cands, cand{id: o.ID, total: o.GrandTotal})
-		}
-		ids := make([]int64, 0, len(cands))
-		for _, c := range cands {
-			ids = append(ids, c.id)
-		}
-		paidByOrder, err := s.repo.PaidForOrders(ctx, contracts.OrderSales, ids)
-		if err != nil {
-			return nil
-		}
-		for _, c := range cands {
-			if outstanding := c.total - paidByOrder[c.id]; outstanding > 0 {
-				rows = append(rows, row{id: c.id, outstanding: outstanding})
-			}
+			cands = append(cands, fifoCand{id: o.ID, total: o.GrandTotal, orderDate: o.OrderDate, dueDate: o.DueDate})
 		}
 	}
+	ids := make([]int64, 0, len(cands))
+	for _, c := range cands {
+		ids = append(ids, c.id)
+	}
+	paidByOrder, err := s.repo.PaidForOrders(ctx, orderType, ids)
+	if err != nil {
+		return nil
+	}
+	open := cands[:0]
+	for _, c := range cands {
+		if c.total-paidByOrder[c.id] > 0 {
+			open = append(open, c)
+		}
+	}
+	sortFIFO(open)
 	var out []AllocationInput
 	remaining := amount
-	for _, r := range rows {
+	for _, c := range open {
 		if remaining <= 0 {
 			break
 		}
-		take := r.outstanding
+		take := c.total - paidByOrder[c.id]
 		if take > remaining {
 			take = remaining
 		}
-		out = append(out, AllocationInput{OrderType: orderType, OrderID: r.id, Amount: take})
+		out = append(out, AllocationInput{OrderType: orderType, OrderID: c.id, Amount: take})
 		remaining -= take
 	}
 	if remaining > 0 {
@@ -511,57 +655,185 @@ func (s *Service) hasOpenBills(ctx context.Context, branchID, partyID int64, ord
 	return false
 }
 
-// Cancel voids a payment. Outstanding figures recompute live, so allocated
-// orders automatically reopen — no manual reversal rows needed.
+// Cancel voids a payment together with its paired leg (a credit offset is
+// two legs that stand or fall together). Outstanding figures recompute live,
+// so allocated orders automatically reopen — no manual reversal rows needed.
+//
+// Under the party lock the status is re-read and flipped with a CAS, so two
+// simultaneous cancels cancel once (the second replays). Before cancelling,
+// every sales/purchase order it settles is checked: a COD/prepaid order that
+// already completed must not silently become "unpaid" again (legacy rule).
 func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*contracts.Payment, error) {
-	p, err := s.mustOwnBranch(ctx, id, branchID)
+	first, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
 	}
-	if p.Status != "active" {
-		return nil, apperror.Conflict("Pembayaran sudah dibatalkan")
-	}
-	if err := s.repo.SetStatus(ctx, id, "cancelled", actorID); err != nil {
+	allocs, err := s.repo.AllocationsByPayment(ctx, first.ID)
+	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "payments.cancel", Entity: "payment", EntityID: id, BranchID: branchID, ActorID: actorID, Note: p.Number})
+	var key []AllocationInput
+	for _, a := range allocs {
+		key = append(key, AllocationInput{OrderType: a.OrderType, OrderID: a.OrderID})
+	}
+	var replayed bool
+	var legIDs []int64
+	err = doclock.Lock(lockKey(first.PartyID, key), func() error {
+		p, err := s.mustOwnBranch(ctx, id, branchID)
+		if err != nil {
+			return err
+		}
+		if p.Status != "active" {
+			replayed = true
+			return nil
+		}
+		legs := []*contracts.Payment{p}
+		legIDs = []int64{p.ID}
+		if p.PairID != 0 {
+			if other, err := s.repo.PairedPayment(ctx, p.PairID); err != nil {
+				return apperror.Internal(err)
+			} else if other != nil && other.Status == "active" {
+				legs = append(legs, other)
+				legIDs = append(legIDs, other.ID)
+			}
+		}
+		if err := s.guardCancel(ctx, legs); err != nil {
+			return err
+		}
+		n, err := s.repo.CancelWithPair(ctx, p.ID, actorID, func(ctx context.Context, tx *sql.Tx) error {
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "payments.cancel", Entity: "payment", EntityID: id, BranchID: branchID, ActorID: actorID,
+				Note:   first.Number,
+				Before: map[string]any{"status": "active", "amount": p.Amount, "legs": legIDs},
+				After:  map[string]any{"status": "cancelled"},
+			})
+		})
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if n == 0 {
+			replayed = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !replayed {
+		s.reverseJournals(ctx, actorID, branchID, legIDs, first.Number)
+	}
 	return s.GetByID(ctx, id)
+}
+
+// guardCancel refuses a cancellation that would reopen a settled COD/prepaid
+// order: after removing these legs' allocations the order would owe money
+// again although it already completed.
+func (s *Service) guardCancel(ctx context.Context, legs []*contracts.Payment) error {
+	removed := map[string]int64{} // "type/id" -> amount these legs settle
+	for _, leg := range legs {
+		allocs, err := s.repo.AllocationsByPayment(ctx, leg.ID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		for _, a := range allocs {
+			if a.OrderType == contracts.OrderSales || a.OrderType == contracts.OrderPurchase {
+				removed[a.OrderType+"/"+strconv.FormatInt(a.OrderID, 10)] += a.Amount
+			}
+		}
+	}
+	for key, amount := range removed {
+		parts := strings.SplitN(key, "/", 2)
+		orderType := parts[0]
+		orderID, _ := strconv.ParseInt(parts[1], 10, 64)
+		var status, terms, number string
+		var grand int64
+		switch orderType {
+		case contracts.OrderSales:
+			o, err := s.sales.GetByID(ctx, orderID)
+			if err != nil {
+				return apperror.Internal(err)
+			}
+			if o == nil {
+				continue
+			}
+			status, terms, number, grand = o.Status, o.PaymentTerms, o.Number, o.GrandTotal
+		default:
+			o, err := s.purchasing.GetByID(ctx, orderID)
+			if err != nil {
+				return apperror.Internal(err)
+			}
+			if o == nil {
+				continue
+			}
+			status, terms, number, grand = o.Status, o.PaymentTerms, o.Number, o.GrandTotal
+		}
+		if status != salescontracts.StatusCompleted || terms == "net" {
+			continue
+		}
+		paid, err := s.repo.PaidForOrder(ctx, orderType, orderID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if grand-(paid-amount) > 0 {
+			return apperror.Conflict("Order " + number + " (" + terms + ") sudah selesai; membatalkan pembayaran ini membuatnya belum lunas. Ubah termin atau buat pembayaran pengganti lebih dulu")
+		}
+	}
+	return nil
 }
 
 // SettleCredit offsets a confirmed return against an open bill with no cash
 // moving: two contra legs (refund leg + bill leg) that net to zero. Both legs
 // carry method "offset" so cash reports never mistake them for real money.
 //
-// Serialized per party with the rest of money movement. If the second leg
-// fails, the first is cancelled automatically; if that recovery fails too,
-// the error names the stranded leg for manual void.
+// Serialized per party with the rest of money movement. Both legs are written
+// in ONE transaction (and linked by pair_id), so a failure can never strand a
+// lone leg; cancelling either leg cancels both.
 func (s *Service) SettleCredit(ctx context.Context, actorID, branchID, partyID int64, returnType string, returnID int64, orderType string, orderID int64, amount int64, notes string) (*contracts.Payment, error) {
-	var out *contracts.Payment
-	err := doclock.Lock("party:"+strconv.FormatInt(partyID, 10), func() error {
-		res, err := s.settleCreditLocked(ctx, actorID, branchID, partyID, returnType, returnID, orderType, orderID, amount, notes)
-		if err != nil {
-			return err
-		}
-		out = res
-		return nil
-	})
+	out, replayed, err := s.settleCredit(ctx, actorID, branchID, partyID, returnType, returnID, orderType, orderID, amount, notes, "")
 	if err != nil {
 		return nil, err
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "payments.settle_credit", Entity: "payment", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
+	if !replayed {
+		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "payments.settle_credit", Entity: "payment", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
+	}
 	return out, nil
 }
 
-func (s *Service) settleCreditLocked(ctx context.Context, actorID, branchID, partyID int64, returnType string, returnID int64, orderType string, orderID int64, amount int64, notes string) (*contracts.Payment, error) {
+func (s *Service) settleCredit(ctx context.Context, actorID, branchID, partyID int64, returnType string, returnID int64, orderType string, orderID int64, amount int64, notes, clientRef string) (*contracts.Payment, bool, error) {
+	var out *contracts.Payment
+	var replayed bool
+	err := doclock.Lock("party:"+strconv.FormatInt(partyID, 10), func() error {
+		res, rep, err := s.settleCreditLocked(ctx, actorID, branchID, partyID, returnType, returnID, orderType, orderID, amount, notes, clientRef)
+		if err != nil {
+			return err
+		}
+		out, replayed = res, rep
+		return nil
+	})
+	return out, replayed, err
+}
+
+func (s *Service) settleCreditLocked(ctx context.Context, actorID, branchID, partyID int64, returnType string, returnID int64, orderType string, orderID int64, amount int64, notes, clientRef string) (*contracts.Payment, bool, error) {
+	if clientRef != "" {
+		// The bill leg carries the reference; finding it returns the pair.
+		existing, err := s.repo.PaymentByClientRef(ctx, branchID, clientRef)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if existing != nil {
+			out, err := s.enrich(ctx, existing)
+			return out, true, err
+		}
+	}
 	party, err := s.parties.GetByID(ctx, partyID)
 	if err != nil {
-		return nil, apperror.Internal(err)
+		return nil, false, apperror.Internal(err)
 	}
 	if party == nil {
-		return nil, apperror.NotFound("Pihak")
+		return nil, false, apperror.NotFound("Pihak")
 	}
 	if party.Status != "active" {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "pihak sudah diarsipkan"}})
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "pihak sudah diarsipkan"}})
 	}
 	// Compatible pairs only: a customer offsets sales returns against sales
 	// bills; a supplier offsets purchase returns against purchase bills.
@@ -574,24 +846,24 @@ func (s *Service) settleCreditLocked(ctx context.Context, actorID, branchID, par
 		returnType == contracts.OrderPurchaseReturn && orderType == contracts.OrderPurchase:
 		refundDir, billDir = contracts.DirectionIn, contracts.DirectionOut
 	default:
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "returnType", Message: "pasangan retur-tagihan tidak sesuai pihak"}})
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "returnType", Message: "pasangan retur-tagihan tidak sesuai pihak"}})
 	}
 	if amount <= 0 {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus lebih dari 0"}})
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus lebih dari 0"}})
 	}
 	retRef, err := s.resolveOrder(ctx, branchID, partyID, returnType, returnID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	billRef, err := s.resolveOrder(ctx, branchID, partyID, orderType, orderID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if amount > retRef.outstanding {
-		return nil, apperror.Conflict("Melebihi sisa retur (sisa " + strconv.FormatInt(retRef.outstanding, 10) + ")")
+		return nil, false, apperror.Conflict("Melebihi sisa retur (sisa " + strconv.FormatInt(retRef.outstanding, 10) + ")")
 	}
 	if amount > billRef.outstanding {
-		return nil, apperror.Conflict("Melebihi sisa tagihan (sisa " + strconv.FormatInt(billRef.outstanding, 10) + ")")
+		return nil, false, apperror.Conflict("Melebihi sisa tagihan (sisa " + strconv.FormatInt(billRef.outstanding, 10) + ")")
 	}
 	paidAt := timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
 	note := strings.TrimSpace(notes)
@@ -600,28 +872,30 @@ func (s *Service) settleCreditLocked(ctx context.Context, actorID, branchID, par
 	} else {
 		note = "Offset " + note
 	}
-	leg1, err := s.insertPayment(ctx, actorID, branchID, party, refundDir, amount, "offset", paidAt,
-		note, []*contracts.Allocation{{OrderType: returnType, OrderID: returnID, Amount: amount}})
+	refundLeg, err := s.numberedPayment(ctx, branchID, party, refundDir, amount, contracts.MethodOffset, paidAt,
+		note, []*contracts.Allocation{{OrderType: returnType, OrderID: returnID, Amount: amount}}, createOptions{})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	leg2, err := s.insertPayment(ctx, actorID, branchID, party, billDir, amount, "offset", paidAt,
-		note, []*contracts.Allocation{{OrderType: orderType, OrderID: orderID, Amount: amount}})
+	billLeg, err := s.numberedPayment(ctx, branchID, party, billDir, amount, contracts.MethodOffset, paidAt,
+		note, []*contracts.Allocation{{OrderType: orderType, OrderID: orderID, Amount: amount}}, createOptions{clientRef: clientRef})
 	if err != nil {
-		if cerr := s.repo.SetStatus(ctx, leg1, "cancelled", actorID); cerr != nil {
-			return nil, apperror.Internal(withSuffix(err,
-				"kaki pertama "+strconv.FormatInt(leg1, 10)+" harus dibatalkan manual"))
+		return nil, false, err
+	}
+	_, billID, err := s.repo.CreatePaymentPair(ctx, refundLeg, billLeg, actorID)
+	if err != nil {
+		// A racing twin with the same client reference already wrote the pair
+		// (the process lock does not cover other instances): replay it.
+		if clientRef != "" {
+			if existing, lerr := s.repo.PaymentByClientRef(ctx, branchID, clientRef); lerr == nil && existing != nil {
+				out, eerr := s.enrich(ctx, existing)
+				return out, true, eerr
+			}
 		}
-		return nil, err
+		return nil, false, dberr.Map(err)
 	}
-	return s.GetByID(ctx, leg2)
-}
-
-func withSuffix(err error, suffix string) error {
-	if ae, ok := err.(*apperror.AppError); ok {
-		return &apperror.AppError{Code: ae.Code, Message: ae.Message + " (" + suffix + ")", Fields: ae.Fields}
-	}
-	return &apperror.AppError{Code: apperror.CodeInternal, Message: err.Error() + " (" + suffix + ")"}
+	out, err := s.GetByID(ctx, billID)
+	return out, false, err
 }
 
 // GetPartyBalance computes the live position: every non-cancelled document
@@ -715,7 +989,7 @@ func (s *Service) GetPartyBalance(ctx context.Context, branchID, partyID int64) 
 // return.
 func (s *Service) appendReturnBalances(ctx context.Context, bal *contracts.PartyBalance, branchID int64, isSales bool) error {
 	if isSales {
-		returns, err := s.salesReturns.ListByBranch(ctx, branchID)
+		returns, err := s.salesReturns.ConfirmedByOrders(ctx, branchID, orderIDsOf(bal, contracts.OrderSales))
 		if err != nil {
 			return apperror.Internal(err)
 		}
@@ -763,7 +1037,7 @@ func (s *Service) appendReturnBalances(ctx context.Context, bal *contracts.Party
 		}
 		return nil
 	}
-	returns, err := s.purchaseReturns.ListByBranch(ctx, branchID)
+	returns, err := s.purchaseReturns.ConfirmedByOrders(ctx, branchID, orderIDsOf(bal, contracts.OrderPurchase))
 	if err != nil {
 		return apperror.Internal(err)
 	}
@@ -832,13 +1106,9 @@ func (s *Service) Ledger(ctx context.Context, branchID, partyID int64, page, lim
 	if err != nil {
 		return nil, 0, apperror.Internal(err)
 	}
-	out := make([]*contracts.Payment, 0, len(payments))
-	for _, p := range payments {
-		full, err := s.enrich(ctx, p)
-		if err != nil {
-			return nil, 0, err
-		}
-		out = append(out, full)
+	out, err := s.enrichBatch(ctx, payments)
+	if err != nil {
+		return nil, 0, err
 	}
 	return out, total, nil
 }
@@ -919,6 +1189,27 @@ func (s *Service) ListActive(ctx context.Context, branchID int64, limit int) ([]
 	return res.Payments, nil
 }
 
+// CancelledAmong returns which of ids are cancelled.
+func (s *Service) CancelledAmong(ctx context.Context, branchID int64, ids []int64) ([]int64, error) {
+	out, err := s.repo.CancelledAmong(ctx, branchID, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// ListActiveAfter pages active payments by ascending id after a cursor.
+func (s *Service) ListActiveAfter(ctx context.Context, branchID, afterID int64, limit int) ([]*contracts.Payment, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 1000
+	}
+	ps, err := s.repo.ActiveAfter(ctx, branchID, afterID, limit)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return ps, nil
+}
+
 // OrderIDsByPayments maps payment id -> the sales order ids it settles.
 // A payment may settle several orders, so the value is a slice.
 func (s *Service) OrderIDsByPayments(ctx context.Context, ids []int64) (map[int64][]int64, error) {
@@ -927,4 +1218,134 @@ func (s *Service) OrderIDsByPayments(ctx context.Context, ids []int64) (map[int6
 		return nil, apperror.Internal(err)
 	}
 	return out, nil
+}
+
+// OffsetReturn offsets a confirmed return against an open bill (see
+// contracts.OffsetInput). The bill leg carries ClientRef, so a repeat returns
+// the legs already written.
+func (s *Service) OffsetReturn(ctx context.Context, in contracts.OffsetInput) (*contracts.Payment, bool, error) {
+	out, replayed, err := s.settleCredit(ctx, in.ActorID, in.BranchID, in.PartyID, in.ReturnType, in.ReturnID,
+		in.OrderType, in.OrderID, in.Amount, in.Notes, strings.TrimSpace(in.ClientRef))
+	if err == nil && !replayed {
+		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "payments.offset_return", Entity: "payment", EntityID: out.ID, BranchID: in.BranchID, ActorID: in.ActorID, Note: out.Number})
+	}
+	return out, replayed, err
+}
+
+// PaymentInfoByOrders implements the contract (see there).
+func (s *Service) PaymentInfoByOrders(ctx context.Context, orderType string, ids []int64) (map[int64]contracts.OrderPaymentInfo, error) {
+	info, err := s.repo.PaymentInfoByOrders(ctx, orderType, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return info, nil
+}
+
+// PaidForOrders sums active allocations per order id in one grouped read.
+func (s *Service) PaidForOrders(ctx context.Context, orderType string, ids []int64) (map[int64]int64, error) {
+	paid, err := s.repo.PaidForOrders(ctx, orderType, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return paid, nil
+}
+
+// RecordForOrder records one payment in full against one order — the
+// settlement step of a delivery/receipt and the POS checkout. The party and
+// money direction come from the order, the amount defaults to the whole
+// outstanding, and the call is idempotent per ClientRef (a replay returns the
+// payment already recorded and reports replayed=true).
+func (s *Service) RecordForOrder(ctx context.Context, in contracts.RecordInput) (*contracts.Payment, bool, error) {
+	if in.OrderType != contracts.OrderSales && in.OrderType != contracts.OrderPurchase && in.OrderType != contracts.OrderSalesReturn {
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "orderType", Message: "harus sales, purchase, atau sales_return"}})
+	}
+	var partyID int64
+	switch in.OrderType {
+	case contracts.OrderSalesReturn:
+		// Exchange surcharge (K-04e): the customer owes us the difference of a
+		// replacement that costs more. Only the charge kind can be collected
+		// here; a refund-kind return would flip the money direction out.
+		r, err := s.salesReturns.GetReturn(ctx, in.OrderID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if r == nil || r.Branch != in.BranchID {
+			return nil, false, apperror.NotFound("Retur")
+		}
+		if r.Kind != salesreturncontracts.KindCharge {
+			return nil, false, apperror.Conflict("Retur ini bukan tambah bayar tukar: tidak ada tagihan selisih yang bisa dipungut")
+		}
+		so, err := s.sales.GetByID(ctx, r.OrderID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if so == nil {
+			return nil, false, apperror.NotFound("Order")
+		}
+		partyID = so.PartyID
+	case contracts.OrderSales:
+		o, err := s.sales.GetByID(ctx, in.OrderID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if o == nil || o.BranchID != in.BranchID {
+			return nil, false, apperror.NotFound("Order")
+		}
+		partyID = o.PartyID
+	default:
+		o, err := s.purchasing.GetByID(ctx, in.OrderID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if o == nil || o.BranchID != in.BranchID {
+			return nil, false, apperror.NotFound("Order")
+		}
+		partyID = o.PartyID
+	}
+	// Replay first: the outstanding changes once the payment exists, so the
+	// default amount must not be recomputed for a call we already served.
+	if ref := strings.TrimSpace(in.ClientRef); ref != "" {
+		existing, err := s.repo.PaymentByClientRef(ctx, in.BranchID, ref)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if existing != nil {
+			allocs, err := s.repo.AllocationsByPayment(ctx, existing.ID)
+			if err != nil {
+				return nil, false, apperror.Internal(err)
+			}
+			if len(allocs) != 1 || allocs[0].OrderType != in.OrderType || allocs[0].OrderID != in.OrderID {
+				return nil, false, apperror.Conflict("Referensi klien sudah dipakai untuk pembayaran lain")
+			}
+			out, err := s.enrich(ctx, existing)
+			return out, true, err
+		}
+	}
+	amount := in.Amount
+	if amount == 0 {
+		ref, err := s.resolveOrder(ctx, in.BranchID, partyID, in.OrderType, in.OrderID)
+		if err != nil {
+			return nil, false, err
+		}
+		amount = ref.outstanding
+	}
+	method := in.Method
+	if method == "" {
+		method = contracts.MethodCash
+	}
+	opts := createOptions{clientRef: strings.TrimSpace(in.ClientRef), amountTendered: in.AmountTendered, reference: strings.TrimSpace(in.Reference)}
+	return s.createPayment(ctx, in.ActorID, in.BranchID, partyID, method, in.PaidAt, in.Notes, amount,
+		[]AllocationInput{{OrderType: in.OrderType, OrderID: in.OrderID, Amount: amount}}, opts)
+}
+
+// orderIDsOf lists the ids of the party's orders of one type already gathered
+// in the balance: the returns it reads are only those of its own orders.
+func orderIDsOf(bal *contracts.PartyBalance, orderType string) []int64 {
+	ids := make([]int64, 0, len(bal.Orders))
+	for _, o := range bal.Orders {
+		if o.OrderType == orderType {
+			ids = append(ids, o.OrderID)
+		}
+	}
+	return ids
 }

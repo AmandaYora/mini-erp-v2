@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS media_files;
+DROP TABLE IF EXISTS `media_files`;

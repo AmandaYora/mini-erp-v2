@@ -25,6 +25,7 @@ type successBody struct {
 type errorBody struct {
 	Success bool                  `json:"success"`
 	Message string                `json:"message"`
+	Code    string                `json:"code,omitempty"`
 	Errors  []apperror.FieldError `json:"errors,omitempty"`
 }
 
@@ -65,6 +66,47 @@ func Fail(w http.ResponseWriter, err *apperror.AppError) {
 	writeJSON(w, apperror.HTTPStatus(err.Code), errorBody{
 		Success: false,
 		Message: err.Message,
+		Code:    string(err.Code),
 		Errors:  err.Fields,
 	})
+}
+
+// Unauthorized writes 401 with a machine-readable code (F1-10 refresh_raced).
+func Unauthorized(w http.ResponseWriter, code, message string) {
+	if code == "" {
+		code = string(apperror.CodeUnauthorized)
+	}
+	writeJSON(w, http.StatusUnauthorized, errorBody{Success: false, Message: message, Code: code})
+}
+
+// Error writes {success:false,message} with an explicit status and no code or
+// field errors. It backs the fixed-wording guards (session, permission,
+// recover, readiness) so the envelope shape lives only in this package.
+func Error(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, errorBody{Success: false, Message: message})
+}
+
+// SessionExpired writes the 401 used when no valid session accompanies a request.
+func SessionExpired(w http.ResponseWriter) {
+	Error(w, http.StatusUnauthorized, "Sesi berakhir, silakan login kembali")
+}
+
+// Forbidden writes the generic 403.
+func Forbidden(w http.ResponseWriter) {
+	ForbiddenMsg(w, "Anda tidak memiliki akses")
+}
+
+// ForbiddenMsg writes a 403 with a specific message.
+func ForbiddenMsg(w http.ResponseWriter, message string) {
+	Error(w, http.StatusForbidden, message)
+}
+
+// Internal writes the generic 500 without leaking details.
+func Internal(w http.ResponseWriter) {
+	Error(w, http.StatusInternalServerError, "Terjadi kesalahan internal")
+}
+
+// Unavailable writes a 503 with a message (service not ready).
+func Unavailable(w http.ResponseWriter, message string) {
+	Error(w, http.StatusServiceUnavailable, message)
 }

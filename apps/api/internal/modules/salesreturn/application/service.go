@@ -2,14 +2,15 @@ package application
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"math"
 	"strconv"
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
 	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
+	financecontracts "mini-erp/internal/modules/finance/contracts"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
@@ -19,6 +20,7 @@ import (
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
 	"mini-erp/internal/shared/doclock"
+	"mini-erp/internal/shared/money"
 	"mini-erp/internal/shared/timeutil"
 )
 
@@ -34,8 +36,12 @@ type Service struct {
 	branches branchcontracts.BranchClient
 	// payments is set by the composition root after the payment module is
 	// built (setter breaks the payment↔returns construction cycle).
+	reverser financecontracts.SourceReverser
 	payments paymentcontracts.PaymentClient
-	audit    auditcontracts.AuditClient
+	// costs is finance's cost reader for the replacement cost guard (RT-04);
+	// late-bound like payments/reverser.
+	costs CostSource
+	audit auditcontracts.AuditClient
 }
 
 // NewService wires salesreturn use cases. All cross-module links are contracts.
@@ -51,6 +57,9 @@ func NewService(
 	return &Service{repo: repo, sales: sales, delivery: delivery,
 		products: products, stock: stock, branches: branches, audit: audit}
 }
+
+// SetReverser wires finance's source reverser (composition-root privilege).
+func (s *Service) SetReverser(r financecontracts.SourceReverser) { s.reverser = r }
 
 // SetPayments injects the payment client (composition-root privilege).
 func (s *Service) SetPayments(p paymentcontracts.PaymentClient) {
@@ -78,24 +87,59 @@ func (s *Service) GetReturn(ctx context.Context, id int64) (*contracts.Return, e
 	if ret == nil {
 		return nil, nil
 	}
-	return &contracts.Return{
-		ID: ret.ID, Number: ret.Number, Branch: ret.BranchID,
-		OrderID: ret.SalesOrderID, Total: ret.Total, Status: ret.Status,
-	}, nil
+	out := projection(ret)
+	if out.Kind == contracts.KindRefund {
+		if out.CreditSettled, err = s.repo.CreditSettled(ctx, id); err != nil {
+			return nil, apperror.Internal(err)
+		}
+	}
+	return out, nil
 }
 
-// ListByBranch lists the branch's returns for balance computation.
-func (s *Service) ListByBranch(ctx context.Context, branchID int64) ([]*contracts.Return, error) {
-	returns, err := s.repo.List(ctx, branchID, 0, "", 10000, 0)
+// projection maps a return onto what payments can settle: the whole return
+// value for a plain return; for an exchange the absolute replacement-vs-return
+// difference (refund when the customer is owed, charge when they owe).
+func projection(ret *contracts.SalesReturn) *contracts.Return {
+	out := &contracts.Return{
+		ID: ret.ID, Number: ret.Number, Branch: ret.BranchID,
+		OrderID: ret.SalesOrderID, Total: ret.Total, Kind: contracts.KindRefund, Status: ret.Status,
+	}
+	if ret.ReturnMode == contracts.ReturnModeExchange {
+		switch {
+		case ret.DifferenceAmount < 0:
+			out.Total = -ret.DifferenceAmount
+		case ret.DifferenceAmount > 0:
+			out.Total, out.Kind = ret.DifferenceAmount, contracts.KindCharge
+		default:
+			out.Total = 0
+		}
+	}
+	return out
+}
+
+// OrderEffects implements the contract (see there).
+func (s *Service) OrderEffects(ctx context.Context, branchID int64, orderIDs []int64) (map[int64]contracts.OrderEffect, error) {
+	out, err := s.repo.OrderEffects(ctx, branchID, orderIDs)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	out := make([]*contracts.Return, 0, len(returns))
-	for _, ret := range returns {
-		out = append(out, &contracts.Return{
-			ID: ret.ID, Number: ret.Number, Branch: ret.BranchID,
-			OrderID: ret.SalesOrderID, Total: ret.Total, Status: ret.Status,
-		})
+	return out, nil
+}
+
+// ConfirmedByOrders lists the confirmed returns of the given orders.
+func (s *Service) ConfirmedByOrders(ctx context.Context, branchID int64, orderIDs []int64) ([]*contracts.Return, error) {
+	out, err := s.repo.ConfirmedByOrders(ctx, branchID, orderIDs)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// CreditSettledByReturns implements the payment-facing contract (see there).
+func (s *Service) CreditSettledByReturns(ctx context.Context, ids []int64) (map[int64]int64, error) {
+	out, err := s.repo.CreditSettledByReturns(ctx, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
 	}
 	return out, nil
 }
@@ -132,6 +176,11 @@ func (s *Service) enrich(ctx context.Context, ret *contracts.SalesReturn) (*cont
 	if so != nil {
 		ret.OrderNumber = so.Number
 	}
+	ret.AllowedSettlementTypes = []string{}
+	if ret.Status == contracts.StatusConfirmed {
+		pos := positionOf(ret.ReturnMode, ret.Total, ret.DifferenceAmount, ret.ReceivableReduction, ret.Settlements, so != nil && so.PartyID != 0)
+		ret.ExternalRemaining, ret.ChargeRemaining, ret.AllowedSettlementTypes = pos.ExternalRemaining(), pos.ChargeRemaining(), pos.Allowed()
+	}
 	return ret, nil
 }
 
@@ -154,6 +203,18 @@ type LineInput struct {
 	LocationID int64
 	UOM        string
 	Qty        float64
+	// Condition: normal (default) | damaged | not_returned.
+	Condition string
+}
+
+// CreateOption sets optional return header data.
+type CreateOption func(*createOptions)
+
+type createOptions struct{ reason string }
+
+// WithReason records why the goods come back.
+func WithReason(reason string) CreateOption {
+	return func(o *createOptions) { o.reason = strings.TrimSpace(reason) }
 }
 
 // ReplacementInput is one exchange replacement line. Priced once at
@@ -165,15 +226,21 @@ type ReplacementInput struct {
 	LocationID int64
 	UOM        string
 	Qty        float64
+	// UnitPrice overrides the catalog price (never below the minimum price).
+	UnitPrice *int64
 }
 
 // Create drafts a return against a confirmed/completed SO. Quantities cap at
 // delivered-minus-returned per (product, variant) aggregate — never at the
 // ordered figure, so undelivered goods cannot come back as stock.
-func (s *Service) Create(ctx context.Context, actorID, branchID, soID int64, returnDate, notes, mode string, lines []LineInput, replacements []ReplacementInput) (*contracts.SalesReturn, error) {
+func (s *Service) Create(ctx context.Context, actorID, branchID, soID int64, returnDate, notes, mode string, lines []LineInput, replacements []ReplacementInput, opts ...CreateOption) (*contracts.SalesReturn, error) {
+	var o createOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	var out *contracts.SalesReturn
 	err := doclock.Lock("so:"+strconv.FormatInt(soID, 10), func() error {
-		res, err := s.createLocked(ctx, actorID, branchID, soID, returnDate, notes, mode, lines, replacements)
+		res, err := s.createLocked(ctx, actorID, branchID, soID, returnDate, notes, mode, lines, replacements, o)
 		if err != nil {
 			return err
 		}
@@ -213,6 +280,7 @@ type soAggregate struct {
 	nominal map[string]int64   // uom -> summed discount nominal
 	soQty   map[string]float64 // uom -> summed SO qty (prorate base)
 	qtyBase float64
+	tracked bool // false: service line, no stock
 }
 
 func aggregateSO(so *salescontracts.SalesOrder) map[string]*soAggregate {
@@ -231,6 +299,7 @@ func aggregateSO(so *salescontracts.SalesOrder) map[string]*soAggregate {
 		agg.nominal[l.UOM] += l.DiscountNominal
 		agg.soQty[l.UOM] += l.Qty
 		agg.qtyBase += l.QtyBase
+		agg.tracked = agg.tracked || l.StockTracked
 	}
 	return soAgg
 }
@@ -251,8 +320,26 @@ type computedReturn struct {
 // number allocation — safe for Preview.
 func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *salescontracts.SalesOrder, lines []LineInput) (*computedReturn, error) {
 	soAgg := aggregateSO(so)
+	// Quota = delivered - (draft + confirmed returns) - lines already accepted
+	// in this request (P6). Drafts hold their share, and two lines of one
+	// request on the same product add up instead of each seeing the full rest.
+	committed, err := s.repo.CommittedQtyBySO(ctx, soID)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	deliveredCache := map[string]float64{}
+	used := map[string]float64{}
 	items := make([]*contracts.Item, 0, len(lines))
 	var subtotal, discountTotal, taxTotal int64
+	// One batch read for the whole document (F4-7), not a GetByID per line.
+	productIDs := make([]int64, 0, len(lines))
+	for _, l := range lines {
+		productIDs = append(productIDs, l.ProductID)
+	}
+	loadedProducts, perr := s.products.GetByIDs(ctx, productIDs)
+	if perr != nil {
+		return nil, apperror.Internal(perr)
+	}
 	for i, line := range lines {
 		tag := "baris " + strconv.Itoa(i+1) + ": "
 		if line.Qty <= 0 {
@@ -267,25 +354,47 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 		if !ok {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "satuan harus sama dengan SO"}})
 		}
-		delivered, err := s.delivery.DeliveredQty(ctx, soID, line.ProductID, line.VariantID)
-		if err != nil {
-			return nil, apperror.Internal(err)
-		}
-		returned, err := s.repo.ReturnedQty(ctx, soID, line.ProductID, line.VariantID)
-		if err != nil {
-			return nil, apperror.Internal(err)
+		key := lineKey(line.ProductID, line.VariantID)
+		delivered, ok := deliveredCache[key]
+		if !ok {
+			var derr error
+			if delivered, derr = s.delivery.DeliveredQty(ctx, soID, line.ProductID, line.VariantID); derr != nil {
+				return nil, apperror.Internal(derr)
+			}
+			deliveredCache[key] = delivered
 		}
 		qtyBase := line.Qty * factor
-		if delivered-returned-qtyBase < -1e-9 {
-			return nil, apperror.Conflict("Melebihi yang bisa diretur (" + tag + "sisa " + strconv.FormatFloat(delivered-returned, 'f', -1, 64) + ")")
+		taken := committed[key] + used[key]
+		if delivered-taken-qtyBase < -1e-9 {
+			return nil, apperror.Conflict("Melebihi yang bisa diretur (" + tag + "sisa " + strconv.FormatFloat(delivered-taken, 'f', -1, 64) + ")")
 		}
-		if err := s.stock.CheckLocation(ctx, branchID, line.LocationID); err != nil {
-			return nil, err
+		used[key] += qtyBase
+		cond := line.Condition
+		if cond == "" {
+			cond = contracts.ConditionNormal
 		}
-		p, err := s.products.GetByID(ctx, line.ProductID)
-		if err != nil {
-			return nil, apperror.Internal(err)
+		locationID := line.LocationID
+		switch cond {
+		case contracts.ConditionNormal:
+			if agg.tracked {
+				if err := s.stock.CheckLocation(ctx, branchID, line.LocationID); err != nil {
+					return nil, err
+				}
+			}
+		case contracts.ConditionDamaged:
+			// Damaged goods always land in the branch damaged location; the
+			// client does not get to choose.
+			dmg, derr := s.stock.DamagedLocation(ctx, branchID)
+			if derr != nil {
+				return nil, derr
+			}
+			locationID = dmg.ID
+		case contracts.ConditionNotReturned:
+			locationID = 0 // the customer keeps the goods: value only
+		default:
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "kondisi harus normal, damaged, atau not_returned"}})
 		}
+		p := loadedProducts[line.ProductID]
 		if p == nil || p.Status != "active" {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "produk sudah diarsipkan"}})
 		}
@@ -304,15 +413,15 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 		// in, tax flips with it. Lines that cannot match a source line are
 		// rejected above; never fall back to live catalog prices (that would
 		// refund today's price instead of the price actually paid).
-		nominalPart := prorate(agg.nominal[uom], line.Qty, agg.soQty[uom])
-		net, base, tax := lineEconomics(line.Qty, unitPrice, agg.pct[uom], nominalPart, so.TaxType, so.TaxRate)
-		gross := int64(math.Round(line.Qty * float64(unitPrice)))
+		nominalPart := money.Prorate(agg.nominal[uom], line.Qty, agg.soQty[uom])
+		net, base, tax, _ := money.LineAmounts(line.Qty, unitPrice, agg.pct[uom], nominalPart, so.TaxType, so.TaxRate).Split()
+		gross := money.Round(line.Qty * float64(unitPrice))
 		lineTotal := base + tax
 		subtotal += base
 		discountTotal += gross - net
 		taxTotal += tax
 		items = append(items, &contracts.Item{
-			ProductID: line.ProductID, VariantID: line.VariantID, LocationID: line.LocationID,
+			ProductID: line.ProductID, VariantID: line.VariantID, LocationID: locationID, Condition: cond,
 			UOM: uom, UOMFactor: factor, Qty: line.Qty, QtyBase: qtyBase,
 			UnitPrice: unitPrice, DiscountPct: agg.pct[uom], DiscountNominal: nominalPart,
 			TaxBase: base, TaxAmount: tax, LineTotal: lineTotal,
@@ -322,7 +431,7 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 		discountTotal: discountTotal, taxTotal: taxTotal, total: subtotal + taxTotal}, nil
 }
 
-func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int64, returnDate, notes, mode string, lines []LineInput, replacements []ReplacementInput) (*contracts.SalesReturn, error) {
+func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int64, returnDate, notes, mode string, lines []LineInput, replacements []ReplacementInput, o createOptions) (*contracts.SalesReturn, error) {
 	so, err := s.sales.GetByID(ctx, soID)
 	if err != nil {
 		return nil, apperror.Internal(err)
@@ -352,13 +461,26 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 	}
 	items, subtotal, discountTotal, taxTotal := computed.items, computed.subtotal, computed.discountTotal, computed.taxTotal
 	total := subtotal + taxTotal
-	replItems, err := s.priceReplacements(ctx, branchID, replacements)
+	replItems, err := s.priceReplacements(ctx, branchID, so, replacements)
 	if err != nil {
 		return nil, err
 	}
 	replStatus := contracts.ReplacementNotRequired
 	if mode == contracts.ReturnModeExchange {
 		replStatus = contracts.ReplacementPending
+	}
+	if len(o.reason) > 255 {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "maksimal 255 karakter"}})
+	}
+	var replSubtotal, replTax, replTotal int64
+	for _, ri := range replItems {
+		replSubtotal += ri.TaxBase
+		replTax += ri.TaxAmount
+		replTotal += ri.LineTotal
+	}
+	difference := int64(0)
+	if mode == contracts.ReturnModeExchange {
+		difference = replTotal - total
 	}
 	number, err := s.branches.NextDocumentNumber(ctx, branchID, branchcontracts.DocSalesReturn)
 	if err != nil {
@@ -371,6 +493,8 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 		TaxType: so.TaxType, TaxRate: so.TaxRate,
 		Total: total, Notes: notes, Items: items,
 		ReturnMode: mode, ReplacementDeliveryStatus: replStatus,
+		Reason: o.reason, ReplacementSubtotal: replSubtotal, ReplacementTaxTotal: replTax,
+		ReplacementTotal: replTotal, DifferenceAmount: difference,
 	}, replItems, actorID)
 	if err != nil {
 		return nil, dberr.Map(err)
@@ -378,19 +502,23 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 	return s.GetByID(ctx, id)
 }
 
-// Confirm restocks every line (MoveIn). Draft-only; the source SO keeps its
-// status — history stands.
-func (s *Service) Confirm(ctx context.Context, actorID, branchID, id int64) (*contracts.SalesReturn, error) {
+// Confirm restocks every line. Draft-only; the source SO keeps its status —
+// history stands. Replay-safe (P4): the return is re-read inside the lock, the
+// quota is re-checked, stock.Post is idempotent per document and the status
+// flip is a CAS, so repeating a request that failed midway finishes the job
+// and a repeat of a finished one is a no-op 200.
+func (s *Service) Confirm(ctx context.Context, actorID, branchID, id int64, opts ...ConfirmOption) (*contracts.SalesReturn, error) {
+	var o confirmOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	ret, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
 	}
-	if ret.Status != contracts.StatusDraft {
-		return nil, apperror.Conflict("Hanya draft yang bisa dikonfirmasi")
-	}
 	var out *contracts.SalesReturn
 	err = doclock.Lock("so:"+strconv.FormatInt(ret.SalesOrderID, 10), func() error {
-		res, err := s.confirmLocked(ctx, actorID, branchID, ret)
+		res, _, err := s.confirmLocked(ctx, actorID, branchID, id, o)
 		if err != nil {
 			return err
 		}
@@ -400,93 +528,304 @@ func (s *Service) Confirm(ctx context.Context, actorID, branchID, id int64) (*co
 	if err != nil {
 		return nil, err
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.confirm", Entity: "sales_return", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
 	return out, nil
 }
 
-func (s *Service) confirmLocked(ctx context.Context, actorID, branchID int64, ret *contracts.SalesReturn) (*contracts.SalesReturn, error) {
+func (s *Service) confirmLocked(ctx context.Context, actorID, branchID, id int64, o confirmOptions) (*contracts.SalesReturn, bool, error) {
+	ret, err := s.mustOwnBranch(ctx, id, branchID)
+	if err != nil {
+		return nil, false, err
+	}
+	switch ret.Status {
+	case contracts.StatusConfirmed:
+		// Already final: only the post-final steps may be missing (the offset,
+		// and the counter hand-over of a POS exchange).
+		if err := s.autoOffset(ctx, actorID, branchID, ret.ID); err != nil {
+			return nil, false, err
+		}
+		if err := s.finishCounterExchange(ctx, actorID, branchID, ret, o); err != nil {
+			return nil, false, err
+		}
+		out, err := s.GetByID(ctx, ret.ID)
+		return out, true, err
+	case contracts.StatusDraft:
+	default:
+		return nil, false, apperror.Conflict("Hanya draft yang bisa dikonfirmasi")
+	}
 	full, err := s.enrich(ctx, ret)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var moved []*contracts.Item
-	for _, it := range full.Items {
-		if err := s.stock.MoveIn(ctx, branchID, it.ProductID, it.VariantID, it.LocationID,
-			it.QtyBase, "sales_return", full.ID, actorID); err != nil {
-			for _, done := range moved {
-				_ = s.stock.MoveOut(ctx, branchID, done.ProductID, done.VariantID, done.LocationID,
-					done.QtyBase, "sales_return_rollback", full.ID, actorID)
-			}
-			return nil, err
+	if err := s.checkCommitted(ctx, ret.SalesOrderID, full); err != nil {
+		return nil, false, err
+	}
+	so, err := s.sales.GetByID(ctx, ret.SalesOrderID)
+	if err != nil || so == nil {
+		return nil, false, apperror.Internal(errors.New("source order unavailable"))
+	}
+	// RT-02: a POS exchange hands the replacement over right now, so its cost
+	// basis and stock are checked BEFORE the returned goods are booked in —
+	// a refusal leaves the draft untouched.
+	if isCounterExchange(so, full) && full.ReplacementDeliveryStatus == contracts.ReplacementPending {
+		if err := s.checkReplacementReady(ctx, branchID, full.ReplacementItems); err != nil {
+			return nil, false, err
 		}
-		moved = append(moved, it)
 	}
-	if err := s.repo.SetStatus(ctx, full.ID, contracts.StatusConfirmed, actorID); err != nil {
-		return nil, apperror.Internal(err)
+	untracked := map[string]bool{}
+	for _, l := range so.Items {
+		if !l.StockTracked {
+			untracked[lineKey(l.ProductID, l.VariantID)] = true
+		}
 	}
-	return s.GetByID(ctx, full.ID)
+	lines := make([]stockcontracts.PostLine, 0, len(full.Items))
+	for _, it := range full.Items {
+		if untracked[lineKey(it.ProductID, it.VariantID)] || it.Condition == contracts.ConditionNotReturned {
+			continue // service lines and kept goods return value, never stock
+		}
+		lines = append(lines, stockcontracts.PostLine{ProductID: it.ProductID, VariantID: it.VariantID, LocationID: it.LocationID, Qty: it.QtyBase})
+	}
+	if len(lines) > 0 {
+		if _, err := s.stock.Post(ctx, stockcontracts.PostRequest{
+			BranchID: branchID, Direction: "in", RefType: stockcontracts.RefSalesReturn, RefID: full.ID,
+			ActorID: actorID, Lines: lines, AllowDamagedLocation: true,
+		}); err != nil {
+			return nil, false, err
+		}
+	}
+	// The trail rides the confirm CAS (ADR-0011): audited only by the winner.
+	won, err := s.repo.TransitionAudited(ctx, full.ID, []string{contracts.StatusDraft}, contracts.StatusConfirmed, actorID,
+		func(ctx context.Context, tx *sql.Tx) error {
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "sales_returns.confirm", Entity: "sales_return", EntityID: full.ID, BranchID: branchID, ActorID: actorID, Note: full.Number,
+				Before: map[string]any{"status": contracts.StatusDraft}, After: map[string]any{"status": contracts.StatusConfirmed, "total": full.Total},
+			})
+		})
+	if err != nil {
+		return nil, false, apperror.Internal(err)
+	}
+	replayed := false
+	if !won {
+		cur, err := s.repo.GetReturn(ctx, full.ID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if cur == nil || cur.Status != contracts.StatusConfirmed {
+			return nil, false, apperror.Conflict("Status retur berubah, muat ulang")
+		}
+		replayed = true
+	}
+	if err := s.autoOffset(ctx, actorID, branchID, full.ID); err != nil {
+		return nil, false, err
+	}
+	if err := s.finishCounterExchange(ctx, actorID, branchID, full, o); err != nil {
+		return nil, false, err
+	}
+	out, err := s.GetByID(ctx, full.ID)
+	return out, replayed, err
+}
+
+// finishCounterExchange runs the counter hand-over when the confirmed return is
+// a POS exchange; every other return is untouched (RT-02).
+func (s *Service) finishCounterExchange(ctx context.Context, actorID, branchID int64, ret *contracts.SalesReturn, o confirmOptions) error {
+	if ret.ReturnMode != contracts.ReturnModeExchange {
+		return nil
+	}
+	so, err := s.sales.GetByID(ctx, ret.SalesOrderID)
+	if err != nil || so == nil {
+		return apperror.Internal(errors.New("source order unavailable"))
+	}
+	if !isCounterExchange(so, ret) {
+		return nil
+	}
+	return s.handOverAtCounter(ctx, actorID, branchID, ret.ID, o)
+}
+
+// autoOffset is the idempotent post-final step of Confirm: a refund-kind
+// return of a customer order that still has an open bill is offset against
+// that bill (up to the smaller of the two), so the customer's receivable falls
+// without anyone issuing cash. The offset is keyed offset:sr:<id>; the memo
+// row and receivable_reduction are written once.
+func (s *Service) autoOffset(ctx context.Context, actorID, branchID, id int64) error {
+	if s.payments == nil {
+		return nil
+	}
+	ret, err := s.repo.GetReturn(ctx, id)
+	if err != nil || ret == nil {
+		return apperror.Internal(errors.New("return unavailable for offset"))
+	}
+	proj := projection(ret)
+	if ret.Status != contracts.StatusConfirmed || proj.Kind != contracts.KindRefund || proj.Total <= 0 {
+		return nil
+	}
+	so, err := s.sales.GetByID(ctx, ret.SalesOrderID)
+	if err != nil || so == nil {
+		return apperror.Internal(errors.New("source order unavailable"))
+	}
+	if so.PartyID == 0 || so.Status == salescontracts.StatusCancelled {
+		return nil // walk-in sales have no account to offset
+	}
+	ref := "offset:sr:" + strconv.FormatInt(ret.ID, 10)
+	amount := ret.ReceivableReduction
+	if amount == 0 {
+		paid, err := s.payments.PaidForOrders(ctx, paymentcontracts.OrderSales, []int64{so.ID})
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if amount = offsetAmount(so.GrandTotal, paid[so.ID], proj.Total); amount <= 0 {
+			return nil
+		}
+	}
+	pay, _, err := s.payments.OffsetReturn(ctx, paymentcontracts.OffsetInput{
+		ActorID: actorID, BranchID: branchID, PartyID: so.PartyID,
+		ReturnType: paymentcontracts.OrderSalesReturn, ReturnID: ret.ID,
+		OrderType: paymentcontracts.OrderSales, OrderID: so.ID, Amount: amount,
+		ClientRef: ref, Notes: "Offset otomatis retur " + ret.Number,
+	})
+	if err != nil {
+		return err
+	}
+	if ret.ReceivableReduction != pay.Amount {
+		if err := s.repo.SetReduction(ctx, ret.ID, pay.Amount); err != nil {
+			return apperror.Internal(err)
+		}
+		memos, err := s.repo.Settlements(ctx, ret.ID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		for _, m := range memos {
+			if m.Auto {
+				return nil
+			}
+		}
+		if _, err := s.repo.InsertSettlement(ctx, ret.ID, &contracts.Settlement{
+			Type: contracts.SettleReduceReceivable, Date: timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02"),
+			Amount: pay.Amount, Notes: "Offset otomatis ke tagihan order", Auto: true,
+		}, actorID); err != nil {
+			return apperror.Internal(err)
+		}
+	}
+	return nil
+}
+
+// checkCommitted re-verifies, at confirm time, that Σ(draft + confirmed
+// returns including this one) still fits within what was delivered.
+func (s *Service) checkCommitted(ctx context.Context, soID int64, ret *contracts.SalesReturn) error {
+	committed, err := s.repo.CommittedQtyBySO(ctx, soID)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	for _, it := range ret.Items {
+		key := lineKey(it.ProductID, it.VariantID)
+		delivered, err := s.delivery.DeliveredQty(ctx, soID, it.ProductID, it.VariantID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if committed[key] > delivered+1e-9 {
+			return apperror.Conflict("Jumlah retur melebihi yang terkirim, periksa retur lain pada order ini")
+		}
+	}
+	return nil
 }
 
 // Cancel voids a draft outright, or reverses a confirmed return (stock back
 // out) — the KI-99/KI-101 cancel path that legacy promised but never built.
+// The status is re-read inside the lock so two simultaneous cancels cannot
+// both move stock; the second one replays.
 func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*contracts.SalesReturn, error) {
-	ret, err := s.mustOwnBranch(ctx, id, branchID)
+	first, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
 	}
-	// Exchange returns with a moving replacement cannot vanish: the
-	// replacement shipment would strand without its parent document.
-	if ret.ReturnMode == contracts.ReturnModeExchange &&
-		(ret.ReplacementDeliveryStatus == contracts.ReplacementDispatched ||
-			ret.ReplacementDeliveryStatus == contracts.ReplacementConfirmed) {
-		return nil, apperror.Conflict("Retur tukar yang barang penggantinya sudah dikirim tidak dapat dibatalkan")
-	}
-	switch ret.Status {
-	case contracts.StatusDraft:
-		if err := s.repo.SetStatus(ctx, ret.ID, contracts.StatusCancelled, actorID); err != nil {
-			return nil, apperror.Internal(err)
+	var out *contracts.SalesReturn
+	var replayed, wasConfirmed bool
+	err = doclock.Lock("so:"+strconv.FormatInt(first.SalesOrderID, 10), func() error {
+		ret, err := s.mustOwnBranch(ctx, id, branchID)
+		if err != nil {
+			return err
 		}
-	case contracts.StatusConfirmed:
-		if s.payments == nil {
-			return nil, apperror.Internal(errPaymentsNotWired)
+		if ret.Status == contracts.StatusCancelled {
+			replayed = true
+			out, err = s.GetByID(ctx, ret.ID)
+			return err
 		}
-		if used, err := s.payments.HasActiveAllocations(ctx, paymentcontracts.OrderSalesReturn, ret.ID); err != nil {
-			return nil, apperror.Internal(err)
-		} else if used {
-			return nil, apperror.Conflict("Retur sudah ada refund, batalkan pembayaran dulu")
+		// Exchange returns with a moving replacement cannot vanish: the
+		// replacement shipment would strand without its parent document.
+		if ret.ReturnMode == contracts.ReturnModeExchange &&
+			(ret.ReplacementDeliveryStatus == contracts.ReplacementDispatched ||
+				ret.ReplacementDeliveryStatus == contracts.ReplacementConfirmed) {
+			return apperror.Conflict("Retur tukar yang barang penggantinya sudah dikirim tidak dapat dibatalkan")
 		}
-		var out *contracts.SalesReturn
-		err := doclock.Lock("so:"+strconv.FormatInt(ret.SalesOrderID, 10), func() error {
-			full, err := s.enrich(ctx, ret)
-			if err != nil {
+		switch ret.Status {
+		case contracts.StatusDraft:
+			// A draft whose confirm died after the stock posting is reversed too.
+			if moved, err := s.stock.HasMovements(ctx, branchID, stockcontracts.RefSalesReturn, ret.ID); err != nil {
 				return err
-			}
-			for _, it := range full.Items {
-				if err := s.stock.MoveOut(ctx, branchID, it.ProductID, it.VariantID, it.LocationID,
-					it.QtyBase, "sales_return_cancel", full.ID, actorID); err != nil {
+			} else if moved {
+				if _, err := s.stock.Reverse(ctx, branchID, stockcontracts.RefSalesReturn, ret.ID, actorID); err != nil {
 					return err
 				}
 			}
-			if err := s.repo.SetStatus(ctx, ret.ID, contracts.StatusCancelled, actorID); err != nil {
-				return apperror.Internal(err)
+		case contracts.StatusConfirmed:
+			wasConfirmed = true
+			if s.payments == nil {
+				return apperror.Internal(errPaymentsNotWired)
 			}
-			res, err := s.GetByID(ctx, ret.ID)
-			if err != nil {
+			if used, err := s.payments.HasActiveAllocations(ctx, paymentcontracts.OrderSalesReturn, ret.ID); err != nil {
+				return apperror.Internal(err)
+			} else if used {
+				return apperror.Conflict("Retur sudah ada refund, batalkan pembayaran dulu")
+			}
+			if _, err := s.stock.Reverse(ctx, branchID, stockcontracts.RefSalesReturn, ret.ID, actorID); err != nil {
 				return err
 			}
-			out = res
-			return nil
-		})
-		if err != nil {
-			return nil, err
+		default:
+			return apperror.Conflict("Retur sudah dibatalkan")
 		}
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.cancel", Entity: "sales_return", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
-		return out, nil
-	default:
-		return nil, apperror.Conflict("Retur sudah dibatalkan")
+		won, err := s.repo.Transition(ctx, ret.ID, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if !won {
+			// Lost a race: fine when the winner cancelled it, otherwise stale.
+			cur, err := s.repo.GetReturn(ctx, ret.ID)
+			if err != nil {
+				return apperror.Internal(err)
+			}
+			if cur == nil || cur.Status != contracts.StatusCancelled {
+				return apperror.Conflict("Status retur berubah, muat ulang")
+			}
+			replayed = true
+		}
+		out, err = s.GetByID(ctx, ret.ID)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.cancel", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: ret.Number})
-	return s.GetByID(ctx, id)
+	if !replayed && wasConfirmed && s.reverser != nil {
+		// The journal of a confirmed return must not outlive the return. A
+		// failure here never undoes the cancellation: it is audited and shows
+		// up as an orphan in the readiness gate.
+		if _, rerr := s.reverser.ReverseForSource(ctx, actorID, branchID, "sales_return", id, "Retur dibatalkan"); rerr != nil {
+			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "sales_return", EntityID: id, BranchID: branchID, ActorID: actorID, Note: rerr.Error()})
+		}
+		// The customer-balance reclassifications (K-04a) die with the return.
+		// Each settlement is its own journal source; a failure is audited and
+		// surfaces as an orphan, never undoes the cancellation.
+		credits, cerr := s.repo.CreditSettlementIDs(ctx, id)
+		if cerr != nil {
+			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "sales_return_settlement", EntityID: id, BranchID: branchID, ActorID: actorID, Note: cerr.Error()})
+		}
+		for _, sid := range credits {
+			if _, rerr := s.reverser.ReverseForSource(ctx, actorID, branchID, "sales_return_settlement", sid, "Retur dibatalkan"); rerr != nil {
+				_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "sales_return_settlement", EntityID: sid, BranchID: branchID, ActorID: actorID, Note: rerr.Error()})
+			}
+		}
+	}
+	if !replayed {
+		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.cancel", Entity: "sales_return", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
+	}
+	return out, nil
 }
 
 // ReplacementDispatchInput carries the SJ-face fields for a replacement
@@ -498,6 +837,8 @@ type ReplacementDispatchInput struct {
 	VehiclePlate       string
 	WarehouseStaffName string
 	DropLocationNote   string
+	// AtCounter marks the POS counter hand-over (RT-02): no crew needed.
+	AtCounter bool
 }
 
 // CreateReplacementDelivery drafts the replacement shipment of a confirmed
@@ -528,26 +869,11 @@ func (s *Service) CreateReplacementDelivery(ctx context.Context, actorID, branch
 	// D6: every replacement line must have a cost basis (catalog purchase
 	// price) and on-hand stock at its location — otherwise finance would
 	// book zero COGS and the dispatch would strand mid-way.
+	if err := s.checkReplacementReady(ctx, branchID, full.ReplacementItems); err != nil {
+		return nil, err
+	}
 	items := make([]deliverycontracts.ReplacementLine, 0, len(full.ReplacementItems))
-	for i, it := range full.ReplacementItems {
-		tag := "pengganti baris " + strconv.Itoa(i+1) + ": "
-		p, err := s.products.GetByID(ctx, it.ProductID)
-		if err != nil {
-			return nil, apperror.Internal(err)
-		}
-		if p == nil || p.Status != "active" {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "replacementItems", Message: tag + "produk sudah diarsipkan"}})
-		}
-		if p.PurchasePrice <= 0 {
-			return nil, apperror.Conflict("Produk " + p.Code + " tidak punya harga modal di katalog — isi harga beli dulu agar HPP tidak nol")
-		}
-		bal, err := s.stock.GetBalance(ctx, branchID, it.ProductID, it.VariantID, it.LocationID)
-		if err != nil {
-			return nil, err
-		}
-		if bal.Available() < it.QtyBase {
-			return nil, apperror.Conflict("Stok tersedia tidak mencukupi (" + tag + "sisa " + strconv.FormatFloat(bal.Available(), 'f', -1, 64) + ")")
-		}
+	for _, it := range full.ReplacementItems {
 		items = append(items, deliverycontracts.ReplacementLine{
 			ProductID: it.ProductID, VariantID: it.VariantID,
 			LocationID: it.LocationID, UOM: it.UOM, Qty: it.Qty,
@@ -567,13 +893,15 @@ func (s *Service) CreateReplacementDelivery(ctx context.Context, actorID, branch
 			DeliveryDate: in.DeliveryDate, Notes: in.Notes,
 			DriverName: in.DriverName, VehiclePlate: in.VehiclePlate,
 			WarehouseStaff: in.WarehouseStaffName, DropNote: in.DropLocationNote,
-			Items: items,
+			AtCounter: in.AtCounter, Items: items,
 		})
 		if err != nil {
 			return err
 		}
-		if err := s.repo.SetReplacementStatus(ctx, ret.ID, contracts.ReplacementDispatched, actorID); err != nil {
+		if won, err := s.repo.SetReplacementStatus(ctx, ret.ID, contracts.ReplacementPending, contracts.ReplacementDispatched, actorID); err != nil {
 			return apperror.Internal(err)
+		} else if !won {
+			return apperror.Conflict("Status pengiriman pengganti berubah, muat ulang")
 		}
 		out = dn
 		return nil
@@ -616,12 +944,36 @@ func (s *Service) ConfirmReplacementDelivery(ctx context.Context, actorID, branc
 		if fresh == nil || fresh.ReplacementDeliveryStatus != contracts.ReplacementDispatched {
 			return apperror.Conflict("Tidak ada pengiriman pengganti yang menunggu konfirmasi")
 		}
+		// K-04e: an exchange that costs more can collect its surcharge with the
+		// hand-over (pay_now). Validated here, where the return and its charge
+		// are known, BEFORE anything moves; delivery then records the payment
+		// inside its own confirm saga (stock -> payment -> status flip).
+		if in.Settlement != nil {
+			resolved, err := s.resolveReplacementSettlement(ctx, fresh, in.Settlement)
+			if err != nil {
+				return err
+			}
+			in.Settlement = resolved
+		}
 		confirmed, err := s.delivery.ConfirmReplacement(ctx, actorID, branchID, deliveryID, in)
 		if err != nil {
 			return err
 		}
-		if err := s.repo.SetReplacementStatus(ctx, ret.ID, contracts.ReplacementConfirmed, actorID); err != nil {
+		if won, err := s.repo.SetReplacementStatus(ctx, ret.ID, contracts.ReplacementDispatched, contracts.ReplacementConfirmed, actorID); err != nil {
 			return apperror.Internal(err)
+		} else if !won {
+			return apperror.Conflict("Status pengiriman pengganti berubah, muat ulang")
+		}
+		if in.Settlement != nil {
+			// Memo row so the settlement position shows the collection; the
+			// money itself is the payment recorded above.
+			if _, err := s.repo.InsertSettlement(ctx, ret.ID, &contracts.Settlement{
+				Type: contracts.SettleCollectPayment, Date: timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02"),
+				Amount: in.Settlement.Amount, PaymentMethod: in.Settlement.Method,
+				ReferenceNumber: in.Settlement.Reference, Notes: "Tambah bayar saat serah " + confirmed.Number, Auto: true,
+			}, actorID); err != nil {
+				_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.settle_memo_failed", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: err.Error()})
+			}
 		}
 		out = confirmed
 		return nil
@@ -675,22 +1027,50 @@ func (s *Service) AddSettlement(ctx context.Context, actorID, branchID, id int64
 	if err != nil {
 		return nil, err
 	}
-	var settled int64
-	for _, st := range full.Settlements {
-		settled += st.Amount
+	// K-04c: legacy-style rules from the direction of the difference  - the
+	// position is derived from the same rows the detail view shows. The order
+	// party is needed only for customer_credit (the balance needs an owner).
+	so, err := s.sales.GetByID(ctx, ret.SalesOrderID)
+	if err != nil || so == nil {
+		return nil, apperror.Internal(errors.New("source order unavailable"))
 	}
-	if settled+in.Amount > ret.Total {
-		return nil, apperror.Conflict("Melebihi sisa yang belum diselesaikan (sisa " + strconv.FormatInt(ret.Total-settled, 10) + ")")
+	pos := positionOf(full.ReturnMode, full.Total, full.DifferenceAmount, full.ReceivableReduction, full.Settlements, so.PartyID != 0)
+	if err := pos.validate(in.Type, in.Amount); err != nil {
+		return nil, err
 	}
-	if _, err := s.repo.InsertSettlement(ctx, ret.ID, &contracts.Settlement{
+	// N-40: money already refunded / offset through payments is gone too; the
+	// balance can only keep what is still unrefunded and not yet credited.
+	if in.Type == contracts.SettleCustomerCredit && s.payments != nil {
+		paid, perr := s.payments.PaidForOrders(ctx, paymentcontracts.OrderSalesReturn, []int64{ret.ID})
+		if perr != nil {
+			return nil, apperror.Internal(perr)
+		}
+		var credited int64
+		for _, st := range full.Settlements {
+			if st.Type == contracts.SettleCustomerCredit {
+				credited += st.Amount
+			}
+		}
+		if room := pos.Owed - paid[ret.ID] - credited; in.Amount > room {
+			if room < 0 {
+				room = 0
+			}
+			return nil, apperror.Conflict("Melebihi sisa retur yang belum direfund/diofset (sisa " + strconv.FormatInt(room, 10) + ")")
+		}
+	}
+	if _, err := s.repo.InsertSettlementAudited(ctx, ret.ID, &contracts.Settlement{
 		Type: in.Type, Date: date, Amount: in.Amount,
 		PaymentMethod:   strings.TrimSpace(in.PaymentMethod),
 		ReferenceNumber: strings.TrimSpace(in.ReferenceNumber),
 		Notes:           strings.TrimSpace(in.Notes),
-	}, actorID); err != nil {
+	}, actorID, func(ctx context.Context, tx *sql.Tx, settlementID int64) error {
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: "sales_returns.settle", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: ret.Number,
+			After: map[string]any{"settlementId": settlementID, "type": in.Type, "amount": in.Amount, "date": date},
+		})
+	}); err != nil {
 		return nil, apperror.Internal(err)
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.settle", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: ret.Number})
 	return s.GetByID(ctx, ret.ID)
 }
 
@@ -717,6 +1097,10 @@ func (s *Service) ReturnContext(ctx context.Context, branchID, soID int64) (map[
 	if so == nil || so.BranchID != branchID {
 		return nil, apperror.NotFound("Sales order")
 	}
+	committedAll, err := s.repo.CommittedQtyBySO(ctx, soID)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
 	lines := make([]any, 0, len(so.Items))
 	for _, l := range so.Items {
 		delivered, err := s.delivery.DeliveredQty(ctx, soID, l.ProductID, l.VariantID)
@@ -727,7 +1111,9 @@ func (s *Service) ReturnContext(ctx context.Context, branchID, soID int64) (map[
 		if err != nil {
 			return nil, apperror.Internal(err)
 		}
-		remaining := delivered - returned
+		// Drafts hold their share too, so the form never offers goods that a
+		// pending return already claims.
+		remaining := delivered - committedAll[lineKey(l.ProductID, l.VariantID)]
 		if remaining < 0 {
 			remaining = 0
 		}
@@ -764,6 +1150,24 @@ type ReturnPreview struct {
 	TaxTotal         int64
 	Total            int64
 	Mode             string
+	// Settlement outlook (K-04d): the numbers confirmation will arrive at,
+	// from the same rules and the same offset helper AddSettlement/Confirm use.
+	// Difference is replacement - returned for an exchange (0 otherwise).
+	Difference int64
+	// OwedToCustomer / ChargeToCustomer: value owed to the customer vs value
+	// the customer owes (exchange costing more).
+	OwedToCustomer   int64
+	ChargeToCustomer int64
+	// OrderOutstanding is what the customer still owes on the source order
+	// before this return; ReceivableReduction is the part the automatic offset
+	// will take off it at confirmation.
+	OrderOutstanding    int64
+	ReceivableReduction int64
+	// ExternalRemaining is what can then be refunded or kept as customer
+	// balance; AllowedSettlementTypes are the types legal for the rest.
+	ExternalRemaining      int64
+	AllowedSettlementTypes []string
+	HasParty               bool
 }
 
 // PreviewReturn runs the exact Create builder without writing anything.
@@ -789,14 +1193,39 @@ func (s *Service) PreviewReturn(ctx context.Context, branchID, soID int64, mode 
 	if err != nil {
 		return nil, err
 	}
-	replItems, err := s.priceReplacements(ctx, branchID, replacements)
+	replItems, err := s.priceReplacements(ctx, branchID, so, replacements)
 	if err != nil {
 		return nil, err
 	}
+	var replTotal int64
+	for _, ri := range replItems {
+		replTotal += ri.LineTotal
+	}
+	difference := int64(0)
+	if mode == contracts.ReturnModeExchange {
+		difference = replTotal - computed.total
+	}
+	pos := positionOf(mode, computed.total, difference, 0, nil, so.PartyID != 0)
+	var outstanding, reduction int64
+	if s.payments != nil && so.PartyID != 0 && pos.Owed > 0 {
+		paid, perr := s.payments.PaidForOrders(ctx, paymentcontracts.OrderSales, []int64{so.ID})
+		if perr != nil {
+			return nil, apperror.Internal(perr)
+		}
+		if outstanding = so.GrandTotal - paid[so.ID]; outstanding < 0 {
+			outstanding = 0
+		}
+		reduction = offsetAmount(so.GrandTotal, paid[so.ID], pos.Owed)
+	}
+	pos.Reduction = reduction
 	return &ReturnPreview{
 		Items: computed.items, ReplacementItems: replItems,
 		Subtotal: computed.subtotal, DiscountTotal: computed.discountTotal,
 		TaxTotal: computed.taxTotal, Total: computed.total, Mode: mode,
+		Difference: difference, OwedToCustomer: pos.Owed, ChargeToCustomer: pos.Charge,
+		OrderOutstanding: outstanding, ReceivableReduction: reduction,
+		ExternalRemaining: pos.ExternalRemaining(), AllowedSettlementTypes: pos.Allowed(),
+		HasParty: pos.HasParty,
 	}, nil
 }
 
@@ -807,44 +1236,11 @@ func lineKey(productID, variantID int64) string {
 	return strconv.FormatInt(productID, 10) + "/" + strconv.FormatInt(variantID, 10)
 }
 
-// lineEconomics mirrors finance lineEconomics (builders.go): gross − pct −
-// nominal, then tax base/tax per type. Duplicated deliberately — each module
-// owns its money math per the monorepo standard, so the two can never drift
-// through a shared helper edited for one side's needs.
-func lineEconomics(qty float64, unit int64, pct float64, nominal int64, taxType string, rate float64) (net, base, tax int64) {
-	gross := int64(math.Round(qty * float64(unit)))
-	net = gross - int64(math.Round(float64(gross)*pct/100)) - nominal
-	switch taxType {
-	case "exclude":
-		base = net
-		tax = int64(math.Round(float64(net) * rate / 100))
-	case "include":
-		if rate > 0 {
-			base = int64(math.Round(float64(net) / (1 + rate/100)))
-		} else {
-			base = net
-		}
-		tax = net - base
-	default:
-		base = net
-	}
-	return net, base, tax
-}
-
-// prorate scales a nominal amount by the returned share of its source line.
-// Returns 0 for a zero-qty source rather than dividing by zero.
-func prorate(amount int64, part, whole float64) int64 {
-	if whole <= 0 {
-		return 0
-	}
-	return int64(math.Round(float64(amount) * part / whole))
-}
-
 // priceReplacements validates + prices exchange replacement lines once at
 // creation from the live catalog (a new sale in effect). Member pricing
 // does not apply. Each line needs an active product + known variant +
 // resolvable UOM + valid branch location.
-func (s *Service) priceReplacements(ctx context.Context, branchID int64, in []ReplacementInput) ([]*contracts.ReplacementItem, error) {
+func (s *Service) priceReplacements(ctx context.Context, branchID int64, so *salescontracts.SalesOrder, in []ReplacementInput) ([]*contracts.ReplacementItem, error) {
 	out := make([]*contracts.ReplacementItem, 0, len(in))
 	for i, line := range in {
 		tag := "pengganti baris " + strconv.Itoa(i+1) + ": "
@@ -873,14 +1269,28 @@ func (s *Service) priceReplacements(ctx context.Context, branchID int64, in []Re
 		if err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "replacementItems", Message: tag + "satuan tidak dikenal"}})
 		}
-		if err := s.stock.CheckLocation(ctx, branchID, line.LocationID); err != nil {
-			return nil, err
+		if p.Tracked && p.Type != "jasa" {
+			if err := s.stock.CheckLocation(ctx, branchID, line.LocationID); err != nil {
+				return nil, err
+			}
 		}
+		// The replacement is a new sale: catalog price (or an explicit price
+		// no lower than the minimum), taxed like the source order.
 		unitPrice := p.SellingPrice
+		if line.UnitPrice != nil {
+			if *line.UnitPrice < 0 {
+				return nil, apperror.Validation("", []apperror.FieldError{{Field: "replacementItems", Message: tag + "harga tidak boleh negatif"}})
+			}
+			unitPrice = *line.UnitPrice
+		}
+		net, base, tax, total := money.LineAmounts(line.Qty, unitPrice, 0, 0, so.TaxType, so.TaxRate).Split()
+		if p.MinSellingPrice > 0 && net < money.Round(float64(p.MinSellingPrice)*line.Qty) {
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "replacementItems", Message: tag + "harga di bawah harga minimum"}})
+		}
 		out = append(out, &contracts.ReplacementItem{
 			ProductID: line.ProductID, VariantID: line.VariantID, LocationID: line.LocationID,
 			UOM: uom, UOMFactor: factor, Qty: line.Qty, QtyBase: line.Qty * factor,
-			UnitPrice: unitPrice, LineTotal: int64(math.Round(line.Qty * float64(unitPrice))),
+			UnitPrice: unitPrice, TaxBase: base, TaxAmount: tax, LineTotal: total,
 		})
 	}
 	return out, nil
@@ -908,6 +1318,40 @@ func (s *Service) List(ctx context.Context, branchID, soID int64, status string,
 	return &ListResult{Returns: returns, Total: total}, nil
 }
 
+// CancelledAmong returns which of ids are cancelled.
+func (s *Service) CancelledAmong(ctx context.Context, branchID int64, ids []int64) ([]int64, error) {
+	out, err := s.repo.CancelledAmong(ctx, branchID, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// ListConfirmedAfter pages confirmed returns by ascending id after a cursor.
+func (s *Service) ListConfirmedAfter(ctx context.Context, branchID, afterID int64, limit int) ([]*contracts.Return, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 1000
+	}
+	rows, err := s.repo.ConfirmedAfter(ctx, branchID, afterID, limit)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	out := make([]*contracts.Return, 0, len(rows))
+	for _, ret := range rows {
+		out = append(out, &contracts.Return{ID: ret.ID, Number: ret.Number, Branch: ret.BranchID, Total: ret.Total, Date: ret.ReturnDate, Status: ret.Status})
+	}
+	return out, nil
+}
+
+// ActiveReturnCount counts the order's live (draft + confirmed) returns.
+func (s *Service) ActiveReturnCount(ctx context.Context, soID int64) (int64, error) {
+	n, err := s.repo.ActiveReturnCount(ctx, soID)
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+	return n, nil
+}
+
 // OrderIDsByReturns maps return id -> originating sales order id.
 func (s *Service) OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64]int64, error) {
 	out, err := s.repo.OrderIDsByReturns(ctx, ids)
@@ -915,4 +1359,85 @@ func (s *Service) OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64
 		return nil, apperror.Internal(err)
 	}
 	return out, nil
+}
+
+// ReturnedByProduct implements the contract (see there).
+func (s *Service) ReturnedByProduct(ctx context.Context, branchID int64, from, to string) (map[int64]float64, error) {
+	out, err := s.repo.ReturnedByProduct(ctx, branchID, from, to)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// NetAdjustment implements the contract (see there).
+func (s *Service) NetAdjustment(ctx context.Context, branchID int64, from, to string) (int64, error) {
+	adj, err := s.repo.NetAdjustment(ctx, branchID, from, to)
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+	return adj, nil
+}
+
+// GetCreditSettlement implements the contract (see there).
+func (s *Service) GetCreditSettlement(ctx context.Context, id int64) (*contracts.CreditSettlement, error) {
+	out, err := s.repo.GetCreditSettlement(ctx, id)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// ListCreditSettlementsAfter implements the contract (see there).
+func (s *Service) ListCreditSettlementsAfter(ctx context.Context, branchID, afterID int64, limit int) ([]*contracts.CreditSettlement, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 1000
+	}
+	out, err := s.repo.CreditSettlementsAfter(ctx, branchID, afterID, limit)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// CancelledSettlementsAmong implements the contract (see there).
+func (s *Service) CancelledSettlementsAmong(ctx context.Context, branchID int64, ids []int64) ([]int64, error) {
+	out, err := s.repo.CancelledCreditSettlementsAmong(ctx, branchID, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
+// resolveReplacementSettlement checks a pay_now surcharge against the return
+// and fills the default amount (K-04e): only an exchange whose replacement
+// costs MORE (charge kind) can collect, never more than the surcharge still
+// open (what payments already allocated to the return counts as collected).
+func (s *Service) resolveReplacementSettlement(ctx context.Context, ret *contracts.SalesReturn, in *deliverycontracts.ReplacementSettlement) (*deliverycontracts.ReplacementSettlement, error) {
+	if s.payments == nil {
+		return nil, apperror.Internal(errPaymentsNotWired)
+	}
+	proj := projection(ret)
+	if proj.Kind != contracts.KindCharge || proj.Total <= 0 {
+		return nil, apperror.Conflict("Tambah bayar hanya untuk retur tukar yang barang penggantinya lebih mahal dari barang retur")
+	}
+	paid, err := s.payments.PaidForOrders(ctx, paymentcontracts.OrderSalesReturn, []int64{ret.ID})
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	open := proj.Total - paid[ret.ID]
+	if open <= 0 {
+		return nil, apperror.Conflict("Selisih tukar sudah lunas")
+	}
+	out := *in
+	if out.Amount == 0 {
+		out.Amount = open
+	}
+	if out.Amount < 0 {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "settlement.amount", Message: "harus lebih dari 0"}})
+	}
+	if out.Amount > open {
+		return nil, apperror.Conflict("Melebihi selisih yang harus dibayar customer (sisa " + strconv.FormatInt(open, 10) + ")")
+	}
+	return &out, nil
 }

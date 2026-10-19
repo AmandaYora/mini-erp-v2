@@ -22,15 +22,12 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
 func partyView(p *contracts.Party) map[string]any {
 	var email, member any
+	attrs := p.Attributes
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
 	if p.Email != "" {
 		email = p.Email
 	}
@@ -40,7 +37,7 @@ func partyView(p *contracts.Party) map[string]any {
 	return map[string]any{
 		"id": p.ID, "code": p.Code, "type": p.Type, "name": p.Name,
 		"phone": p.Phone, "email": email, "address": p.Address, "notes": p.Notes,
-		"member": member, "status": p.Status,
+		"member": member, "status": p.Status, "archivedAt": p.ArchivedAt, "attributes": attrs,
 	}
 }
 
@@ -69,6 +66,9 @@ type partyPayload struct {
 	Notes        string `json:"notes"`
 	MemberTypeID *int64 `json:"memberTypeId"`
 	ClearMember  bool   `json:"clearMember"`
+	// Attributes is the "Informasi Tambahan" block: omitted = unchanged on
+	// update, {} = cleared.
+	Attributes map[string]string `json:"attributes"`
 }
 
 func toInput(in partyPayload) application.PartyInput {
@@ -76,6 +76,7 @@ func toInput(in partyPayload) application.PartyInput {
 		Code: in.Code, Name: in.Name, Phone: in.Phone, Email: in.Email,
 		Address: in.Address, Notes: in.Notes,
 		MemberTypeID: in.MemberTypeID, ClearMember: in.ClearMember,
+		Attributes: in.Attributes,
 	}
 }
 
@@ -160,7 +161,7 @@ func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	p, err := h.svc.CreateCustomer(r.Context(), actorID(r), toInput(in))
+	p, err := h.svc.CreateCustomer(r.Context(), authcontracts.ActorID(r), toInput(in))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -175,7 +176,7 @@ func (h *Handler) CreateSupplier(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	p, err := h.svc.CreateSupplier(r.Context(), actorID(r), toInput(in))
+	p, err := h.svc.CreateSupplier(r.Context(), authcontracts.ActorID(r), toInput(in))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -206,9 +207,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, partyType strin
 	}
 	var p *contracts.Party
 	if partyType == contracts.PartySupplier {
-		p, err = h.svc.UpdateSupplier(r.Context(), actorID(r), id, toInput(in))
+		p, err = h.svc.UpdateSupplier(r.Context(), authcontracts.ActorID(r), id, toInput(in))
 	} else {
-		p, err = h.svc.UpdateCustomer(r.Context(), actorID(r), id, toInput(in))
+		p, err = h.svc.UpdateCustomer(r.Context(), authcontracts.ActorID(r), id, toInput(in))
 	}
 	if err != nil {
 		response.FailErr(w, err)
@@ -225,9 +226,9 @@ func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, partyType, s
 	}
 	var appErr error
 	if status == "archived" {
-		appErr = h.svc.Archive(r.Context(), actorID(r), id, partyType)
+		appErr = h.svc.Archive(r.Context(), authcontracts.ActorID(r), id, partyType)
 	} else {
-		appErr = h.svc.Restore(r.Context(), actorID(r), id, partyType)
+		appErr = h.svc.Restore(r.Context(), authcontracts.ActorID(r), id, partyType)
 	}
 	if appErr != nil {
 		response.FailErr(w, appErr)
@@ -303,7 +304,7 @@ func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	a, appErr := h.svc.CreateAddress(r.Context(), actorID(r), id, contracts.PartyCustomer, addressInput(in))
+	a, appErr := h.svc.CreateAddress(r.Context(), authcontracts.ActorID(r), id, contracts.PartyCustomer, addressInput(in))
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -328,7 +329,7 @@ func (h *Handler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	a, appErr := h.svc.UpdateAddress(r.Context(), actorID(r), id, contracts.PartyCustomer, addrID, addressInput(in))
+	a, appErr := h.svc.UpdateAddress(r.Context(), authcontracts.ActorID(r), id, contracts.PartyCustomer, addrID, addressInput(in))
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -348,7 +349,7 @@ func (h *Handler) ArchiveAddress(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Alamat"))
 		return
 	}
-	if appErr := h.svc.ArchiveAddress(r.Context(), actorID(r), id, contracts.PartyCustomer, addrID); appErr != nil {
+	if appErr := h.svc.ArchiveAddress(r.Context(), authcontracts.ActorID(r), id, contracts.PartyCustomer, addrID); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -398,7 +399,7 @@ func (h *Handler) CreateMemberType(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	m, err := h.svc.CreateMemberType(r.Context(), actorID(r), memberInput(in))
+	m, err := h.svc.CreateMemberType(r.Context(), authcontracts.ActorID(r), memberInput(in))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -429,7 +430,7 @@ func (h *Handler) UpdateMemberType(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	m, appErr := h.svc.UpdateMemberType(r.Context(), actorID(r), id, application.MemberTypeInput{
+	m, appErr := h.svc.UpdateMemberType(r.Context(), authcontracts.ActorID(r), id, application.MemberTypeInput{
 		Name: in.Name, Description: in.Description,
 		Basis: in.Basis, Direction: in.Direction, Type: in.Type,
 		Value: in.Value, Mode: in.Mode, Step: in.Step, Confirmed: in.Confirmed,
@@ -448,7 +449,7 @@ func (h *Handler) ArchiveMemberType(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Tipe member"))
 		return
 	}
-	if appErr := h.svc.ArchiveMemberType(r.Context(), actorID(r), id); appErr != nil {
+	if appErr := h.svc.ArchiveMemberType(r.Context(), authcontracts.ActorID(r), id); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -462,24 +463,52 @@ func (h *Handler) RestoreMemberType(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Tipe member"))
 		return
 	}
-	if appErr := h.svc.RestoreMemberType(r.Context(), actorID(r), id); appErr != nil {
+	if appErr := h.svc.RestoreMemberType(r.Context(), authcontracts.ActorID(r), id); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
 	response.OK(w, "Tipe member dipulihkan", nil)
 }
 
+// MemberTypeCustomerCount handles GET /api/v1/member-types/{id}/customer-count.
+func (h *Handler) MemberTypeCustomerCount(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Tipe member"))
+		return
+	}
+	n, appErr := h.svc.CountMemberTypeCustomers(r.Context(), id)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Jumlah pelanggan aktif pada tipe member", map[string]any{"memberTypeId": id, "activeCustomers": n})
+}
+
 // Quote handles POST /api/v1/pricing/quote.
 func (h *Handler) Quote(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		CustomerID int64   `json:"customerId"`
-		ProductIDs []int64 `json:"productIds" validate:"required"`
+		CustomerID int64 `json:"customerId"`
+		// MemberTypeID prices for an explicit member type without a customer;
+		// it cannot be combined with customerId.
+		MemberTypeID int64   `json:"memberTypeId"`
+		ProductIDs   []int64 `json:"productIds" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	res, err := h.svc.Quote(r.Context(), in.CustomerID, in.ProductIDs)
+	if in.MemberTypeID != 0 && in.CustomerID != 0 {
+		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "memberTypeId", Message: "tidak dapat dipakai bersama customerId"}}))
+		return
+	}
+	var res *contracts.QuoteResult
+	var err error
+	if in.MemberTypeID != 0 {
+		res, err = h.svc.QuoteForMemberType(r.Context(), in.MemberTypeID, in.ProductIDs)
+	} else {
+		res, err = h.svc.Quote(r.Context(), in.CustomerID, in.ProductIDs)
+	}
 	if err != nil {
 		response.FailErr(w, err)
 		return

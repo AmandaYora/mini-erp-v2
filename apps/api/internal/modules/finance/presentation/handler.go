@@ -16,26 +16,13 @@ import (
 
 // Handler serves the finance module HTTP surface.
 type Handler struct {
-	svc *application.Service
+	svc    *application.Service
+	access BranchAccessFunc
 }
 
 // NewHandler wires finance endpoints.
 func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
-}
-
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
 }
 
 func accountView(a *contracts.Account) map[string]any {
@@ -92,7 +79,7 @@ func (h *Handler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	a, err := h.svc.CreateAccount(r.Context(), actorID(r), in.Code, in.Name, in.Type, in.IsCash)
+	a, err := h.svc.CreateAccount(r.Context(), authcontracts.ActorID(r), in.Code, in.Name, in.Type, in.IsCash)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -116,7 +103,7 @@ func (h *Handler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	a, appErr := h.svc.UpdateAccount(r.Context(), actorID(r), id, in.Name, in.Type, in.IsCash)
+	a, appErr := h.svc.UpdateAccount(r.Context(), authcontracts.ActorID(r), id, in.Name, in.Type, in.IsCash)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -131,7 +118,7 @@ func (h *Handler) ArchiveAccount(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Akun"))
 		return
 	}
-	if appErr := h.svc.ArchiveAccount(r.Context(), actorID(r), id); appErr != nil {
+	if appErr := h.svc.ArchiveAccount(r.Context(), authcontracts.ActorID(r), id); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -162,7 +149,7 @@ func (h *Handler) SetMapping(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if err := h.svc.SetMapping(r.Context(), actorID(r), in.Key, in.AccountID); err != nil {
+	if err := h.svc.SetMapping(r.Context(), authcontracts.ActorID(r), in.Key, in.AccountID); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -171,7 +158,7 @@ func (h *Handler) SetMapping(w http.ResponseWriter, r *http.Request) {
 
 // ListPeriods handles GET /api/v1/finance/periods.
 func (h *Handler) ListPeriods(w http.ResponseWriter, r *http.Request) {
-	periods, err := h.svc.ListPeriods(r.Context(), branchID(r))
+	periods, err := h.svc.ListPeriods(r.Context(), authcontracts.BranchID(r))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -196,6 +183,19 @@ func periodInput(r *http.Request) (int, int, *apperror.AppError) {
 	return in.Year, in.Month, nil
 }
 
+// reopenInput also reads the mandatory reason of a reopen (FN-05).
+func reopenInput(r *http.Request) (int, int, string, *apperror.AppError) {
+	var in struct {
+		Year   int    `json:"year" validate:"required"`
+		Month  int    `json:"month" validate:"required"`
+		Reason string `json:"reason"`
+	}
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		return 0, 0, "", apperror.Validation("", fields)
+	}
+	return in.Year, in.Month, in.Reason, nil
+}
+
 // ClosePeriod handles POST /api/v1/finance/periods/close.
 func (h *Handler) ClosePeriod(w http.ResponseWriter, r *http.Request) {
 	year, month, appErr := periodInput(r)
@@ -203,7 +203,7 @@ func (h *Handler) ClosePeriod(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, appErr)
 		return
 	}
-	if err := h.svc.ClosePeriod(r.Context(), actorID(r), branchID(r), year, month); err != nil {
+	if err := h.svc.ClosePeriod(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), year, month); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -212,12 +212,12 @@ func (h *Handler) ClosePeriod(w http.ResponseWriter, r *http.Request) {
 
 // ReopenPeriod handles POST /api/v1/finance/periods/reopen.
 func (h *Handler) ReopenPeriod(w http.ResponseWriter, r *http.Request) {
-	year, month, appErr := periodInput(r)
+	year, month, reason, appErr := reopenInput(r)
 	if appErr != nil {
 		response.Fail(w, appErr)
 		return
 	}
-	if err := h.svc.ReopenPeriod(r.Context(), actorID(r), branchID(r), year, month); err != nil {
+	if err := h.svc.ReopenPeriod(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), year, month, reason); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -232,7 +232,7 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "docId", Message: "wajib diisi"}}))
 		return
 	}
-	e, appErr := h.svc.Preview(r.Context(), branchID(r), q.Get("docType"), docID)
+	e, appErr := h.svc.Preview(r.Context(), authcontracts.BranchID(r), q.Get("docType"), docID)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -250,7 +250,7 @@ func (h *Handler) Post(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	e, err := h.svc.Post(r.Context(), actorID(r), branchID(r), in.DocType, in.DocID)
+	e, err := h.svc.Post(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.DocType, in.DocID)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -268,7 +268,8 @@ func (h *Handler) ListJournals(w http.ResponseWriter, r *http.Request) {
 			accountID = id
 		}
 	}
-	res, err := h.svc.ListEntries(r.Context(), branchID(r), q.Get("from"), q.Get("to"), accountID, page, limit)
+	res, err := h.svc.ListEntries(r.Context(), authcontracts.BranchID(r), q.Get("from"), q.Get("to"), accountID, page, limit,
+		infrastructure.EntryFilter{Q: q.Get("q"), SourceType: q.Get("sourceType"), Status: q.Get("status")})
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -290,7 +291,7 @@ func (h *Handler) GetJournal(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Jurnal"))
 		return
 	}
-	e, appErr := h.svc.GetEntry(r.Context(), branchID(r), id)
+	e, appErr := h.svc.GetEntry(r.Context(), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -316,7 +317,7 @@ func (h *Handler) Reverse(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	e, appErr := h.svc.Reverse(r.Context(), actorID(r), branchID(r), id, in.Reason)
+	e, appErr := h.svc.Reverse(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -345,7 +346,7 @@ func (h *Handler) Manual(w http.ResponseWriter, r *http.Request) {
 			AccountCode: l.AccountCode, Debit: l.Debit, Credit: l.Credit,
 		})
 	}
-	e, err := h.svc.Manual(r.Context(), actorID(r), branchID(r), in.Date, in.Memo, lines)
+	e, err := h.svc.Manual(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.Date, in.Memo, lines)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -361,14 +362,15 @@ func (h *Handler) CreateExpense(w http.ResponseWriter, r *http.Request) {
 		Amount           int64  `json:"amount" validate:"required"`
 		Date             string `json:"date"`
 		Notes            string `json:"notes"`
+		PartyID          int64  `json:"partyId"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	e, err := h.svc.CreateExpense(r.Context(), actorID(r), branchID(r), application.CreateExpenseInput{
+	e, err := h.svc.CreateExpense(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), application.CreateExpenseInput{
 		ExpenseAccountID: in.ExpenseAccountID, PayAccountID: in.PayAccountID,
-		Amount: in.Amount, Date: in.Date, Notes: in.Notes,
+		Amount: in.Amount, Date: in.Date, Notes: in.Notes, PartyID: in.PartyID,
 	})
 	if err != nil {
 		response.FailErr(w, err)
@@ -382,7 +384,8 @@ func expenseView(e *infrastructure.Expense) map[string]any {
 		"id": e.ID, "number": e.Number, "branchId": e.BranchID,
 		"expenseAccountId": e.ExpenseAccount, "payAccountId": e.PayAccount,
 		"amount": e.Amount, "date": e.Date, "notes": e.Notes,
-		"journalEntryId": e.JournalID, "status": e.Status,
+		"journalEntryId": e.JournalID, "status": e.Status, "cancelReason": e.CancelReason,
+		"partyId": e.PartyID, "partyName": e.PartyName,
 	}
 }
 
@@ -390,7 +393,20 @@ func expenseView(e *infrastructure.Expense) map[string]any {
 func (h *Handler) ListExpenses(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	res, err := h.svc.ListExpenses(r.Context(), branchID(r), page, limit)
+	var expAcc, payAcc, partyID int64
+	if v, perr := strconv.ParseInt(q.Get("partyId"), 10, 64); perr == nil && v > 0 {
+		partyID = v
+	}
+	if v, perr := strconv.ParseInt(q.Get("expenseAccountId"), 10, 64); perr == nil && v > 0 {
+		expAcc = v
+	}
+	if v, perr := strconv.ParseInt(q.Get("payAccountId"), 10, 64); perr == nil && v > 0 {
+		payAcc = v
+	}
+	res, err := h.svc.ListExpenses(r.Context(), authcontracts.BranchID(r), infrastructure.ExpenseFilter{
+		Q: q.Get("q"), From: q.Get("from"), To: q.Get("to"), Status: q.Get("status"),
+		ExpenseAccountID: expAcc, PayAccountID: payAcc, PartyID: partyID,
+	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -412,7 +428,7 @@ func (h *Handler) GetExpense(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Biaya"))
 		return
 	}
-	e, appErr := h.svc.GetExpense(r.Context(), branchID(r), id)
+	e, appErr := h.svc.GetExpense(r.Context(), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -431,7 +447,14 @@ func (h *Handler) CancelExpense(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Biaya"))
 		return
 	}
-	e, appErr := h.svc.CancelExpense(r.Context(), actorID(r), branchID(r), id)
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	e, appErr := h.svc.CancelExpense(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -441,7 +464,7 @@ func (h *Handler) CancelExpense(w http.ResponseWriter, r *http.Request) {
 
 // CostingSync handles POST /api/v1/finance/costing/sync.
 func (h *Handler) CostingSync(w http.ResponseWriter, r *http.Request) {
-	res, err := h.svc.Sync(r.Context(), branchID(r))
+	res, err := h.svc.Sync(r.Context(), authcontracts.BranchID(r))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -451,7 +474,7 @@ func (h *Handler) CostingSync(w http.ResponseWriter, r *http.Request) {
 
 // Uncosted handles GET /api/v1/finance/costing/uncosted.
 func (h *Handler) Uncosted(w http.ResponseWriter, r *http.Request) {
-	items, err := h.svc.Uncosted(r.Context(), branchID(r))
+	items, err := h.svc.Uncosted(r.Context(), authcontracts.BranchID(r))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -473,7 +496,7 @@ func (h *Handler) CloseTaxPeriod(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, appErr)
 		return
 	}
-	if err := h.svc.CloseTaxPeriod(r.Context(), actorID(r), branchID(r), year, month); err != nil {
+	if err := h.svc.CloseTaxPeriod(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), year, month); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -482,12 +505,12 @@ func (h *Handler) CloseTaxPeriod(w http.ResponseWriter, r *http.Request) {
 
 // ReopenTaxPeriod handles POST /api/v1/finance/tax-periods/reopen.
 func (h *Handler) ReopenTaxPeriod(w http.ResponseWriter, r *http.Request) {
-	year, month, appErr := periodInput(r)
+	year, month, reason, appErr := reopenInput(r)
 	if appErr != nil {
 		response.Fail(w, appErr)
 		return
 	}
-	if err := h.svc.ReopenTaxPeriod(r.Context(), actorID(r), branchID(r), year, month); err != nil {
+	if err := h.svc.ReopenTaxPeriod(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), year, month, reason); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -496,7 +519,7 @@ func (h *Handler) ReopenTaxPeriod(w http.ResponseWriter, r *http.Request) {
 
 // ListTaxPeriods handles GET /api/v1/finance/tax-periods.
 func (h *Handler) ListTaxPeriods(w http.ResponseWriter, r *http.Request) {
-	periods, err := h.svc.ListTaxPeriods(r.Context(), branchID(r))
+	periods, err := h.svc.ListTaxPeriods(r.Context(), authcontracts.BranchID(r))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -510,62 +533,66 @@ func (h *Handler) ListTaxPeriods(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Data periode pajak", items)
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
-// guarded adapts the branch guard into func-style middleware.
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
-}
-
 // RegisterRoutes mounts finance endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/finance/accounts", perm("finance.view", guarded(h.ListAccounts, branchGuard)))
-	mux.Handle("POST /api/v1/finance/accounts", perm("finance.manage", guarded(h.CreateAccount, branchGuard)))
-	mux.Handle("PUT /api/v1/finance/accounts/{id}", perm("finance.manage", guarded(h.UpdateAccount, branchGuard)))
-	mux.Handle("POST /api/v1/finance/accounts/{id}/archive", perm("finance.manage", guarded(h.ArchiveAccount, branchGuard)))
-	mux.Handle("GET /api/v1/finance/account-mappings", perm("finance.view", guarded(h.GetMappings, branchGuard)))
-	mux.Handle("PUT /api/v1/finance/account-mappings", perm("finance.manage", guarded(h.SetMapping, branchGuard)))
-	mux.Handle("GET /api/v1/finance/periods", perm("finance.view", guarded(h.ListPeriods, branchGuard)))
-	mux.Handle("POST /api/v1/finance/periods/close", perm("finance.manage", guarded(h.ClosePeriod, branchGuard)))
-	mux.Handle("POST /api/v1/finance/periods/reopen", perm("finance.manage", guarded(h.ReopenPeriod, branchGuard)))
-	mux.Handle("GET /api/v1/finance/posting/preview", perm("finance.post", guarded(h.Preview, branchGuard)))
-	mux.Handle("POST /api/v1/finance/posting/post", perm("finance.post", guarded(h.Post, branchGuard)))
-	mux.Handle("GET /api/v1/finance/journals", perm("finance.view", guarded(h.ListJournals, branchGuard)))
-	mux.Handle("POST /api/v1/finance/journals/manual", perm("finance.manage", guarded(h.Manual, branchGuard)))
-	mux.Handle("GET /api/v1/finance/journals/{id}", perm("finance.view", guarded(h.GetJournal, branchGuard)))
-	mux.Handle("POST /api/v1/finance/journals/{id}/reverse", perm("finance.manage", guarded(h.Reverse, branchGuard)))
-	mux.Handle("GET /api/v1/finance/expenses", perm("finance.view", guarded(h.ListExpenses, branchGuard)))
-	mux.Handle("POST /api/v1/finance/expenses", perm("finance.post", guarded(h.CreateExpense, branchGuard)))
-	mux.Handle("GET /api/v1/finance/expenses/{id}", perm("finance.view", guarded(h.GetExpense, branchGuard)))
-	mux.Handle("POST /api/v1/finance/expenses/{id}/cancel", perm("finance.post", guarded(h.CancelExpense, branchGuard)))
-	mux.Handle("POST /api/v1/finance/costing/sync", perm("finance.post", guarded(h.CostingSync, branchGuard)))
-	mux.Handle("GET /api/v1/finance/costing/uncosted", perm("finance.view", guarded(h.Uncosted, branchGuard)))
-	mux.Handle("GET /api/v1/finance/tax-periods", perm("finance.view", guarded(h.ListTaxPeriods, branchGuard)))
-	mux.Handle("POST /api/v1/finance/tax-periods/close", perm("finance.manage", guarded(h.CloseTaxPeriod, branchGuard)))
-	mux.Handle("POST /api/v1/finance/tax-periods/reopen", perm("finance.manage", guarded(h.ReopenTaxPeriod, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/trial-balance", perm("finance.view", guarded(h.TrialBalance, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/profit-loss", perm("finance.view", guarded(h.ProfitLoss, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/balance-sheet", perm("finance.view", guarded(h.BalanceSheet, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/general-ledger", perm("finance.view", guarded(h.GeneralLedger, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/tax-summary", perm("finance.view", guarded(h.TaxSummary, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/tax-detail", perm("finance.view", guarded(h.TaxDetail, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/inventory-value", perm("finance.view", guarded(h.InventoryValue, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/margin", perm("finance.view", guarded(h.Margin, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/margin-by-product", perm("finance.view", guarded(h.MarginByProduct, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/receivables", perm("finance.view", guarded(h.Receivables, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/payables", perm("finance.view", guarded(h.Payables, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/cash-summary", perm("finance.view", guarded(h.CashSummary, branchGuard)))
-	mux.Handle("GET /api/v1/finance/reports/fiscal-summary", perm("finance.view", guarded(h.FiscalSummary, branchGuard)))
-	mux.Handle("GET /api/v1/finance/opening", perm("finance.view", guarded(h.OpeningStatus, branchGuard)))
-	mux.Handle("POST /api/v1/finance/opening/preview", perm("finance.manage", guarded(h.PreviewOpening, branchGuard)))
-	mux.Handle("POST /api/v1/finance/opening/post", perm("finance.manage", guarded(h.PostOpening, branchGuard)))
-	mux.Handle("GET /api/v1/finance/posting-sources", perm("finance.post", guarded(h.PostingSources, branchGuard)))
-	mux.Handle("POST /api/v1/finance/posting/post-batch", perm("finance.post", guarded(h.PostBatch, branchGuard)))
-	mux.Handle("POST /api/v1/finance/posting/close-day", perm("finance.post", guarded(h.CloseDay, branchGuard)))
-	mux.Handle("GET /api/v1/finance/tax-adjustments", perm("finance.view", guarded(h.ListTaxAdjustments, branchGuard)))
-	mux.Handle("POST /api/v1/finance/tax-adjustments", perm("finance.manage", guarded(h.CreateTaxAdjustment, branchGuard)))
-	mux.Handle("GET /api/v1/finance/close/readiness", perm("finance.view", guarded(h.Readiness, branchGuard)))
-	mux.Handle("POST /api/v1/finance/close/safe-close", perm("finance.manage", guarded(h.SafeClose, branchGuard)))
-	mux.Handle("GET /api/v1/finance/export/tax-package", perm("finance.view", guarded(h.TaxPackage, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/finance/accounts", perm("finance.view", authcontracts.Guard(h.ListAccounts, branchGuard)))
+	mux.Handle("POST /api/v1/finance/accounts", perm("finance.manage", authcontracts.Guard(h.CreateAccount, branchGuard)))
+	mux.Handle("PUT /api/v1/finance/accounts/{id}", perm("finance.manage", authcontracts.Guard(h.UpdateAccount, branchGuard)))
+	mux.Handle("POST /api/v1/finance/accounts/{id}/archive", perm("finance.manage", authcontracts.Guard(h.ArchiveAccount, branchGuard)))
+	mux.Handle("GET /api/v1/finance/account-mappings", perm("finance.view", authcontracts.Guard(h.GetMappings, branchGuard)))
+	mux.Handle("PUT /api/v1/finance/account-mappings", perm("finance.manage", authcontracts.Guard(h.SetMapping, branchGuard)))
+	mux.Handle("GET /api/v1/finance/periods", perm("finance.view", authcontracts.Guard(h.ListPeriods, branchGuard)))
+	mux.Handle("POST /api/v1/finance/periods/close", perm("finance.close.force", authcontracts.Guard(h.ClosePeriod, branchGuard)))
+	mux.Handle("POST /api/v1/finance/periods/reopen", perm("finance.manage", authcontracts.Guard(h.ReopenPeriod, branchGuard)))
+	mux.Handle("GET /api/v1/finance/posting/preview", perm("finance.posting.view", authcontracts.Guard(h.Preview, branchGuard)))
+	mux.Handle("POST /api/v1/finance/posting/post", perm("finance.posting.post", authcontracts.Guard(h.Post, branchGuard)))
+	mux.Handle("GET /api/v1/finance/journals", perm("finance.journal.view", authcontracts.Guard(h.ListJournals, branchGuard)))
+	mux.Handle("POST /api/v1/finance/journals/manual", perm("finance.manage", authcontracts.Guard(h.Manual, branchGuard)))
+	mux.Handle("GET /api/v1/finance/journals/{id}", perm("finance.journal.view", authcontracts.Guard(h.GetJournal, branchGuard)))
+	mux.Handle("POST /api/v1/finance/journals/{id}/reverse", perm("finance.journal.reverse", authcontracts.Guard(h.Reverse, branchGuard)))
+	mux.Handle("GET /api/v1/finance/expenses", perm("finance.expense.view", authcontracts.Guard(h.ListExpenses, branchGuard)))
+	mux.Handle("POST /api/v1/finance/expenses", perm("finance.expense.create", authcontracts.Guard(h.CreateExpense, branchGuard)))
+	mux.Handle("GET /api/v1/finance/expenses/{id}", perm("finance.expense.view", authcontracts.Guard(h.GetExpense, branchGuard)))
+	mux.Handle("POST /api/v1/finance/expenses/{id}/cancel", perm("finance.expense.cancel", authcontracts.Guard(h.CancelExpense, branchGuard)))
+	mux.Handle("POST /api/v1/finance/costing/sync", perm("finance.posting.post", authcontracts.Guard(h.CostingSync, branchGuard)))
+	mux.Handle("GET /api/v1/finance/costing/uncosted", perm("finance.view", authcontracts.Guard(h.Uncosted, branchGuard)))
+	mux.Handle("GET /api/v1/finance/tax-periods", perm("finance.tax_report.view", authcontracts.Guard(h.ListTaxPeriods, branchGuard)))
+	mux.Handle("POST /api/v1/finance/tax-periods/close", perm("finance.manage", authcontracts.Guard(h.CloseTaxPeriod, branchGuard)))
+	mux.Handle("POST /api/v1/finance/tax-periods/reopen", perm("finance.manage", authcontracts.Guard(h.ReopenTaxPeriod, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/trial-balance", perm("finance.report.view", authcontracts.Guard(h.TrialBalance, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/profit-loss", perm("finance.report.view", authcontracts.Guard(h.ProfitLoss, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/balance-sheet", perm("finance.report.view", authcontracts.Guard(h.BalanceSheet, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/general-ledger", perm("finance.report.view", authcontracts.Guard(h.GeneralLedger, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/tax-summary", perm("finance.tax_report.view", authcontracts.Guard(h.TaxSummary, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/tax-detail", perm("finance.tax_report.view", authcontracts.Guard(h.TaxDetail, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/inventory-value", perm("finance.report.view", authcontracts.Guard(h.InventoryValue, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/margin", perm("finance.report.view", authcontracts.Guard(h.Margin, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/margin-by-product", perm("finance.report.view", authcontracts.Guard(h.MarginByProduct, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/receivables", perm("finance.report.view", authcontracts.Guard(h.Receivables, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/payables", perm("finance.report.view", authcontracts.Guard(h.Payables, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/cash-summary", perm("finance.report.view", authcontracts.Guard(h.CashSummary, branchGuard)))
+	mux.Handle("GET /api/v1/finance/reports/fiscal-summary", perm("finance.report.view", authcontracts.Guard(h.FiscalSummary, branchGuard)))
+	mux.Handle("GET /api/v1/finance/opening", perm("finance.view", authcontracts.Guard(h.OpeningStatus, branchGuard)))
+	mux.Handle("GET /api/v1/finance/opening/inventory", perm("finance.view", authcontracts.Guard(h.OpeningInventory, branchGuard)))
+	mux.Handle("POST /api/v1/finance/opening/complete", perm("finance.manage", authcontracts.Guard(h.CompleteOpening, branchGuard)))
+	mux.Handle("POST /api/v1/finance/opening/preview", perm("finance.manage", authcontracts.Guard(h.PreviewOpening, branchGuard)))
+	mux.Handle("POST /api/v1/finance/opening/post", perm("finance.manage", authcontracts.Guard(h.PostOpening, branchGuard)))
+	mux.Handle("GET /api/v1/finance/posting-sources", perm("finance.posting.view", authcontracts.Guard(h.PostingSources, branchGuard)))
+	mux.Handle("GET /api/v1/finance/integrity", perm("finance.manage", authcontracts.Guard(h.Integrity, branchGuard)))
+	mux.Handle("POST /api/v1/finance/integrity/rebuild", perm("finance.manage", authcontracts.Guard(h.RebuildRollups, branchGuard)))
+	mux.Handle("GET /api/v1/finance/cutover", perm("finance.view", authcontracts.Guard(h.Cutover, branchGuard)))
+	mux.Handle("PUT /api/v1/finance/cutover", perm("finance.manage", authcontracts.Guard(h.SetCutover, branchGuard)))
+	mux.Handle("GET /api/v1/finance/posting/orphans", perm("finance.view", authcontracts.Guard(h.Orphans, branchGuard)))
+	mux.Handle("POST /api/v1/finance/posting/post-batch", perm("finance.posting.post", authcontracts.Guard(h.PostBatch, branchGuard)))
+	mux.Handle("GET /api/v1/finance/posting/overview", perm("finance.posting.view", authcontracts.Guard(h.DailyOverview, branchGuard)))
+	mux.Handle("POST /api/v1/finance/posting/ignore", perm("finance.posting.post", authcontracts.Guard(h.IgnorePosting, branchGuard)))
+	mux.Handle("POST /api/v1/finance/posting/restore", perm("finance.posting.post", authcontracts.Guard(h.RestorePosting, branchGuard)))
+	mux.Handle("POST /api/v1/finance/posting/close-day", perm("finance.posting.post", authcontracts.Guard(h.CloseDay, branchGuard)))
+	mux.Handle("GET /api/v1/finance/tax-adjustments", perm("finance.tax_adjustment.view", authcontracts.Guard(h.ListTaxAdjustments, branchGuard)))
+	mux.Handle("POST /api/v1/finance/tax-adjustments", perm("finance.tax_adjustment.manage", authcontracts.Guard(h.CreateTaxAdjustment, branchGuard)))
+	mux.Handle("GET /api/v1/finance/tax-adjustments/{id}/attachments", perm("finance.tax_adjustment.view", authcontracts.Guard(h.TaxAdjustmentFiles, branchGuard)))
+	mux.Handle("POST /api/v1/finance/tax-adjustments/{id}/attachments", perm("finance.tax_adjustment.manage", authcontracts.Guard(h.AttachTaxAdjustment, branchGuard)))
+	mux.Handle("GET /api/v1/finance/close/readiness", perm("finance.view", authcontracts.Guard(h.Readiness, branchGuard)))
+	mux.Handle("POST /api/v1/finance/close/safe-close", perm("finance.manage", authcontracts.Guard(h.SafeClose, branchGuard)))
+	mux.Handle("GET /api/v1/finance/export/tax-package", perm("finance.report.view", authcontracts.Guard(h.TaxPackage, branchGuard)))
 }

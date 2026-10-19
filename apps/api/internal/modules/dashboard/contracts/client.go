@@ -30,11 +30,65 @@ type Balances struct {
 // P&L plus key balances. All figures come from finance (posted books), so the
 // dashboard never duplicates accounting logic.
 type Summary struct {
-	BranchID       int64    `json:"branchId"`
-	Today          Period   `json:"today"`
-	MonthToDate    Period   `json:"monthToDate"`
-	Balances       Balances `json:"balances"`
-	InventoryValue int64    `json:"inventoryValue"`
+	BranchID       int64      `json:"branchId"`
+	Today          Period     `json:"today"`
+	MonthToDate    Period     `json:"monthToDate"`
+	Balances       Balances   `json:"balances"`
+	InventoryValue int64      `json:"inventoryValue"`
+	Operations     Operations `json:"operations"`
+}
+
+// Operations are the figures read from the live documents (no journal posting
+// needed), labelled apart from the booked Today/MonthToDate figures.
+//
+//   - Sales are the grand totals (tax included) of orders COMPLETED in the
+//     period, net of confirmed returns (return-only: minus the total; exchange:
+//     replacement total minus returned total) — the legacy definition.
+//   - Outstanding receivable/payable are per order, never below zero: an
+//     overpaid order does not offset another order's debt.
+type Operations struct {
+	SalesToday            int64 `json:"salesToday"`
+	SalesMonth            int64 `json:"salesMonth"`
+	SalesOrdersToday      int64 `json:"salesOrdersToday"`
+	SalesOrdersMonth      int64 `json:"salesOrdersMonth"`
+	OrdersToday           int64 `json:"ordersToday"`
+	OrdersMonth           int64 `json:"ordersMonth"`
+	PurchasesToday        int64 `json:"purchasesToday"`
+	PurchasesMonth        int64 `json:"purchasesMonth"`
+	OutstandingReceivable int64 `json:"outstandingReceivable"`
+	OutstandingPayable    int64 `json:"outstandingPayable"`
+	CriticalCount         int64 `json:"criticalCount"`
+	TrackedCount          int64 `json:"trackedCount"`
+	// MissingCostCount is how many products still carry an estimated cost
+	// (DB-01); CostBasis is "complete" when none do, "estimated" otherwise: the
+	// margin figures are then indicative only.
+	MissingCostCount int64  `json:"missingCostCount"`
+	CostBasis        string `json:"costBasis"`
+}
+
+// Reasons a priority order is on the list (DB-01), legacy wording.
+const (
+	ReasonOverdue          = "Lewat jatuh tempo"
+	ReasonAwaitingDecision = "Menunggu keputusan"
+	ReasonDueSoon          = "Segera jatuh tempo"
+	ReasonOpen             = "Perlu diproses"
+)
+
+// PriorityItem is one order on the "needs action" list: a sales order or a
+// purchase order, with why it is there and how old it is.
+type PriorityItem struct {
+	ID         int64  `json:"id"`
+	Kind       string `json:"kind"` // sales | purchase
+	Number     string `json:"number"`
+	PartyID    int64  `json:"partyId"`
+	PartyName  string `json:"partyName"`
+	GrandTotal int64  `json:"grandTotal"`
+	Status     string `json:"status"`
+	OrderDate  string `json:"orderDate"`
+	DueDate    string `json:"dueDate"`
+	Score      int    `json:"score"`
+	Reason     string `json:"reason"`
+	AgeDays    int    `json:"ageDays"`
 }
 
 // DashboardClient is the public surface of the dashboard module.
@@ -44,9 +98,10 @@ type DashboardClient interface {
 	// CriticalStock returns tracked products at/below minimum, scarcest
 	// first — one grouped stock read (P3), never one query per product.
 	CriticalStock(ctx context.Context, branchID int64, limit int) ([]*stockcontracts.CriticalItem, error)
-	// PriorityOrders returns confirmed sales orders near/past due, most
-	// overdue first — one sales read plus in-memory due filtering.
-	PriorityOrders(ctx context.Context, branchID int64, limit int) ([]*salescontracts.OrderSummary, error)
+	// PriorityOrders returns the orders that need action, most urgent first:
+	// sales orders near/past due or awaiting a decision, plus purchase orders
+	// past due (unpaid) or awaiting a decision, each with its reason and age.
+	PriorityOrders(ctx context.Context, branchID int64, limit int) ([]*PriorityItem, error)
 	// OrderStatus returns sales + purchasing counts per derived status
 	// (draft/confirmed/completed/cancelled) — two GROUP BY reads, no
 	// status-config tables (D4).

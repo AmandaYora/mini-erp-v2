@@ -134,7 +134,7 @@ func assembleQRTargets(rows []infrastructure.QRSource) []*QRTarget {
 		head := group[0]
 		withVariants := false
 		for _, r := range group {
-			if r.VariantID != 0 {
+			if r.VariantID != 0 && !r.VariantHidden {
 				withVariants = true
 				payload := strings.TrimSpace(r.Barcode)
 				if payload == "" {

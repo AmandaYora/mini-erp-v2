@@ -1,6 +1,7 @@
 package timeutil
 
 import (
+	"strings"
 	"time"
 )
 
@@ -40,4 +41,13 @@ func EndOfDayWIB(day time.Time) time.Time {
 // ParseDateInput parses "2006-01-02" as a Jakarta calendar day.
 func ParseDateInput(s string) (time.Time, error) {
 	return time.ParseInLocation("2006-01-02", s, Jakarta)
+}
+
+// DateOrToday trims raw and returns it, or today's Jakarta calendar day as
+// YYYY-MM-DD when raw is blank. It does not validate the date.
+func DateOrToday(raw string) string {
+	if t := strings.TrimSpace(raw); t != "" {
+		return t
+	}
+	return NowUTC().In(Jakarta).Format("2006-01-02")
 }

@@ -18,7 +18,7 @@ func TestOpeningRejectsUnbalancedAndIdempotent(t *testing.T) {
 
 	if _, err := m.finance.Service().PreviewOpening(ctx(), fx.branchID, "2026-09-01", "uji",
 		[]financeapp.ManualLine{
-			{AccountCode: "1100", Debit: 5000},
+			{AccountCode: "1000", Debit: 5000},
 			{AccountCode: "3000", Credit: 4999},
 		}); err == nil {
 		t.Fatal("unbalanced preview accepted, want validation")
@@ -28,7 +28,7 @@ func TestOpeningRejectsUnbalancedAndIdempotent(t *testing.T) {
 
 	if _, err := m.finance.Service().PostOpening(ctx(), 0, fx.branchID, "2026-09-01", "uji",
 		[]financeapp.ManualLine{
-			{AccountCode: "1100", Debit: 5000},
+			{AccountCode: "1000", Debit: 5000},
 			{AccountCode: "3000", Credit: 4999},
 		}); err == nil {
 		t.Fatal("unbalanced post accepted, want validation")
@@ -36,7 +36,7 @@ func TestOpeningRejectsUnbalancedAndIdempotent(t *testing.T) {
 
 	first, err := m.finance.Service().PostOpening(ctx(), 0, fx.branchID, "2026-09-01", "Saldo awal uji",
 		[]financeapp.ManualLine{
-			{AccountCode: "1100", Debit: 5000},
+			{AccountCode: "1000", Debit: 5000},
 			{AccountCode: "3000", Credit: 5000},
 		})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestOpeningRejectsUnbalancedAndIdempotent(t *testing.T) {
 	}
 	second, err := m.finance.Service().PostOpening(ctx(), 0, fx.branchID, "2026-09-01", "Saldo awal kedua",
 		[]financeapp.ManualLine{
-			{AccountCode: "1110", Debit: 9000},
+			{AccountCode: "1010", Debit: 9000},
 			{AccountCode: "3000", Credit: 9000},
 		})
 	if err != nil {
@@ -78,7 +78,7 @@ func TestPostingQueueDerived(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
 	}
-	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 
@@ -131,7 +131,7 @@ func TestTaxAdjustmentExcludedFromCommercial(t *testing.T) {
 	if _, err := m.finance.Service().CreateTaxAdjustment(ctx(), 0, fx.branchID, "2026-09-15", "koreksi uji",
 		[]financeapp.ManualLine{
 			{AccountCode: "6000", Debit: 1000},
-			{AccountCode: "1100", Credit: 1000},
+			{AccountCode: "1000", Credit: 1000},
 		}); err != nil {
 		t.Fatalf("tax adjustment: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSafeCloseGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
 	}
-	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 
@@ -180,8 +180,12 @@ func TestSafeCloseGate(t *testing.T) {
 		t.Fatalf("safe-close code = %s, want conflict", appErr.Code)
 	}
 
-	if _, err := m.finance.Service().PostBatch(ctx(), 0, fx.branchID,
-		[]financeapp.BatchItem{{DocType: "delivery", DocID: dn.ID}}); err != nil {
+	batch := []financeapp.BatchItem{{DocType: "delivery", DocID: dn.ID}}
+	// The fixture's opening stock adjustment is a journal-able movement too.
+	for _, id := range queuedStockMovements(t, fx.branchID) {
+		batch = append(batch, financeapp.BatchItem{DocType: "stock_movement", DocID: id})
+	}
+	if _, err := m.finance.Service().PostBatch(ctx(), 0, fx.branchID, batch); err != nil {
 		t.Fatalf("batch: %v", err)
 	}
 	check, err := m.finance.Service().Readiness(ctx(), fx.branchID, 2026, 9)

@@ -105,7 +105,7 @@ func TestDeliveryConfirmRecipientRules(t *testing.T) {
 	}
 
 	id := mkNote()
-	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, id, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, id, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("bare confirm: %v", err)
 	}
 	id = mkNote()

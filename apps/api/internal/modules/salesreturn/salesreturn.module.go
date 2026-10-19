@@ -2,6 +2,8 @@ package salesreturn
 
 import (
 	"database/sql"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
+	financecontracts "mini-erp/internal/modules/finance/contracts"
 	"net/http"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
@@ -53,12 +55,24 @@ func (m *Module) SetPayments(p paymentcontracts.PaymentClient) {
 	m.svc.SetPayments(p)
 }
 
+// SetCosts wires finance's cost reader for the replacement cost guard.
+func (m *Module) SetCosts(c application.CostSource) { m.svc.SetCosts(c) }
+
+// SetReverser wires finance's source reverser (built after this module).
+func (m *Module) SetReverser(r financecontracts.SourceReverser) { m.svc.SetReverser(r) }
+
 // Service exposes use cases to the dev seed (composition root privilege).
 func (m *Module) Service() *application.Service {
 	return m.svc
 }
 
 // RegisterRoutes mounts endpoints with the auth-built permission wrapper.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, perm presentation.Permission, branchGuard func(http.Handler) http.Handler) {
+func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
 	presentation.RegisterRoutes(mux, m.handler, perm, branchGuard)
+}
+
+// Verify reports late-bound dependencies that bootstrap.Wire has not set, so a
+// forgotten edge fails at startup instead of at the first request.
+func (m *Module) Verify() error {
+	return m.svc.Verify()
 }

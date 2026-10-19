@@ -3,12 +3,14 @@ package presentation
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/modules/purchasereturn/application"
 	"mini-erp/internal/modules/purchasereturn/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/httpx"
+	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
 )
@@ -23,18 +25,13 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
+// allowedTypes keeps the JSON an array ([] never null) for lists, where the
+// position is not computed.
+func allowedTypes(v []string) []string {
+	if v == nil {
+		return []string{}
 	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
+	return v
 }
 
 func returnView(ret *contracts.PurchaseReturn) map[string]any {
@@ -65,16 +62,17 @@ func returnView(ret *contracts.PurchaseReturn) map[string]any {
 		"returnDate": ret.ReturnDate, "subtotal": ret.Subtotal,
 		"discountTotal": ret.DiscountTotal, "taxTotal": ret.TaxTotal,
 		"taxType": ret.TaxType, "taxRate": ret.TaxRate, "total": ret.Total,
-		"status": ret.Status, "notes": ret.Notes, "items": items,
+		"status": ret.Status, "notes": ret.Notes, "reason": ret.Reason, "payableReduction": ret.PayableReduction, "items": items,
 		"settlements": settlements, "settledTotal": settled,
 		"unsettledTotal": ret.Total - settled,
+		"externalRemaining": ret.ExternalRemaining, "allowedSettlementTypes": allowedTypes(ret.AllowedSettlementTypes),
 	}
 }
 
 type linePayload struct {
 	ProductID  int64   `json:"productId" validate:"required"`
 	VariantID  int64   `json:"variantId" validate:"required"`
-	LocationID int64   `json:"locationId" validate:"required"`
+	LocationID int64   `json:"locationId"`
 	UOM        string  `json:"uom" validate:"required"`
 	Qty        float64 `json:"qty" validate:"required"`
 }
@@ -105,6 +103,8 @@ func previewView(p *application.ReturnPreview) map[string]any {
 	return map[string]any{
 		"subtotal": p.Subtotal, "discountTotal": p.DiscountTotal,
 		"taxTotal": p.TaxTotal, "total": p.Total, "items": items,
+		"orderOutstanding": p.OrderOutstanding, "payableReduction": p.PayableReduction,
+		"externalRemaining": p.ExternalRemaining, "allowedSettlementTypes": allowedTypes(p.AllowedSettlementTypes),
 	}
 }
 
@@ -120,7 +120,7 @@ func (h *Handler) ReturnContext(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "purchaseOrderId", Message: "wajib diisi"}}))
 		return
 	}
-	ctx, err := h.svc.ReturnContext(r.Context(), branchID(r), poID)
+	ctx, err := h.svc.ReturnContext(r.Context(), authcontracts.BranchID(r), poID)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -138,7 +138,7 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	p, err := h.svc.PreviewReturn(r.Context(), branchID(r), in.PurchaseOrderID, toLines(in.Items))
+	p, err := h.svc.PreviewReturn(r.Context(), authcontracts.BranchID(r), in.PurchaseOrderID, toLines(in.Items))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -165,7 +165,15 @@ func (h *Handler) AddSettlement(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	ret, appErr := h.svc.AddSettlement(r.Context(), actorID(r), branchID(r), id, application.SettlementInput{
+	// A refund moves money out: legacy demands its own permission on top of
+	// create (F3b-2). The service never sees the session, so the handler checks.
+	if in.Type == "refund" {
+		if sess := authcontracts.SessionFromContext(r.Context()); sess == nil || !sess.HasPermission("purchasereturn.refund") {
+			response.Fail(w, &apperror.AppError{Code: apperror.CodeForbidden, Message: "Anda tidak memiliki izin memproses refund"})
+			return
+		}
+	}
+	ret, appErr := h.svc.AddSettlement(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, application.SettlementInput{
 		Type: in.Type, Date: in.Date, Amount: in.Amount,
 		PaymentMethod: in.PaymentMethod, ReferenceNumber: in.ReferenceNumber, Notes: in.Notes,
 	})
@@ -179,14 +187,20 @@ func (h *Handler) AddSettlement(w http.ResponseWriter, r *http.Request) {
 // List handles GET /api/v1/purchase-returns.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	var poID int64
-	if raw := q.Get("purchaseOrderId"); raw != "" {
-		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
-			poID = id
-		}
+	c, err := listquery.ParseCommon(q, nil)
+	if err != nil {
+		response.FailErr(w, err)
+		return
 	}
-	res, err := h.svc.List(r.Context(), branchID(r), poID, q.Get("status"), page, limit)
+	page, limit := c.Page, c.Limit
+	poID, err := listquery.ParseID(q.Get("purchaseOrderId"), "purchaseOrderId")
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	res, err := h.svc.ListFiltered(r.Context(), authcontracts.BranchID(r), application.ListFilter{
+		Search: c.Search, Statuses: c.Statuses, PurchaseOrderID: poID, From: c.From, To: c.To,
+	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -213,7 +227,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		response.FailErr(w, appErr)
 		return
 	}
-	if ret == nil || ret.BranchID != branchID(r) {
+	if ret == nil || ret.BranchID != authcontracts.BranchID(r) {
 		response.Fail(w, apperror.NotFound("Retur pembelian"))
 		return
 	}
@@ -226,13 +240,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		PurchaseOrderID int64         `json:"purchaseOrderId" validate:"required"`
 		ReturnDate      string        `json:"returnDate"`
 		Notes           string        `json:"notes"`
+		Reason          string        `json:"reason"`
 		Items           []linePayload `json:"items" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	ret, err := h.svc.Create(r.Context(), actorID(r), branchID(r), in.PurchaseOrderID, in.ReturnDate, in.Notes, toLines(in.Items))
+	if strings.TrimSpace(in.Reason) == "" {
+		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "alasan retur wajib diisi"}}))
+		return
+	}
+	ret, err := h.svc.Create(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.PurchaseOrderID, in.ReturnDate, in.Notes, toLines(in.Items),
+		application.WithReason(in.Reason))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -247,7 +267,7 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Retur pembelian"))
 		return
 	}
-	ret, appErr := h.svc.Confirm(r.Context(), actorID(r), branchID(r), id)
+	ret, appErr := h.svc.Confirm(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -262,7 +282,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Retur pembelian"))
 		return
 	}
-	ret, appErr := h.svc.Cancel(r.Context(), actorID(r), branchID(r), id)
+	ret, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -270,22 +290,14 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Retur pembelian dibatalkan", returnView(ret))
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
-// guarded adapts the branch guard into func-style middleware.
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
-}
-
 // RegisterRoutes mounts purchasereturn endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/purchase-returns", perm("purchasereturn.view", guarded(h.List, branchGuard)))
-	mux.Handle("POST /api/v1/purchase-returns", perm("purchasereturn.create", guarded(h.Create, branchGuard)))
-	mux.Handle("GET /api/v1/purchase-returns/context", perm("purchasereturn.view", guarded(h.ReturnContext, branchGuard)))
-	mux.Handle("POST /api/v1/purchase-returns/preview", perm("purchasereturn.create", guarded(h.Preview, branchGuard)))
-	mux.Handle("GET /api/v1/purchase-returns/{id}", perm("purchasereturn.view", guarded(h.Get, branchGuard)))
-	mux.Handle("POST /api/v1/purchase-returns/{id}/confirm", perm("purchasereturn.create", guarded(h.Confirm, branchGuard)))
-	mux.Handle("POST /api/v1/purchase-returns/{id}/cancel", perm("purchasereturn.archive", guarded(h.Cancel, branchGuard)))
-	mux.Handle("POST /api/v1/purchase-returns/{id}/settlements", perm("purchasereturn.create", guarded(h.AddSettlement, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/purchase-returns", perm("purchasereturn.view", authcontracts.Guard(h.List, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-returns", perm("purchasereturn.create", authcontracts.Guard(h.Create, branchGuard)))
+	mux.Handle("GET /api/v1/purchase-returns/context", perm("purchasereturn.view", authcontracts.Guard(h.ReturnContext, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-returns/preview", perm("purchasereturn.create", authcontracts.Guard(h.Preview, branchGuard)))
+	mux.Handle("GET /api/v1/purchase-returns/{id}", perm("purchasereturn.view", authcontracts.Guard(h.Get, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-returns/{id}/confirm", perm("purchasereturn.create", authcontracts.Guard(h.Confirm, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-returns/{id}/cancel", perm("purchasereturn.archive", authcontracts.Guard(h.Cancel, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-returns/{id}/settlements", perm("purchasereturn.create", authcontracts.Guard(h.AddSettlement, branchGuard)))
 }

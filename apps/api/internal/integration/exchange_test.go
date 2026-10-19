@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
+	paymentapp "mini-erp/internal/modules/payment/application"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	purchasereturnapp "mini-erp/internal/modules/purchasereturn/application"
 	salesreturnapp "mini-erp/internal/modules/salesreturn/application"
 )
@@ -97,8 +99,23 @@ func TestExchangeReplacementFlow(t *testing.T) {
 		t.Fatalf("replStatus=%q, want confirmed", done.ReplacementDeliveryStatus)
 	}
 
-	if _, err := m.finance.Service().Post(ctx(), 0, fx.branchID, "delivery", dn.ID); err == nil {
-		t.Fatal("expected rejection posting replacement delivery, got nil")
+	// F2b-2: the replacement goods are a NEW sale and are journalled: Dr
+	// Piutang / Cr Penjualan (+ COGS from the shipment's own stock-out).
+	entry, err := m.finance.Service().Post(ctx(), 0, fx.branchID, "delivery", dn.ID)
+	if err != nil {
+		t.Fatalf("post replacement delivery: %v", err)
+	}
+	var recv, rev int64
+	for _, l := range entry.Lines {
+		switch l.AccountCode {
+		case "1100":
+			recv += l.Debit
+		case "4000":
+			rev += l.Credit
+		}
+	}
+	if recv != 15000 || rev != 15000 {
+		t.Fatalf("replacement journal: receivable %d revenue %d; want 15000/15000", recv, rev)
 	}
 }
 
@@ -199,6 +216,12 @@ func TestSettlementCap(t *testing.T) {
 
 	soID := sellFixture(t, ctx(), fx, 2)
 	deliverAll(t, ctx(), fx, soID, 2)
+	// Order fully paid: nothing open to offset, so the whole return stays
+	// available for manual settlement.
+	soTotal := orderTotal(t, soID)
+	if _, err := m.payment.Service().Create(ctx(), 0, fx.branchID, fx.customerID, "cash", "", "", soTotal, payAll(soID, soTotal)); err != nil {
+		t.Fatalf("pay order: %v", err)
+	}
 	ret := createSalesReturn(t, fx, soID, 2)
 	if _, err := m.salesreturn.Service().Confirm(ctx(), 0, fx.branchID, ret.ID); err != nil {
 		t.Fatalf("confirm return: %v", err)
@@ -221,6 +244,16 @@ func TestSettlementCap(t *testing.T) {
 	}
 
 	poID := purchaseFixture(t, ctx(), fx, 10000, 2)
+	// K-04c: the return value first reduces what we owe; only the excess over
+	// the open bill can be settled. Pay the bill so the whole return is excess.
+	po, err := m.purchasing.Service().GetByID(ctx(), poID)
+	if err != nil || po == nil {
+		t.Fatalf("get PO: %v", err)
+	}
+	if _, err := m.payment.Service().Create(ctx(), 0, fx.branchID, po.PartyID, "cash", "", "", po.GrandTotal,
+		[]paymentapp.AllocationInput{{OrderType: paymentcontracts.OrderPurchase, OrderID: poID, Amount: po.GrandTotal}}); err != nil {
+		t.Fatalf("pay PO: %v", err)
+	}
 	pret, err := m.purchasereturn.Service().Create(ctx(), 0, fx.branchID, poID, "2026-09-10", "",
 		[]purchasereturnapp.LineInput{{
 			ProductID: fx.productID, VariantID: fx.variantID,
@@ -253,4 +286,139 @@ func available(t *testing.T, fx shopFixture) float64 {
 		t.Fatalf("balance: %v", err)
 	}
 	return bal.Available()
+}
+
+// exchangeWithSurcharge builds a confirmed exchange whose replacement costs
+// MORE than the returned goods (1 returned, 2 replacement) with its replacement
+// shipment dispatched (draft), ready for confirmation.
+func exchangeWithSurcharge(t *testing.T, fx shopFixture, replQty float64) (retID, dnID int64) {
+	t.Helper()
+	m := testMods
+	soID := sellFixture(t, ctx(), fx, 2)
+	deliverAll(t, ctx(), fx, soID, 2)
+	ret, err := m.salesreturn.Service().Create(ctx(), 0, fx.branchID, soID, "2026-09-10", "", "exchange",
+		[]salesreturnapp.LineInput{{ProductID: fx.productID, VariantID: fx.variantID, LocationID: fx.locationID, UOM: "pcs", Qty: 1}},
+		[]salesreturnapp.ReplacementInput{{ProductID: fx.productID, VariantID: fx.variantID, LocationID: fx.locationID, UOM: "pcs", Qty: replQty}})
+	if err != nil {
+		t.Fatalf("create exchange: %v", err)
+	}
+	if _, err := m.salesreturn.Service().Confirm(ctx(), 0, fx.branchID, ret.ID); err != nil {
+		t.Fatalf("confirm return: %v", err)
+	}
+	dn, err := m.salesreturn.Service().CreateReplacementDelivery(ctx(), 0, fx.branchID, ret.ID, salesreturnapp.ReplacementDispatchInput{})
+	if err != nil {
+		t.Fatalf("dispatch replacement: %v", err)
+	}
+	return ret.ID, dn.ID
+}
+
+// K-04e: the exchange surcharge is collected with the replacement hand-over.
+// The payment is allocated to the return (charge kind), recorded atomically
+// with the confirmation, capped at the open difference and refused for an
+// exchange that does not cost more.
+func TestExchangeSurchargePayNow(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	m := testMods
+	retID, dnID := exchangeWithSurcharge(t, fx, 2)
+	ret, err := m.salesreturn.Service().GetByID(ctx(), retID)
+	if err != nil {
+		t.Fatalf("get return: %v", err)
+	}
+	if ret.DifferenceAmount <= 0 {
+		t.Fatalf("difference = %d, want a surcharge", ret.DifferenceAmount)
+	}
+	if ret.ChargeRemaining != ret.DifferenceAmount || len(ret.AllowedSettlementTypes) != 1 || ret.AllowedSettlementTypes[0] != "collect_payment" {
+		t.Fatalf("position = charge %d allowed %v, want %d + collect_payment", ret.ChargeRemaining, ret.AllowedSettlementTypes, ret.DifferenceAmount)
+	}
+	stockBefore := available(t, fx)
+
+	// Refused BEFORE anything moves: over the surcharge, bad method.
+	for name, st := range map[string]*deliverycontracts.ReplacementSettlement{
+		"over the surcharge": {Amount: ret.DifferenceAmount + 1, Method: "cash"},
+		"unknown method":     {Amount: ret.DifferenceAmount, Method: "bogus"},
+	} {
+		if _, err := m.salesreturn.Service().ConfirmReplacementDelivery(ctx(), 0, fx.branchID, retID, dnID,
+			deliverycontracts.ReplacementConfirm{Settlement: st}); err == nil {
+			t.Fatalf("%s: expected rejection, got nil", name)
+		}
+		if got := available(t, fx); got != stockBefore {
+			t.Fatalf("%s: stock moved to %v although the settlement was refused (was %v)", name, got, stockBefore)
+		}
+	}
+
+	// A payment that fails AFTER the stock moved (cash tendered short) must not
+	// leave a confirmed shipment: the note stays draft, the retry finishes.
+	if _, err := m.salesreturn.Service().ConfirmReplacementDelivery(ctx(), 0, fx.branchID, retID, dnID,
+		deliverycontracts.ReplacementConfirm{Settlement: &deliverycontracts.ReplacementSettlement{
+			Method: "cash", AmountTendered: ret.DifferenceAmount - 1}}); err == nil {
+		t.Fatal("short cash tendered must fail the payment")
+	}
+	dn, err := m.delivery.Service().GetByID(ctx(), dnID)
+	if err != nil || dn == nil || dn.Status != "draft" {
+		t.Fatalf("after a failed payment the note must stay draft: %v %+v", err, dn)
+	}
+	if mid, _ := m.salesreturn.Service().GetByID(ctx(), retID); mid.ReplacementDeliveryStatus != "dispatched" {
+		t.Fatalf("return status after failed payment = %q, want dispatched", mid.ReplacementDeliveryStatus)
+	}
+	var live int
+	_ = m.db.QueryRow(`SELECT COUNT(*) FROM payment_allocations a JOIN payments p ON p.id=a.payment_id WHERE a.order_type='sales_return' AND a.order_id=? AND p.status='active'`, retID).Scan(&live)
+	if live != 0 {
+		t.Fatalf("payments after the failed attempt = %d, want 0", live)
+	}
+
+	confirmed, err := m.salesreturn.Service().ConfirmReplacementDelivery(ctx(), 0, fx.branchID, retID, dnID,
+		deliverycontracts.ReplacementConfirm{Settlement: &deliverycontracts.ReplacementSettlement{Method: "cash", AmountTendered: ret.DifferenceAmount + 5000}})
+	if err != nil || confirmed.Status != "confirmed" {
+		t.Fatalf("retry: %v %+v", err, confirmed)
+	}
+	if got := available(t, fx); got != stockBefore-2 {
+		t.Fatalf("stock after confirm = %v, want %v (moved exactly once)", got, stockBefore-2)
+	}
+	var amount int64
+	var direction string
+	if err := m.db.QueryRow(`SELECT a.amount, p.direction FROM payment_allocations a JOIN payments p ON p.id=a.payment_id WHERE a.order_type='sales_return' AND a.order_id=? AND p.status='active'`, retID).Scan(&amount, &direction); err != nil {
+		t.Fatalf("surcharge payment: %v", err)
+	}
+	if amount != ret.DifferenceAmount || direction != "in" {
+		t.Fatalf("surcharge payment = %d %s, want %d in", amount, direction, ret.DifferenceAmount)
+	}
+	done, _ := m.salesreturn.Service().GetByID(ctx(), retID)
+	if done.ReplacementDeliveryStatus != "confirmed" || done.ChargeRemaining != 0 || len(done.AllowedSettlementTypes) != 0 {
+		t.Fatalf("after pay_now: status %q charge remaining %d allowed %v", done.ReplacementDeliveryStatus, done.ChargeRemaining, done.AllowedSettlementTypes)
+	}
+	if n := len(done.Settlements); n != 1 || done.Settlements[0].Type != "collect_payment" || done.Settlements[0].Amount != ret.DifferenceAmount {
+		t.Fatalf("settlement memo = %+v, want one collect_payment of %d", done.Settlements, ret.DifferenceAmount)
+	}
+	// The surcharge is journalled by the payment module (Dr Kas / Cr Piutang).
+	if _, err := m.finance.Service().Post(ctx(), 0, fx.branchID, "delivery", dnID); err != nil {
+		t.Fatalf("post replacement delivery: %v", err)
+	}
+	var payID int64
+	_ = m.db.QueryRow(`SELECT p.id FROM payment_allocations a JOIN payments p ON p.id=a.payment_id WHERE a.order_type='sales_return' AND a.order_id=? AND p.status='active'`, retID).Scan(&payID)
+	if _, err := m.finance.Service().Post(ctx(), 0, fx.branchID, "payment", payID); err != nil {
+		t.Fatalf("post surcharge payment: %v", err)
+	}
+}
+
+// K-04e: pay_now needs an exchange that costs MORE; a cheaper replacement is a
+// refund-kind return that must never turn into money in.
+func TestExchangePayNowRefusedWhenNotSurcharge(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	m := testMods
+	retID, dnID := exchangeWithSurcharge(t, fx, 1) // 1 returned, 1 replacement: even
+	stockBefore := available(t, fx)
+	if _, err := m.salesreturn.Service().ConfirmReplacementDelivery(ctx(), 0, fx.branchID, retID, dnID,
+		deliverycontracts.ReplacementConfirm{Settlement: &deliverycontracts.ReplacementSettlement{Amount: 1000, Method: "cash"}}); err == nil {
+		t.Fatal("pay_now on an exchange without a surcharge must be refused")
+	}
+	if got := available(t, fx); got != stockBefore {
+		t.Fatalf("stock moved to %v although pay_now was refused (was %v)", got, stockBefore)
+	}
+	// Without a settlement the same confirmation still works.
+	if _, err := m.salesreturn.Service().ConfirmReplacementDelivery(ctx(), 0, fx.branchID, retID, dnID,
+		deliverycontracts.ReplacementConfirm{}); err != nil {
+		t.Fatalf("plain confirm: %v", err)
+	}
 }

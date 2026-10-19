@@ -13,7 +13,7 @@ func TestDetect(t *testing.T) {
 		{in: "/help", intent: IntentHelp},
 		{in: "ringkasan operasional", intent: IntentOperationalSummary},
 		{in: "rekap bulan ini", intent: IntentOperationalSummary},
-		{in: "omzet hari ini", intent: IntentTodayPerformance},
+		{in: "omzet hari ini", intent: IntentSalesSummary},
 		{in: "omzet bulan ini", intent: IntentSalesSummary},
 		{in: "laba kemarin", intent: IntentSalesSummary},
 		{in: "order pending", intent: IntentPendingOrders},

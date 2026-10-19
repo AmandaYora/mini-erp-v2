@@ -20,6 +20,7 @@ require (
 	github.com/xuri/excelize/v2 v2.9.0
 	go.mau.fi/whatsmeow v0.0.0-20260909164725-b25a56d63729
 	golang.org/x/crypto v0.55.0
+	golang.org/x/image v0.18.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.58.0
 )

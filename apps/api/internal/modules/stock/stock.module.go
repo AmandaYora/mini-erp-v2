@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
 	companycontracts "mini-erp/internal/modules/company/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
@@ -42,12 +43,24 @@ func (m *Module) Stock() contracts.StockClient {
 	return m.svc
 }
 
+// ProductStockState exposes the stock facts product guards need, through
+// product's own contract (stock depends on product, never the reverse).
+func (m *Module) ProductStockState() productcontracts.StockStateProvider {
+	return m.svc
+}
+
 // Service exposes use cases to the dev seed (composition root privilege).
 func (m *Module) Service() *application.Service {
 	return m.svc
 }
 
 // RegisterRoutes mounts endpoints with the auth-built permission wrapper.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, perm presentation.Permission) {
+func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission) {
 	presentation.RegisterRoutes(mux, m.handler, perm)
+}
+
+// Verify reports late-bound dependencies that bootstrap.Wire has not set, so a
+// forgotten edge fails at startup instead of at the first request.
+func (m *Module) Verify() error {
+	return m.svc.Verify()
 }

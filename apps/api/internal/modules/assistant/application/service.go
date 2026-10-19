@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -12,26 +11,85 @@ import (
 
 	"mini-erp/internal/modules/assistant/contracts"
 	"mini-erp/internal/modules/assistant/infrastructure"
+	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
 	financecontracts "mini-erp/internal/modules/finance/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
 	stockcontracts "mini-erp/internal/modules/stock/contracts"
+	usercontracts "mini-erp/internal/modules/user/contracts"
 	"mini-erp/internal/shared/apperror"
 )
 
 // Service owns the assistant bot: intent engine, WhatsApp gateway liaison,
-// authorizations, config, and run history. Assistant writes are exempt from
-// the audit trail (legacy rule): runs + tool executions ARE the trail.
+// authorizations, config, and run history. Chat/simulate/inbound runs are
+// exempt from the audit trail (legacy rule: runs + tool executions ARE the
+// trail); the sensitive management acts below ARE trailed (F1-11): channel
+// connect/disconnect/reset, authorization create/update/revoke, config
+// updates.
 type Service struct {
 	repo    *infrastructure.Repository
 	engine  *Engine
 	gateway *infrastructure.Gateway
 	log     *slog.Logger
+	audit   auditcontracts.AuditClient
+	// users resolves a console operator's branch access (AS-01). Set by the
+	// composition root (user is built before assistant, but a setter keeps the
+	// constructor stable for the dev seed).
+	users usercontracts.UserClient
 
 	rateMu sync.Mutex
 	rates  map[string][]time.Time
+
+	// base is the application lifecycle context: inbound work derives from it
+	// so shutdown cancels it; inflight lets Close wait for running replies.
+	base     context.Context
+	inflight sync.WaitGroup
+}
+
+// SetUserAccess injects the user contract used to bound console/simulate runs
+// to the operator's own branches.
+func (s *Service) SetUserAccess(u usercontracts.UserClient) { s.users = u }
+
+// scopeFor builds the run scope. A signed-in operator (actorID != 0) is bound
+// to their own branch access — fail closed if the lookup is unavailable;
+// system callers and whitelisted WhatsApp senders (actorID 0) are not.
+func (s *Service) scopeFor(ctx context.Context, actorID, branchID int64) (Scope, error) {
+	sc := Scope{BranchID: branchID}
+	if actorID == 0 {
+		return sc, nil
+	}
+	sc.Restricted = true
+	if s.users == nil {
+		return sc, nil
+	}
+	access, err := s.users.GetBranchAccess(ctx, actorID)
+	if err != nil {
+		return sc, apperror.Internal(err)
+	}
+	for _, a := range access {
+		sc.Allowed = append(sc.Allowed, a.BranchID)
+	}
+	return sc, nil
+}
+
+// SetContext binds inbound handling and the gateway to the app lifecycle.
+func (s *Service) SetContext(ctx context.Context) {
+	s.base = ctx
+	s.gateway.SetContext(ctx)
+}
+
+// Close stops the assistant: waits (bounded by ctx) for in-flight inbound
+// replies, then closes the gateway. Idempotent.
+func (s *Service) Close(ctx context.Context) {
+	done := make(chan struct{})
+	go func() { s.inflight.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	s.gateway.Close()
 }
 
 // NewService wires the assistant use cases. Gateway callback is attached
@@ -46,14 +104,66 @@ func NewService(
 	stock stockcontracts.StockClient,
 	finance financecontracts.FinanceClient,
 	log *slog.Logger,
+	audit auditcontracts.AuditClient,
 ) *Service {
 	s := &Service{
-		repo: repo, gateway: gateway, log: log,
+		repo: repo, gateway: gateway, log: log, audit: audit,
 		engine: NewEngine(branches, products, sales, purchasing, stock, finance),
 		rates:  map[string][]time.Time{},
+		base:   context.Background(),
 	}
 	gateway.OnMessage = s.HandleInbound
 	return s
+}
+
+// trail records a sensitive management act best-effort (F1-11): audit
+// failure never fails the operation. Entity names follow the F3b-9 design
+// (assistant_channel / assistant_authorization / assistant_config).
+func (s *Service) trail(ctx context.Context, action, entity string, entityID, actorID int64, note string) {
+	s.trailDiff(ctx, action, entity, entityID, actorID, note, nil, nil)
+}
+
+// trailDiff is trail with before/after detail (F3b-8). Phones in the diff
+// must already be masked by the caller.
+func (s *Service) trailDiff(ctx context.Context, action, entity string, entityID, actorID int64, note string, before, after any) {
+	if s.audit == nil {
+		return
+	}
+	_ = s.audit.Log(ctx, auditcontracts.Entry{
+		Action: action, Entity: entity, EntityID: entityID, ActorID: actorID, Note: note,
+		Before: before, After: after,
+	})
+}
+
+// authView is the audit-safe shape of an authorization (phone masked).
+func authView(a *contracts.Authorization) map[string]any {
+	if a == nil {
+		return nil
+	}
+	return map[string]any{"phone": "…" + last4(a.Phone), "name": a.Name, "accessLevel": a.AccessLevel, "status": a.Status}
+}
+
+func (s *Service) authByID(ctx context.Context, id int64) *contracts.Authorization {
+	rows, err := s.repo.ListAuthorizations(ctx, true)
+	if err != nil {
+		return nil
+	}
+	for _, r := range rows {
+		if r.ID == id {
+			return r
+		}
+	}
+	return nil
+}
+
+// last4 returns the last 4 digits for audit notes: enough to tell numbers
+// apart, never the full number (F1-11).
+func last4(phone string) string {
+	digits := normalizePhone(phone)
+	if len(digits) <= 4 {
+		return digits
+	}
+	return digits[len(digits)-4:]
 }
 
 // --- console & simulate ---------------------------------------------------------
@@ -64,10 +174,14 @@ func (s *Service) Ask(ctx context.Context, actorID, branchID int64, message stri
 	if strings.TrimSpace(message) == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "message", Message: "pesan wajib diisi"}})
 	}
-	if err := s.engine.CheckBranch(ctx, branchID); err != nil {
+	sc, err := s.scopeFor(ctx, actorID, branchID)
+	if err != nil {
 		return nil, err
 	}
-	return s.execute(ctx, 0, "", branchID, actorID, strings.TrimSpace(message))
+	if err := s.engine.CheckScope(ctx, sc); err != nil {
+		return nil, err
+	}
+	return s.execute(ctx, 0, "", sc, actorID, strings.TrimSpace(message))
 }
 
 // Simulate runs the full inbound pipeline for a phone number without
@@ -93,10 +207,14 @@ func (s *Service) Simulate(ctx context.Context, actorID, branchID int64, phone, 
 		return nil, apperror.Conflict("Kanal WhatsApp belum terhubung")
 	}
 	_ = s.repo.TouchSeen(ctx, auth.ID)
-	if err := s.engine.CheckBranch(ctx, branchID); err != nil {
+	sc, err := s.scopeFor(ctx, actorID, branchID)
+	if err != nil {
 		return nil, err
 	}
-	ans, err := s.execute(ctx, 0, phone, branchID, actorID, strings.TrimSpace(message))
+	if err := s.engine.CheckScope(ctx, sc); err != nil {
+		return nil, err
+	}
+	ans, err := s.execute(ctx, 0, phone, sc, actorID, strings.TrimSpace(message))
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +224,19 @@ func (s *Service) Simulate(ctx context.Context, actorID, branchID int64, phone, 
 // execute runs detection → tools, persisting the run and tool rows.
 // Tool failures record a failed run and return a friendly message (legacy
 // rethrew HTTP-500 with no answer — never do that to a chat caller).
-func (s *Service) execute(ctx context.Context, threadID int64, phone string, branchID, actorID int64, message string) (*contracts.Answer, error) {
+func (s *Service) execute(ctx context.Context, threadID int64, phone string, sc Scope, actorID int64, message string) (*contracts.Answer, error) {
 	t0 := time.Now()
-	intent, answer, calls, execErr := s.engine.Execute(ctx, branchID, message)
+	out, execErr := s.engine.Run(ctx, sc, message)
+	if out == nil {
+		out = &Outcome{}
+	}
+	intent, answer, calls := out.Intent, out.Answer, out.Calls
+	// The run records the branch it was actually narrowed to (explicit pick or
+	// named in the text); several branches stay 0.
+	branchID, branchName := out.BranchID, out.BranchName
+	if branchName == "" {
+		branchName = "Semua cabang"
+	}
 	status := contracts.RunCompleted
 	failure := ""
 	if execErr != nil {
@@ -122,26 +250,20 @@ func (s *Service) execute(ctx context.Context, threadID int64, phone string, bra
 	}
 	for i, c := range calls {
 		in, _ := json.Marshal(c.Input)
-		out, _ := json.Marshal(c.Output)
-		_ = s.repo.InsertToolExecution(ctx, runID, i+1, c.Tool, string(in), trunc(string(out), 2000), c.DurationMs)
+		outJSON, _ := json.Marshal(c.Output)
+		if c.Output == nil {
+			outJSON = nil
+		}
+		_ = s.repo.InsertToolExecution(ctx, runID, i+1, c.Tool, string(in), trunc(string(outJSON), 2000), c.DurationMs, c.Status, trunc(c.Error, 1000))
 	}
 	_ = s.repo.FinishRun(ctx, runID, status, answer, time.Since(t0).Milliseconds(), failure)
 	if execErr != nil {
 		s.log.Error("assistant run failed", "intent", intent, "error", execErr)
 	}
 	return &contracts.Answer{
-		RunID: runID, BranchID: branchID, BranchName: s.engine.BranchLabel(ctx, branchID),
+		RunID: runID, BranchID: branchID, BranchName: branchName,
 		Intent: intent, Mode: contracts.ModeRule, Text: answer,
 	}, nil
-}
-
-func (s *Service) branchName(ctx context.Context, branchID int64) string {
-	if branchID == 0 {
-		return "Semua cabang"
-	}
-	// branches client is inside the engine; resolve cheaply via ListAll.
-	// A miss reads as the raw id (never fail an answer over a label).
-	return fmt.Sprintf("Cabang %d", branchID)
 }
 
 // --- inbound WhatsApp -------------------------------------------------------------
@@ -150,7 +272,9 @@ func (s *Service) branchName(ctx context.Context, branchID int64) string {
 // Every exit is terminal: rate-cut and unauthorized senders get a reply
 // but no run row; answered senders get thread/message/run rows.
 func (s *Service) HandleInbound(phone, text string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	s.inflight.Add(1)
+	defer s.inflight.Done()
+	ctx, cancel := context.WithTimeout(s.base, 60*time.Second)
 	defer cancel()
 
 	cfg, err := s.repo.GetConfig(ctx)
@@ -198,7 +322,7 @@ func (s *Service) HandleInbound(phone, text string) {
 	}
 	_ = s.repo.TouchThread(ctx, threadID)
 
-	ans, err := s.execute(ctx, threadID, phone, 0, 0, text)
+	ans, err := s.execute(ctx, threadID, phone, Scope{}, 0, text)
 	if err != nil {
 		_ = s.repo.SetMessageStatus(ctx, msgID, "failed", 0)
 		_ = s.gateway.SendText(ctx, phone, "Maaf, gagal mengambil data. Coba lagi sebentar.")
@@ -221,6 +345,10 @@ func (s *Service) allowRate(phone string, perMin int) bool {
 	now := time.Now()
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()
+	// Numbers that stopped writing must not pile up forever (F3b-9).
+	if len(s.rates) > 10000 {
+		s.rates = map[string][]time.Time{}
+	}
 	kept := s.rates[phone][:0]
 	for _, t := range s.rates[phone] {
 		if now.Sub(t) < time.Minute {
@@ -255,13 +383,14 @@ func (s *Service) ChannelStatus(ctx context.Context) (*contracts.ChannelStatus, 
 // Connect starts the socket (QR while unpaired, silent login when paired).
 // Gateway failures keep their Indonesian message via Conflict so the
 // operator sees the reason (Internal would hide it by design).
-func (s *Service) Connect(ctx context.Context) error {
+func (s *Service) Connect(ctx context.Context, actorID int64) error {
 	if err := s.gateway.Connect(ctx); err != nil {
 		msg := err.Error()
 		_ = s.repo.SetChannel(ctx, "disconnected", s.gateway.Phone(), msg)
 		return apperror.Conflict(msg)
 	}
 	_ = s.repo.SetChannel(ctx, "connecting", s.gateway.Phone(), "")
+	s.trail(ctx, "assistant.channel_connect", "assistant_channel", 0, actorID, "…"+last4(s.gateway.Phone()))
 	return nil
 }
 
@@ -280,18 +409,20 @@ func (s *Service) Boot(ctx context.Context) {
 }
 
 // Disconnect drops the socket, keeping the session (reconnect needs no QR).
-func (s *Service) Disconnect(ctx context.Context) error {
+func (s *Service) Disconnect(ctx context.Context, actorID int64) error {
 	s.gateway.Disconnect()
 	_ = s.repo.SetChannel(ctx, "disconnected", s.gateway.Phone(), "")
+	s.trail(ctx, "assistant.channel_disconnect", "assistant_channel", 0, actorID, "…"+last4(s.gateway.Phone()))
 	return nil
 }
 
 // ResetSession wipes the session: the next connect needs a fresh QR scan.
-func (s *Service) ResetSession(ctx context.Context) error {
+func (s *Service) ResetSession(ctx context.Context, actorID int64) error {
 	if err := s.gateway.Reset(ctx); err != nil {
 		return apperror.Internal(err)
 	}
 	_ = s.repo.SetChannel(ctx, "disconnected", "", "")
+	s.trail(ctx, "assistant.channel_reset", "assistant_channel", 0, actorID, "")
 	return nil
 }
 
@@ -343,6 +474,7 @@ func (s *Service) CreateAuthorization(ctx context.Context, actorID int64, in Aut
 				if err := s.repo.Reactivate(ctx, e.ID, a, actorID); err != nil {
 					return nil, apperror.Internal(err)
 				}
+				s.trail(ctx, "assistant.authorization_create", "assistant_authorization", a.ID, actorID, "reaktivasi …"+last4(a.Phone))
 				return s.afterPrimary(ctx, a)
 			}
 		}
@@ -355,6 +487,7 @@ func (s *Service) CreateAuthorization(ctx context.Context, actorID int64, in Aut
 		return nil, apperror.Internal(err)
 	}
 	a.ID = id
+	s.trailDiff(ctx, "assistant.authorization_create", "assistant_authorization", a.ID, actorID, "…"+last4(a.Phone), nil, authView(a))
 	return s.afterPrimary(ctx, a)
 }
 
@@ -376,6 +509,7 @@ func (s *Service) UpdateAuthorization(ctx context.Context, actorID, id int64, in
 		return nil, apperror.Conflict("Nomor " + a.Phone + " sudah terdaftar")
 	}
 	a.ID = id
+	before := authView(s.authByID(ctx, id))
 	ok, err := s.repo.UpdateAuthorization(ctx, a, actorID)
 	if err != nil {
 		return nil, apperror.Internal(err)
@@ -383,6 +517,7 @@ func (s *Service) UpdateAuthorization(ctx context.Context, actorID, id int64, in
 	if !ok {
 		return nil, apperror.NotFound("Nomor WhatsApp")
 	}
+	s.trailDiff(ctx, "assistant.authorization_update", "assistant_authorization", a.ID, actorID, "…"+last4(a.Phone), before, authView(a))
 	return s.afterPrimary(ctx, a)
 }
 
@@ -391,6 +526,7 @@ func (s *Service) RevokeAuthorization(ctx context.Context, actorID, id int64) er
 	if id <= 0 {
 		return apperror.NotFound("Nomor WhatsApp")
 	}
+	before := authView(s.authByID(ctx, id))
 	ok, err := s.repo.Revoke(ctx, id, actorID)
 	if err != nil {
 		return apperror.Internal(err)
@@ -398,6 +534,7 @@ func (s *Service) RevokeAuthorization(ctx context.Context, actorID, id int64) er
 	if !ok {
 		return apperror.NotFound("Nomor WhatsApp")
 	}
+	s.trailDiff(ctx, "assistant.authorization_revoke", "assistant_authorization", id, actorID, "", before, map[string]any{"status": contracts.AuthRevoked})
 	return nil
 }
 
@@ -438,7 +575,10 @@ func (s *Service) validateAuthorization(in AuthorizationInput) (*contracts.Autho
 	}
 	return &contracts.Authorization{
 		Phone: phone, Name: strings.TrimSpace(in.Name),
-		AccessLevel: level, Status: contracts.AuthActive, IsPrimaryOwner: in.IsPrimaryOwner,
+		// Only an owner can be the primary owner: a flag on an authorized
+		// party would persist without ever demoting the real primary (N-43).
+		AccessLevel: level, Status: contracts.AuthActive,
+		IsPrimaryOwner: in.IsPrimaryOwner && level == contracts.AccessOwner,
 	}, nil
 }
 
@@ -466,16 +606,22 @@ func (s *Service) GetConfig(ctx context.Context) (*BotConfig, error) {
 
 // UpdateConfig rewrites tuning. Only rule_based exists without AI: other
 // modes are rejected explicitly (legacy normalized silently).
-func (s *Service) UpdateConfig(ctx context.Context, mode string, rateLimit int) (*BotConfig, error) {
+func (s *Service) UpdateConfig(ctx context.Context, actorID int64, mode string, rateLimit int) (*BotConfig, error) {
 	if mode != contracts.ModeRule {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "mode", Message: "mode tidak dikenal"}})
 	}
 	if rateLimit < 1 || rateLimit > 120 {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "rateLimitPerMinute", Message: "batas 1–120 per menit"}})
 	}
+	var before any
+	if old, err := s.repo.GetConfig(ctx); err == nil && old != nil {
+		before = map[string]any{"mode": old.Mode, "rateLimit": old.RateLimitPerMin}
+	}
 	if err := s.repo.UpdateConfig(ctx, mode, rateLimit); err != nil {
 		return nil, apperror.Internal(err)
 	}
+	s.trailDiff(ctx, "assistant.config_update", "assistant_config", 0, actorID, mode,
+		before, map[string]any{"mode": mode, "rateLimit": rateLimit})
 	return s.GetConfig(ctx)
 }
 

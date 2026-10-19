@@ -42,3 +42,18 @@ func TotalPages(total int64, limit int) int {
 	}
 	return int((total + int64(limit) - 1) / int64(limit))
 }
+
+// ParseDisplayLimit reads an optional "display cap" query value (a top-N, not
+// a page size). Missing, non-numeric, zero or negative input returns def;
+// anything above max is clamped to max. Unlike Parse it keeps def = 0
+// meaning "let the service decide".
+func ParseDisplayLimit(raw string, def, max int) int {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return def
+	}
+	if max > 0 && n > max {
+		return max
+	}
+	return n
+}

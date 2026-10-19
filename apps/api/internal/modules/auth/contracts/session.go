@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+
+	"mini-erp/internal/shared/response"
 )
 
 // ErrSessionInvalid marks every expected authentication failure: bad token,
@@ -68,28 +70,33 @@ type SessionProvider interface {
 }
 
 // PermissionChecker answers one permission for the session in context.
-// Permissions resolve from the database on every call, so revocations apply
-// without forcing logout.
+// The session was resolved once by Authenticate; revocations apply without
+// forcing logout because every write that changes authorization invalidates
+// the resolved session through AuthzInvalidator.
 type PermissionChecker interface {
 	HasPermission(ctx context.Context, perm string) bool
 }
 
-func unauthorized(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"success":false,"message":"Sesi berakhir, silakan login kembali"}`))
+// AuthzInvalidator retires authorization state that auth resolved and cached.
+//
+// Auth resolves a session once and reuses it across requests instead of
+// paying six reads per request. That reuse is only safe while the modules
+// that OWN the underlying rows announce their writes — a role's permissions,
+// a user's status or roles, a branch closing. Those modules receive this
+// contract from the composition root and call it after such a write, so the
+// next request rebuilds from the database.
+//
+// Implemented by the auth module. A nil invalidator is a valid no-op: a
+// module wired without one simply never announces, and staleness falls back
+// to auth's short TTL.
+type AuthzInvalidator interface {
+	InvalidateAll()
+	InvalidateUser(userID int64)
 }
 
-func forbidden(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte(`{"success":false,"message":"Anda tidak memiliki akses"}`))
-}
-
-func serverError(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusInternalServerError)
-	_, _ = w.Write([]byte(`{"success":false,"message":"Terjadi kesalahan internal"}`))
+// SessionRevoker revokes sessions from the user module (F1-4).
+type SessionRevoker interface {
+	RevokeUserSessions(ctx context.Context, userID, exceptSessionID int64) (int64, error)
 }
 
 // Authenticate rejects requests without a valid Bearer session. It is the
@@ -102,24 +109,25 @@ func Authenticate(log *slog.Logger, provider SessionProvider, next http.Handler)
 		token := r.Header.Get("Authorization")
 		const prefix = "Bearer "
 		if len(token) <= len(prefix) || token[:len(prefix)] != prefix {
-			unauthorized(w)
+			response.SessionExpired(w)
 			return
 		}
 		s, err := provider.Verify(r.Context(), token[len(prefix):])
 		if err != nil {
 			if errors.Is(err, ErrSessionInvalid) {
-				unauthorized(w)
+				response.SessionExpired(w)
 				return
 			}
 			log.Error("session verify", "error", err, "path", r.URL.Path)
-			serverError(w)
+			response.Internal(w)
 			return
 		}
 		if s == nil {
-			unauthorized(w)
+			response.SessionExpired(w)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithSession(r.Context(), s)))
+		ctx := WithSession(r.Context(), s)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -134,7 +142,7 @@ func RequirePermission(checker PermissionChecker, perm string, next http.Handler
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !checker.HasPermission(r.Context(), perm) {
-			forbidden(w)
+			response.Forbidden(w)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -160,7 +168,32 @@ func RequireBranch(next http.Handler) http.Handler {
 }
 
 func deny(message string, w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte(`{"success":false,"message":"` + message + `"}`))
+	response.ForbiddenMsg(w, message)
+}
+
+// ActorID is the authenticated user id of the request, 0 when unauthenticated.
+// Presentation layers use it instead of reading the body (ADR-0009 scope rule).
+func ActorID(r *http.Request) int64 {
+	if s := SessionFromContext(r.Context()); s != nil {
+		return s.UserID
+	}
+	return 0
+}
+
+// BranchID is the session's active branch id, 0 when none is selected.
+func BranchID(r *http.Request) int64 {
+	if s := SessionFromContext(r.Context()); s != nil {
+		return s.BranchID
+	}
+	return 0
+}
+
+// Permission is the route-permission wrapper injected by the composition
+// root; every presentation package takes this one type.
+type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
+
+// Guard adapts a branch guard into func-style middleware, preserving the
+// order auth -> permission -> branch -> handler.
+func Guard(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
+	return branchGuard(http.HandlerFunc(next)).ServeHTTP
 }

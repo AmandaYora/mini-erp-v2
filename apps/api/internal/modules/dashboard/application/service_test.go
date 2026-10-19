@@ -1,6 +1,7 @@
 package application
 
 import (
+	dashboardcontracts "mini-erp/internal/modules/dashboard/contracts"
 	"context"
 	"fmt"
 	"testing"
@@ -15,15 +16,29 @@ import (
 // --- fakes (in-memory contract doubles with call counters) ------------------
 
 type fakeFinance struct {
-	netProfitCalls int
-	dailyCalls     int
-	marginCalls    int
-	marginFrom     string
-	marginTo       string
-	marginLimit    int
+	netProfitCalls     int
+	dailyCalls         int
+	balanceCalls       int
+	balancesCalls      int
+	inventoryTotalCall int
+	inventoryValueCall int
+	marginCalls        int
+	marginFrom         string
+	marginTo           string
+	marginLimit        int
+	// trendToday, when set, is echoed as the last point of DailyTrend so a
+	// test can assert which day Summary reads as "today".
+	trendToday string
 }
 
+func (f *fakeFinance) OpeningPosted(_ context.Context, _ int64) (bool, error) { return false, nil }
+
+func (f *fakeFinance) UncostedCount(_ context.Context, _ int64) (int64, error) { return 0, nil }
+
+func (f *fakeFinance) AverageUnitCost(_ context.Context, _, _, _ int64) (int64, error) { return 0, nil }
+
 func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, code string) (int64, int64, error) {
+	f.balanceCalls++
 	switch code {
 	case financecontracts.CodeCash:
 		return 1000, 0, nil
@@ -37,18 +52,57 @@ func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, code string) (i
 	return 0, 0, nil
 }
 
+func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string) (map[string]int64, error) {
+	f.balancesCalls++
+	net := map[string]int64{"cash": 1000, "receivable": 500, "payable": -300, "inventory": 700}
+	out := map[string]int64{}
+	for _, k := range keys {
+		out[k] = net[k]
+	}
+	return out, nil
+}
+
+func (f *fakeFinance) AccountBalances(_ context.Context, _ int64, codes []string) (map[string]int64, error) {
+	f.balancesCalls++
+	net := map[string]int64{
+		financecontracts.CodeCash:       1000,
+		financecontracts.CodeReceivable: 500,
+		financecontracts.CodePayable:    -300,
+		financecontracts.CodeInventory:  700,
+	}
+	out := map[string]int64{}
+	for _, c := range codes {
+		out[c] = net[c]
+	}
+	return out, nil
+}
+
 func (f *fakeFinance) NetProfit(_ context.Context, _ int64, _, _ string) (int64, int64, int64, error) {
 	f.netProfitCalls++
 	return 100, 40, 60, nil
 }
 
 func (f *fakeFinance) InventoryValue(_ context.Context, _ int64) ([]financecontracts.InventoryPosition, int64, error) {
+	f.inventoryValueCall++
 	return []financecontracts.InventoryPosition{}, 700, nil
 }
 
-func (f *fakeFinance) DailyTrend(_ context.Context, _ int64, _, _ string) ([]financecontracts.DailyPoint, error) {
+func (f *fakeFinance) InventoryTotal(_ context.Context, _ int64) (int64, error) {
+	f.inventoryTotalCall++
+	return 700, nil
+}
+
+func (f *fakeFinance) DailyTrend(_ context.Context, _ int64, _, to string) ([]financecontracts.DailyPoint, error) {
 	f.dailyCalls++
-	return []financecontracts.DailyPoint{}, nil
+	if f.trendToday == "" {
+		return []financecontracts.DailyPoint{}, nil
+	}
+	// Two days: one earlier, one for `to` (which Summary treats as today),
+	// so month-to-date and today are distinguishable.
+	return []financecontracts.DailyPoint{
+		{Date: "1970-01-01", Revenue: 20, Expense: 5, Profit: 15},
+		{Date: to, Revenue: 100, Expense: 40, Profit: 60},
+	}, nil
 }
 
 func (f *fakeFinance) MarginByProduct(_ context.Context, _ int64, from, to string, limit int) ([]financecontracts.ProductMargin, error) {
@@ -77,18 +131,41 @@ func (f *fakeStock) Hold(_ context.Context, _, _, _, _, _ int64, _ float64, _ st
 	return 0, nil
 }
 
-func (f *fakeStock) Release(_ context.Context, _ int64, _ string) error { return nil }
+func (f *fakeStock) Allocate(_ context.Context, _, _, _ int64, _ float64) ([]stockcontracts.Suggestion, float64, error) {
+	return nil, 0, nil
+}
+func (f *fakeStock) ListRecentCostMovements(_ context.Context, _ int64, _, _ int) ([]*stockcontracts.CostMovement, error) {
+	return nil, nil
+}
+
+func (f *fakeStock) CriticalSummary(_ context.Context, _ int64) (int64, int64, error) {
+	return 2, 10, nil
+}
+
+func (f *fakeStock) StockReport(_ context.Context, _ int64, _ bool, _, _ int) (*stockcontracts.StockReport, error) {
+	return &stockcontracts.StockReport{}, nil
+}
+
+func (f *fakeStock) Release(_ context.Context, _, _ int64, _ string) error { return nil }
 
 func (f *fakeStock) Consume(_ context.Context, _ string, _ float64, _ string, _ int64, _ int64) error {
 	return nil
 }
 
-func (f *fakeStock) MoveIn(_ context.Context, _, _, _, _ int64, _ float64, _ string, _ int64, _ int64) error {
-	return nil
+func (f *fakeStock) Post(_ context.Context, _ stockcontracts.PostRequest) (*stockcontracts.PostResult, error) {
+	return &stockcontracts.PostResult{}, nil
 }
 
-func (f *fakeStock) MoveOut(_ context.Context, _ int64, _, _, _ int64, _ float64, _ string, _ int64, _ int64) error {
-	return nil
+func (f *fakeStock) Reverse(_ context.Context, _ int64, _ string, _, _ int64) (*stockcontracts.PostResult, error) {
+	return &stockcontracts.PostResult{}, nil
+}
+
+func (f *fakeStock) DamagedLocation(_ context.Context, _ int64) (*stockcontracts.Location, error) {
+	return &stockcontracts.Location{}, nil
+}
+
+func (f *fakeStock) HasMovements(_ context.Context, _ int64, _ string, _ int64) (bool, error) {
+	return false, nil
 }
 
 func (f *fakeStock) CheckLocation(_ context.Context, _, _ int64) error { return nil }
@@ -113,7 +190,10 @@ type fakeSales struct {
 	topTo       string
 	topLimit    int
 	top         []*salescontracts.TopProduct
+	priority    []*salescontracts.PriorityOrder
 }
+
+func (f *fakeSales) SwitchToNet(_ context.Context, _, _ int64, _ string, _ int64) error { return nil }
 
 func (f *fakeSales) GetByID(_ context.Context, _ int64) (*salescontracts.SalesOrder, error) {
 	return nil, nil
@@ -147,11 +227,41 @@ func (f *fakeSales) TopProducts(_ context.Context, _ int64, from, to string, lim
 	return f.top, nil
 }
 
+func (f *fakeSales) CompletedSales(_ context.Context, _ int64, _, _ string) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (f *fakeSales) CountOrders(_ context.Context, _ int64, _, _ string) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeSales) PriorityOrders(_ context.Context, _ int64, limit int) ([]*salescontracts.PriorityOrder, error) {
+	f.listCalls++
+	f.listLimit = limit
+	return f.priority, nil
+}
+
+func (f *fakeSales) OpenOrderTotals(_ context.Context, _, _ int64, _ int) ([]salescontracts.OrderTotal, error) {
+	return nil, nil
+}
+
+func (f *fakeSales) ReportOrders(_ context.Context, _ int64, _, _, _ string, _, _ int) (*salescontracts.OrderReport, error) {
+	return &salescontracts.OrderReport{}, nil
+}
+
+func (f *fakeSales) CountMissingTaxInvoiceBetween(_ context.Context, _ int64, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeSales) CountMissingTaxInvoice(_ context.Context, _ int64) (int64, error) {
 	return 0, nil
 }
 
 func (f *fakeSales) OpenShipments(_ context.Context, _ int64, _ int) ([]*salescontracts.OpenShipment, error) {
+	return nil, nil
+}
+
+func (f *fakeSales) SearchOrderIDs(_ context.Context, _ int64, _ string, _ int) ([]int64, error) {
 	return nil, nil
 }
 
@@ -166,6 +276,25 @@ func (f *fakeSales) SummariesByIDs(_ context.Context, _ []int64) (map[int64]*sal
 type fakePurchasing struct {
 	statusCalls int
 	statuses    map[string]int64
+	// drafts are the draft orders ReportOrders returns; open the open-order
+	// totals (payable base); names resolve SummariesByIDs.
+	drafts []*purchasingcontracts.OrderSummary
+	open   []purchasingcontracts.OrderTotal
+	names  map[int64]*purchasingcontracts.OrderSummary
+}
+
+func (f *fakePurchasing) SummariesByIDs(_ context.Context, ids []int64) (map[int64]*purchasingcontracts.OrderSummary, error) {
+	out := map[int64]*purchasingcontracts.OrderSummary{}
+	for _, id := range ids {
+		if n, ok := f.names[id]; ok {
+			out[id] = n
+		}
+	}
+	return out, nil
+}
+
+func (f *fakePurchasing) SwitchToNet(_ context.Context, _, _ int64, _ string, _ int64) error {
+	return nil
 }
 
 func (f *fakePurchasing) GetByID(_ context.Context, _ int64) (*purchasingcontracts.PurchaseOrder, error) {
@@ -193,8 +322,37 @@ func (f *fakePurchasing) StatusCounts(_ context.Context, _ int64) (map[string]in
 	return f.statuses, nil
 }
 
+func (f *fakePurchasing) CountOrders(_ context.Context, _ int64, _, _ string) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakePurchasing) OpenOrderTotals(_ context.Context, _, after int64, _ int) ([]purchasingcontracts.OrderTotal, error) {
+	var out []purchasingcontracts.OrderTotal
+	for _, o := range f.open {
+		if o.ID > after {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakePurchasing) ReportOrders(_ context.Context, _ int64, status, _, _ string, _, _ int) (*purchasingcontracts.OrderReport, error) {
+	if status == "draft" {
+		return &purchasingcontracts.OrderReport{Rows: f.drafts, Total: int64(len(f.drafts))}, nil
+	}
+	return &purchasingcontracts.OrderReport{}, nil
+}
+
+func (f *fakePurchasing) CountMissingSupplierInvoiceBetween(_ context.Context, _ int64, _, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakePurchasing) CountMissingSupplierInvoice(_ context.Context, _ int64) (int64, error) {
 	return 0, nil
+}
+
+func (f *fakePurchasing) SearchOrderIDs(_ context.Context, _ int64, _ string, _ int) ([]int64, error) {
+	return nil, nil
 }
 
 func (f *fakePurchasing) OrderParties(_ context.Context, _ []int64) (map[int64]int64, error) {
@@ -236,42 +394,23 @@ func TestCriticalStockSingleGroupedRead(t *testing.T) {
 	}
 }
 
-// TestPriorityOrdersFiltersAndSorts: only confirmed orders with a due date on
-// or before today+7d surface, most overdue first, from a single ListOrders
-// call.
-func TestPriorityOrdersFiltersAndSorts(t *testing.T) {
-	now := timeutil.NowUTC().In(timeutil.Jakarta)
-	day := func(delta int) string {
-		return now.AddDate(0, 0, delta).Format("2006-01-02") + " 00:00:00"
-	}
-	sa := &fakeSales{orders: []*salescontracts.OrderSummary{
-		{ID: 1, Number: "SO-1", DueDate: day(-3)}, // overdue, oldest first
-		{ID: 2, Number: "SO-2", DueDate: day(-1)}, // overdue
-		{ID: 3, Number: "SO-3", DueDate: day(2)},  // inside window
-		{ID: 4, Number: "SO-4", DueDate: day(30)}, // planning, excluded
-		{ID: 5, Number: "SO-5", DueDate: ""},      // COD, excluded
-		{ID: 6, Number: "SO-6", DueDate: day(7)},  // window edge, included
-		{ID: 7, Number: "SO-7", DueDate: day(8)},  // past window, excluded
+// TestPriorityOrdersDelegatesRanking: the urgency score and ordering live in
+// the sales read (SQL over ALL live orders), the dashboard only applies the
+// display cap — one call.
+func TestPriorityOrdersDelegatesRanking(t *testing.T) {
+	sa := &fakeSales{priority: []*salescontracts.PriorityOrder{
+		{ID: 1, Number: "SO-1", Score: 130}, {ID: 2, Number: "SO-2", Score: 90},
 	}}
 	svc := newService(&fakeFinance{}, &fakeStock{}, sa, &fakePurchasing{})
 	orders, err := svc.PriorityOrders(context.Background(), 3, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sa.listCalls != 1 {
-		t.Fatalf("ListOrders calls = %d, want 1", sa.listCalls)
+	if sa.listCalls != 1 || sa.listLimit != 5 {
+		t.Fatalf("priority calls=%d limit=%d, want 1 call with the default cap 5", sa.listCalls, sa.listLimit)
 	}
-	if len(sa.listStatus) != 1 || sa.listStatus[0] != salescontracts.StatusConfirmed {
-		t.Fatalf("ListOrders statuses = %v, want [confirmed]", sa.listStatus)
-	}
-	want := []string{"SO-1", "SO-2", "SO-3", "SO-6"}
-	if len(orders) != len(want) {
-		t.Fatalf("orders = %d, want %d", len(orders), len(want))
-	}
-	for i, n := range want {
-		if orders[i].Number != n {
-			t.Fatalf("orders[%d] = %s, want %s (full: %v)", i, orders[i].Number, n, want)
-		}
+	if len(orders) != 2 || orders[0].Number != "SO-1" {
+		t.Fatalf("orders = %+v, want the sales ranking passed through", orders)
 	}
 }
 
@@ -315,8 +454,8 @@ func TestTopSellersUsesMonthRange(t *testing.T) {
 	if want := now.Format("2006-01-02"); sa.topTo != want {
 		t.Fatalf("to = %s, want today %s", sa.topTo, want)
 	}
-	if sa.topLimit != 5 {
-		t.Fatalf("limit = %d, want default 5", sa.topLimit)
+	if sa.topLimit != 200 {
+		t.Fatalf("fetch limit = %d, want 200 (netted against returns, then capped to 5)", sa.topLimit)
 	}
 	if len(rows) != 1 || rows[0].ProductID != 9 {
 		t.Fatalf("rows = %+v, want passthrough", rows)
@@ -353,7 +492,8 @@ func TestTopMarginUsesMonthRange(t *testing.T) {
 // TestSummaryUnchanged: the booked snapshot keeps working after the F1
 // constructor change (finance-only path, no operational client touched).
 func TestSummaryUnchanged(t *testing.T) {
-	svc := newService(&fakeFinance{}, &fakeStock{}, &fakeSales{}, &fakePurchasing{})
+	fin := &fakeFinance{trendToday: "echo"}
+	svc := newService(fin, &fakeStock{}, &fakeSales{}, &fakePurchasing{})
 	sum, err := svc.Summary(context.Background(), 3)
 	if err != nil {
 		t.Fatal(err)
@@ -364,7 +504,99 @@ func TestSummaryUnchanged(t *testing.T) {
 	if sum.Today.Revenue != 100 || sum.Today.Profit != 60 {
 		t.Fatalf("today = %+v, want revenue:100 profit:60", sum.Today)
 	}
+	// Month-to-date sums the whole series, today is only its last point.
+	if sum.MonthToDate.Revenue != 120 || sum.MonthToDate.Profit != 75 {
+		t.Fatalf("month = %+v, want revenue:120 profit:75", sum.MonthToDate)
+	}
 	if sum.Balances.Payable != 300 {
 		t.Fatalf("payable = %d, want 300 (credit-normalised positive)", sum.Balances.Payable)
+	}
+	if sum.Balances.Cash != 1000 || sum.Balances.Inventory != 700 {
+		t.Fatalf("balances = %+v, want cash:1000 inventory:700", sum.Balances)
+	}
+	if sum.InventoryValue != 700 {
+		t.Fatalf("inventory value = %d, want 700", sum.InventoryValue)
+	}
+}
+
+// TestSummaryReadsAreGrouped pins the query budget of the dashboard's
+// headline endpoint. Each of these used to be a per-figure read: two P&L
+// computations for two overlapping ranges, one whole-history footing per key
+// balance, and a full valued inventory whose product names were discarded.
+func TestSummaryReadsAreGrouped(t *testing.T) {
+	fin := &fakeFinance{trendToday: "echo"}
+	svc := newService(fin, &fakeStock{}, &fakeSales{}, &fakePurchasing{})
+	if _, err := svc.Summary(context.Background(), 3); err != nil {
+		t.Fatal(err)
+	}
+	if fin.dailyCalls != 1 {
+		t.Fatalf("DailyTrend calls = %d, want 1 (today and month from one series)", fin.dailyCalls)
+	}
+	if fin.netProfitCalls != 0 {
+		t.Fatalf("NetProfit calls = %d, want 0 (both periods come from DailyTrend)", fin.netProfitCalls)
+	}
+	if fin.balancesCalls != 1 {
+		t.Fatalf("AccountBalances calls = %d, want 1 grouped read", fin.balancesCalls)
+	}
+	if fin.balanceCalls != 0 {
+		t.Fatalf("AccountBalance calls = %d, want 0 (each one re-foots the whole ledger)", fin.balanceCalls)
+	}
+	if fin.inventoryTotalCall != 1 || fin.inventoryValueCall != 0 {
+		t.Fatalf("inventory reads = total:%d value:%d, want total:1 value:0 (names are never shown here)",
+			fin.inventoryTotalCall, fin.inventoryValueCall)
+	}
+}
+
+// fakePaid answers PaidForOrders from a fixed map.
+type fakePaid map[int64]int64
+
+func (f fakePaid) PaidForOrders(_ context.Context, _ string, ids []int64) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	for _, id := range ids {
+		out[id] = f[id]
+	}
+	return out, nil
+}
+
+// TestPriorityOrdersIncludePurchasesWithReasonAndAge (DB-01): purchase orders
+// past due and unpaid, and drafts awaiting a decision, join the sales ranking,
+// each with its reason and age; a fully paid overdue order stays off the list.
+func TestPriorityOrdersIncludePurchasesWithReasonAndAge(t *testing.T) {
+	sa := &fakeSales{priority: []*salescontracts.PriorityOrder{
+		{ID: 1, Number: "SO-1", Score: 100, Status: "confirmed", DueDate: "2000-01-01", OrderDate: "1999-12-01"},
+	}}
+	pu := &fakePurchasing{
+		drafts: []*purchasingcontracts.OrderSummary{{ID: 7, Number: "PO-7", Status: "draft", PartyName: "Sup A", OrderDate: "2000-01-01"}},
+		open: []purchasingcontracts.OrderTotal{
+			{ID: 8, Number: "PO-8", GrandTotal: 1000, OrderDate: "2000-01-01", DueDate: "2000-02-01"},
+			{ID: 9, Number: "PO-9", GrandTotal: 500, OrderDate: "2000-01-01", DueDate: "2000-02-01"},
+			{ID: 10, Number: "PO-10", GrandTotal: 500, OrderDate: "2000-01-01", DueDate: "2999-01-01"},
+		},
+		names: map[int64]*purchasingcontracts.OrderSummary{8: {ID: 8, Status: "confirmed", PartyName: "Sup B"}},
+	}
+	svc := newService(&fakeFinance{}, &fakeStock{}, sa, pu)
+	svc.SetSources(nil, fakePaid{9: 500})
+	items, err := svc.PriorityOrders(context.Background(), 3, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]*dashboardcontracts.PriorityItem{}
+	for _, it := range items {
+		got[it.Kind+":"+it.Number] = it
+	}
+	if len(items) != 3 {
+		t.Fatalf("items = %d, want SO-1, PO-8 (overdue unpaid), PO-7 (draft): %+v", len(items), items)
+	}
+	if it := got["purchase:PO-8"]; it == nil || it.Reason != dashboardcontracts.ReasonOverdue || it.PartyName != "Sup B" || it.AgeDays <= 0 {
+		t.Fatalf("PO-8 = %+v, want overdue reason, party and age", it)
+	}
+	if it := got["purchase:PO-7"]; it == nil || it.Reason != dashboardcontracts.ReasonAwaitingDecision {
+		t.Fatalf("PO-7 = %+v, want awaiting decision", it)
+	}
+	if it := got["sales:SO-1"]; it == nil || it.Reason != dashboardcontracts.ReasonOverdue {
+		t.Fatalf("SO-1 = %+v, want overdue", it)
+	}
+	if items[0].Score < items[len(items)-1].Score {
+		t.Fatalf("not ordered by score: %+v", items)
 	}
 }

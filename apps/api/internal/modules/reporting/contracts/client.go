@@ -22,7 +22,8 @@ type InventoryReport struct {
 type ReportingClient interface {
 	// SalesTrend returns per-day figures for an inclusive YYYY-MM-DD range.
 	SalesTrend(ctx context.Context, branchID int64, from, to string) ([]TrendPoint, error)
-	// Inventory returns valued stock positions for one branch.
+	// Inventory returns valued stock positions for one branch. Alias of
+	// finance.InventoryValue under the reporting.view permission (F8-11).
 	Inventory(ctx context.Context, branchID int64) (*InventoryReport, error)
 }
 

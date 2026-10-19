@@ -20,20 +20,6 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
-}
-
 func answerView(branchID int64, branch string, runID int64, intent, mode, text string) map[string]any {
 	return map[string]any{
 		"runId": runID, "branchId": branchID, "branchName": branch,
@@ -51,7 +37,7 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	ans, err := h.svc.Ask(r.Context(), actorID(r), in.BranchID, in.Message)
+	ans, err := h.svc.Ask(r.Context(), authcontracts.ActorID(r), in.BranchID, in.Message)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -71,7 +57,7 @@ func (h *Handler) Simulate(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	ans, err := h.svc.Simulate(r.Context(), actorID(r), in.BranchID, in.Phone, in.Message)
+	ans, err := h.svc.Simulate(r.Context(), authcontracts.ActorID(r), in.BranchID, in.Phone, in.Message)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -111,7 +97,7 @@ func (h *Handler) ChannelStatus(w http.ResponseWriter, r *http.Request) {
 
 // ChannelConnect handles POST /api/v1/assistant/channel/connect.
 func (h *Handler) ChannelConnect(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Connect(r.Context()); err != nil {
+	if err := h.svc.Connect(r.Context(), authcontracts.ActorID(r)); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -120,7 +106,7 @@ func (h *Handler) ChannelConnect(w http.ResponseWriter, r *http.Request) {
 
 // ChannelDisconnect handles POST /api/v1/assistant/channel/disconnect.
 func (h *Handler) ChannelDisconnect(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Disconnect(r.Context()); err != nil {
+	if err := h.svc.Disconnect(r.Context(), authcontracts.ActorID(r)); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -129,7 +115,7 @@ func (h *Handler) ChannelDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // ChannelReset handles POST /api/v1/assistant/channel/reset.
 func (h *Handler) ChannelReset(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.ResetSession(r.Context()); err != nil {
+	if err := h.svc.ResetSession(r.Context(), authcontracts.ActorID(r)); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -170,7 +156,7 @@ func (h *Handler) CreateAuthorization(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	a, err := h.svc.CreateAuthorization(r.Context(), actorID(r), application.AuthorizationInput{
+	a, err := h.svc.CreateAuthorization(r.Context(), authcontracts.ActorID(r), application.AuthorizationInput{
 		Phone: in.Phone, Name: in.Name, AccessLevel: in.AccessLevel, IsPrimaryOwner: in.IsPrimaryOwner,
 	})
 	if err != nil {
@@ -197,7 +183,7 @@ func (h *Handler) UpdateAuthorization(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	a, appErr := h.svc.UpdateAuthorization(r.Context(), actorID(r), id, application.AuthorizationInput{
+	a, appErr := h.svc.UpdateAuthorization(r.Context(), authcontracts.ActorID(r), id, application.AuthorizationInput{
 		Phone: in.Phone, Name: in.Name, AccessLevel: in.AccessLevel, IsPrimaryOwner: in.IsPrimaryOwner,
 	})
 	if appErr != nil {
@@ -214,7 +200,7 @@ func (h *Handler) RevokeAuthorization(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Nomor WhatsApp"))
 		return
 	}
-	if appErr := h.svc.RevokeAuthorization(r.Context(), actorID(r), id); appErr != nil {
+	if appErr := h.svc.RevokeAuthorization(r.Context(), authcontracts.ActorID(r), id); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -244,7 +230,7 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	cfg, err := h.svc.UpdateConfig(r.Context(), in.Mode, in.RateLimitPerMin)
+	cfg, err := h.svc.UpdateConfig(r.Context(), authcontracts.ActorID(r), in.Mode, in.RateLimitPerMin)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -255,26 +241,19 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
-}
-
 // RegisterRoutes mounts assistant endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("POST /api/v1/assistant/chat", perm("assistant.view", guarded(h.Chat, branchGuard)))
-	mux.Handle("POST /api/v1/assistant/simulate", perm("assistant.manage", guarded(h.Simulate, branchGuard)))
-	mux.Handle("GET /api/v1/assistant/runs/stats", perm("assistant.view", guarded(h.RunStats, branchGuard)))
-	mux.Handle("GET /api/v1/assistant/channel", perm("assistant.view", guarded(h.ChannelStatus, branchGuard)))
-	mux.Handle("POST /api/v1/assistant/channel/connect", perm("assistant.manage", guarded(h.ChannelConnect, branchGuard)))
-	mux.Handle("POST /api/v1/assistant/channel/disconnect", perm("assistant.manage", guarded(h.ChannelDisconnect, branchGuard)))
-	mux.Handle("POST /api/v1/assistant/channel/reset", perm("assistant.manage", guarded(h.ChannelReset, branchGuard)))
-	mux.Handle("GET /api/v1/assistant/authorizations", perm("assistant.view", guarded(h.ListAuthorizations, branchGuard)))
-	mux.Handle("POST /api/v1/assistant/authorizations", perm("assistant.manage", guarded(h.CreateAuthorization, branchGuard)))
-	mux.Handle("PUT /api/v1/assistant/authorizations/{id}", perm("assistant.manage", guarded(h.UpdateAuthorization, branchGuard)))
-	mux.Handle("POST /api/v1/assistant/authorizations/{id}/revoke", perm("assistant.manage", guarded(h.RevokeAuthorization, branchGuard)))
-	mux.Handle("GET /api/v1/assistant/config", perm("assistant.view", guarded(h.GetConfig, branchGuard)))
-	mux.Handle("PUT /api/v1/assistant/config", perm("assistant.manage", guarded(h.UpdateConfig, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("POST /api/v1/assistant/chat", perm("assistant.view", authcontracts.Guard(h.Chat, branchGuard)))
+	mux.Handle("POST /api/v1/assistant/simulate", perm("assistant.simulate", authcontracts.Guard(h.Simulate, branchGuard)))
+	mux.Handle("GET /api/v1/assistant/runs/stats", perm("assistant.view", authcontracts.Guard(h.RunStats, branchGuard)))
+	mux.Handle("GET /api/v1/assistant/channel", perm("assistant.view", authcontracts.Guard(h.ChannelStatus, branchGuard)))
+	mux.Handle("POST /api/v1/assistant/channel/connect", perm("assistant.manage", authcontracts.Guard(h.ChannelConnect, branchGuard)))
+	mux.Handle("POST /api/v1/assistant/channel/disconnect", perm("assistant.manage", authcontracts.Guard(h.ChannelDisconnect, branchGuard)))
+	mux.Handle("POST /api/v1/assistant/channel/reset", perm("assistant.manage", authcontracts.Guard(h.ChannelReset, branchGuard)))
+	mux.Handle("GET /api/v1/assistant/authorizations", perm("assistant.view", authcontracts.Guard(h.ListAuthorizations, branchGuard)))
+	mux.Handle("POST /api/v1/assistant/authorizations", perm("assistant.manage", authcontracts.Guard(h.CreateAuthorization, branchGuard)))
+	mux.Handle("PUT /api/v1/assistant/authorizations/{id}", perm("assistant.manage", authcontracts.Guard(h.UpdateAuthorization, branchGuard)))
+	mux.Handle("POST /api/v1/assistant/authorizations/{id}/revoke", perm("assistant.manage", authcontracts.Guard(h.RevokeAuthorization, branchGuard)))
+	mux.Handle("GET /api/v1/assistant/config", perm("assistant.view", authcontracts.Guard(h.GetConfig, branchGuard)))
+	mux.Handle("PUT /api/v1/assistant/config", perm("assistant.manage", authcontracts.Guard(h.UpdateConfig, branchGuard)))
 }

@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"mini-erp/internal/modules/finance/contracts"
+	"mini-erp/internal/modules/finance/infrastructure"
 	"mini-erp/internal/shared/apperror"
+	"mini-erp/internal/shared/money"
 	"mini-erp/internal/shared/timeutil"
 )
 
@@ -66,9 +68,39 @@ func (s *Service) trialBalanceScoped(ctx context.Context, branchID int64, year, 
 	if !validYearMonth(year, month) {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
 	}
-	start := monthStart(year, month)
-	end := monthEnd(year, month)
+	return s.trialBalanceWindow(ctx, branchID, monthStart(year, month), monthEnd(year, month), sc)
+}
+
+// trialBalanceWindow foots every touched account over [start, end] timestamps.
+func (s *Service) trialBalanceWindow(ctx context.Context, branchID int64, start, end string, sc bookScope) ([]TrialRow, error) {
 	footings, err := s.footings(ctx, branchID, start, end, sc)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	accounts, err := s.repo.ListAccounts(ctx, "")
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	rows := make([]TrialRow, 0, len(accounts))
+	for _, a := range accounts {
+		f, ok := footings[a.ID]
+		if !ok {
+			continue
+		}
+		rows = append(rows, TrialRow{Code: a.Code, Name: a.Name, Type: a.Type, Debit: f[0], Credit: f[1]})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Code < rows[j].Code })
+	return rows, nil
+}
+
+// TrialBalanceAsOf is the cumulative trial balance: every account's lifetime
+// footing up to and including asOf (YYYY-MM-DD), with the balanced flag.
+func (s *Service) TrialBalanceAsOf(ctx context.Context, branchID int64, asOf string) ([]TrialRow, error) {
+	day, err := timeutil.ParseDateInput(strings.TrimSpace(asOf))
+	if err != nil {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "asOf", Message: "format tanggal harus YYYY-MM-DD"}})
+	}
+	footings, err := s.footings(ctx, branchID, "", day.Format("2006-01-02")+" 23:59:59", fullBooks)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -106,15 +138,30 @@ func monthEnd(year, month int) string {
 	return fmt.Sprintf("%04d-%02d-%02d 23:59:59", year, month, days)
 }
 
-// ProfitLoss is the income statement.
+// PLLine is one account's contribution to a profit-and-loss section (FN-03).
+// Amount is signed in the section's natural direction: income accounts credit −
+// debit, expense accounts debit − credit, so a section's lines sum to its total.
+type PLLine struct {
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Amount int64  `json:"amount"`
+}
+
+// ProfitLoss is the income statement. The five totals are the summary; the
+// three line lists are the per-account breakdown behind them (the chart of
+// accounts is small and the report is a statement, not a browser, so the lists
+// are not paginated).
 type ProfitLoss struct {
-	Revenue int64  `json:"revenue"`
-	Cogs    int64  `json:"cogs"`
-	Gross   int64  `json:"gross"`
-	Expense int64  `json:"expense"`
-	Profit  int64  `json:"profit"`
-	From    string `json:"from"`
-	To      string `json:"to"`
+	Revenue      int64    `json:"revenue"`
+	Cogs         int64    `json:"cogs"`
+	Gross        int64    `json:"gross"`
+	Expense      int64    `json:"expense"`
+	Profit       int64    `json:"profit"`
+	RevenueLines []PLLine `json:"revenueLines"`
+	CogsLines    []PLLine `json:"cogsLines"`
+	ExpenseLines []PLLine `json:"expenseLines"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
 }
 
 // ProfitLoss computes revenue − cogs − expenses for a range. Contra accounts
@@ -149,7 +196,8 @@ func (s *Service) profitLoss(ctx context.Context, branchID int64, start, end str
 	if cogsAcc != nil {
 		cogsID = cogsAcc.ID
 	}
-	rep := &ProfitLoss{}
+	rep := &ProfitLoss{RevenueLines: []PLLine{}, CogsLines: []PLLine{}, ExpenseLines: []PLLine{}}
+	// accounts arrive ordered by code, so every list is already in chart order.
 	for _, a := range accounts {
 		f, ok := footings[a.ID]
 		if !ok {
@@ -157,12 +205,17 @@ func (s *Service) profitLoss(ctx context.Context, branchID int64, start, end str
 		}
 		switch a.Type {
 		case contracts.AccountIncome:
-			rep.Revenue += f[1] - f[0]
+			amt := f[1] - f[0]
+			rep.Revenue += amt
+			rep.RevenueLines = append(rep.RevenueLines, PLLine{Code: a.Code, Name: a.Name, Amount: amt})
 		case contracts.AccountExpense:
+			amt := f[0] - f[1]
 			if a.ID == cogsID {
-				rep.Cogs += f[0] - f[1]
+				rep.Cogs += amt
+				rep.CogsLines = append(rep.CogsLines, PLLine{Code: a.Code, Name: a.Name, Amount: amt})
 			} else {
-				rep.Expense += f[0] - f[1]
+				rep.Expense += amt
+				rep.ExpenseLines = append(rep.ExpenseLines, PLLine{Code: a.Code, Name: a.Name, Amount: amt})
 			}
 		}
 	}
@@ -241,6 +294,84 @@ type LedgerLine struct {
 	Debit   int64  `json:"debit"`
 	Credit  int64  `json:"credit"`
 	Balance int64  `json:"balance"`
+	// Dimensions of the leg (FN-08), with names resolved in one batch read.
+	PartyID     int64  `json:"partyId,omitempty"`
+	PartyName   string `json:"partyName,omitempty"`
+	// BranchName is set only in the multi-branch tax package ledger.
+	BranchName  string `json:"branchName,omitempty"`
+	ProductID   int64  `json:"productId,omitempty"`
+	ProductName string `json:"productName,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// LedgerPage is one window of a general ledger with the exact line count.
+type LedgerPage struct {
+	Lines   []LedgerLine
+	Total   int64
+	Opening int64
+}
+
+// GeneralLedgerPage lists a window of an account's legs, in date order, with a
+// running balance computed in SQL over the whole filtered range. The opening
+// balance (everything before `from`) seeds it, so a window never pretends to
+// start from zero.
+func (s *Service) GeneralLedgerPage(ctx context.Context, branchID int64, code, from, to string, page, limit int) (*LedgerPage, error) {
+	a, err := s.repo.AccountByCode(ctx, strings.ToUpper(strings.TrimSpace(code)))
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	if a == nil {
+		return nil, apperror.NotFound("Akun")
+	}
+	start, end, err := validateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+	debitNormal := a.Type == contracts.AccountAsset || a.Type == contracts.AccountExpense
+	opening, err := s.openingFooting(ctx, branchID, a.ID, debitNormal, from)
+	if err != nil {
+		return nil, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 5000 {
+		limit = 1000
+	}
+	rows, total, err := s.repo.LedgerPage(ctx, branchID, a.ID, start, end, limit, (page-1)*limit)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	out := &LedgerPage{Total: total, Opening: opening, Lines: make([]LedgerLine, 0, len(rows))}
+	// One grouped read per dimension for the whole page, never one per line.
+	var partyIDs, productIDs []int64
+	for _, r := range rows {
+		if r.PartyID != 0 {
+			partyIDs = append(partyIDs, r.PartyID)
+		}
+		if r.ProductID != 0 {
+			productIDs = append(productIDs, r.ProductID)
+		}
+	}
+	parties := s.partyLabels(ctx, partyIDs)
+	products := s.productLabels(ctx, productIDs)
+	for _, r := range rows {
+		bal := opening + r.Running
+		if !debitNormal {
+			bal = opening - r.Running
+		}
+		line := LedgerLine{EntryID: r.EntryID, Number: r.Number, Date: r.Date,
+			Memo: r.Memo, Debit: r.Debit, Credit: r.Credit, Balance: bal,
+			PartyID: r.PartyID, ProductID: r.ProductID, Description: r.Description}
+		if l, ok := parties[r.PartyID]; ok {
+			line.PartyName = l.Name
+		}
+		if l, ok := products[r.ProductID]; ok {
+			line.ProductName = l.Name
+		}
+		out.Lines = append(out.Lines, line)
+	}
+	return out, nil
 }
 
 // GeneralLedger lists an account's entries with running balance.
@@ -274,12 +405,15 @@ func (s *Service) GeneralLedger(ctx context.Context, branchID int64, code, from,
 	if opening != 0 {
 		out = append(out, LedgerLine{Date: from, Memo: "Saldo awal", Balance: opening})
 	}
+	// One grouped read for every entry's legs. Fetching them per entry cost
+	// two queries a row, which on a full-year ledger meant tens of thousands
+	// of round trips for what a single JOIN returns.
+	linesByEntry, err := s.entryLines(ctx, entries)
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range entries {
-		full, err := s.repo.GetEntry(ctx, e.ID)
-		if err != nil {
-			return nil, apperror.Internal(err)
-		}
-		for _, l := range full.Lines {
+		for _, l := range linesByEntry[e.ID] {
 			if l.AccountID != a.ID {
 				continue
 			}
@@ -318,169 +452,108 @@ func (s *Service) openingFooting(ctx context.Context, branchID, accountID int64,
 	return f[1] - f[0], nil
 }
 
-// TaxSummary is one month's VAT position.
-type TaxSummary struct {
-	Year    int   `json:"year"`
-	Month   int   `json:"month"`
-	PpnOut  int64 `json:"ppnOut"`
-	PpnIn   int64 `json:"ppnIn"`
-	Payable int64 `json:"payable"`
-}
-
-// TaxSummary nets PPN Keluaran credits against PPN Masukan debits.
-func (s *Service) TaxSummary(ctx context.Context, branchID int64, year, month int) (*TaxSummary, error) {
-	return s.taxSummaryScoped(ctx, branchID, year, month, fullBooks)
-}
-
-func (s *Service) taxSummaryScoped(ctx context.Context, branchID int64, year, month int, sc bookScope) (*TaxSummary, error) {
-	if !validYearMonth(year, month) {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
-	}
-	out, err := s.repo.AccountByCode(ctx, "2200")
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	in, err := s.repo.AccountByCode(ctx, "1400")
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	footings, err := s.footings(ctx, branchID, monthStart(year, month), monthEnd(year, month), sc)
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	sum := &TaxSummary{Year: year, Month: month}
-	if out != nil {
-		if f, ok := footings[out.ID]; ok {
-			sum.PpnOut = f[1] - f[0]
-		}
-	}
-	if in != nil {
-		if f, ok := footings[in.ID]; ok {
-			sum.PpnIn = f[0] - f[1]
-		}
-	}
-	sum.Payable = sum.PpnOut - sum.PpnIn
-	return sum, nil
-}
-
-// TaxDetailRow is one revenue posting for export.
-type TaxDetailRow struct {
-	// EntryID and OrderID make each row traceable back to the journal entry
-	// and the sales order behind it. The gross-turnover working paper needs
-	// both to show only the rows that sit under the ceiling.
-	EntryID          int64  `json:"entryId"`
-	OrderID          int64  `json:"orderId"`
-	Date             string `json:"date"`
-	Number           string `json:"number"`
-	Memo             string `json:"memo"`
-	Revenue          int64  `json:"revenue"`
-	Ppn              int64  `json:"ppn"`
-	TaxInvoiceNumber string `json:"taxInvoiceNumber"`
-	TaxInvoiceDate   string `json:"taxInvoiceDate"`
-}
-
-// TaxDetail lists delivery-sourced entries in a month (SPT working papers).
-// Invoice numbers come from the source SO (C3); SOs repeat across rows, so
-// each distinct order is fetched once.
-func (s *Service) TaxDetail(ctx context.Context, branchID int64, year, month int) ([]TaxDetailRow, error) {
-	if !validYearMonth(year, month) {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
-	}
-	entries, err := s.repo.ListEntries(ctx, branchID, monthStart(year, month), monthEnd(year, month), 0, 10000, 0, true)
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	rev, err := s.repo.AccountByCode(ctx, "4000")
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	ppn, err := s.repo.AccountByCode(ctx, "2200")
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	// Resolve note -> sales order for every delivery entry in ONE read, so
-	// the row loop below never queries per note. The order id is also
-	// carried on each row, which is what lets the gross-turnover working
-	// paper keep only the rows under the ceiling.
-	noteIDs := make([]int64, 0, len(entries))
-	for _, e := range entries {
-		if e.SourceType == SourceDelivery {
-			noteIDs = append(noteIDs, e.SourceID)
-		}
-	}
-	noteOrders, err := s.delivery.OrderIDsByNotes(ctx, noteIDs)
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	invoices := map[int64][2]string{}
-	getSO := func(noteID int64) (string, string) {
-		soID := noteOrders[noteID]
-		if soID == 0 {
-			return "", ""
-		}
-		inv, ok := invoices[soID]
-		if !ok {
-			if so, err := s.sales.GetByID(ctx, soID); err == nil && so != nil && so.BranchID == branchID {
-				inv = [2]string{so.TaxInvoiceNumber, so.TaxInvoiceDate}
-			}
-			invoices[soID] = inv
-		}
-		return inv[0], inv[1]
-	}
-	var out []TaxDetailRow
-	for _, e := range entries {
-		if e.SourceType != SourceDelivery {
-			continue
-		}
-		full, err := s.repo.GetEntry(ctx, e.ID)
-		if err != nil {
-			return nil, apperror.Internal(err)
-		}
-		row := TaxDetailRow{EntryID: e.ID, OrderID: noteOrders[e.SourceID], Date: e.Date, Number: e.Number, Memo: e.Memo}
-		for _, l := range full.Lines {
-			if rev != nil && l.AccountID == rev.ID {
-				row.Revenue += l.Credit - l.Debit
-			}
-			if ppn != nil && l.AccountID == ppn.ID {
-				row.Ppn += l.Credit - l.Debit
-			}
-		}
-		row.TaxInvoiceNumber, row.TaxInvoiceDate = getSO(e.SourceID)
-		out = append(out, row)
-	}
-	if out == nil {
-		out = []TaxDetailRow{}
-	}
-	return out, nil
-}
-
 // InventoryPosition is re-exported from contracts for L8 readers.
 type InventoryPosition = contracts.InventoryPosition
 
-// InventoryValue values every cost position at moving average.
-func (s *Service) InventoryValue(ctx context.Context, branchID int64) ([]InventoryPosition, int64, error) {
+// InventoryTotal values every cost position and returns only the sum.
+//
+// The dashboard wants one number, not a named catalog: this skips product
+// decoration entirely, leaving a single positions read.
+func (s *Service) InventoryTotal(ctx context.Context, branchID int64) (int64, error) {
 	positions, err := s.repo.CostPositions(ctx, branchID)
 	if err != nil {
-		return nil, 0, apperror.Internal(err)
+		return 0, apperror.Internal(err)
 	}
-	var out []InventoryPosition
 	var total int64
 	for _, p := range positions {
 		if p.Qty <= 0 {
 			continue
 		}
-		avg := p.Average()
-		value := round(p.Qty * avg)
-		item := InventoryPosition{ProductID: p.ProductID, VariantID: p.VariantID,
-			Qty: p.Qty, AvgCost: avg, Value: value}
-		if prod, err := s.products.GetByID(ctx, p.ProductID); err == nil && prod != nil {
-			item.ProductCode, item.ProductName = prod.Code, prod.Name
-		}
-		out = append(out, item)
-		total += value
+		total += money.Round(p.Qty * p.Average())
 	}
-	if out == nil {
-		out = []InventoryPosition{}
+	return total, nil
+}
+
+// BranchValue is one branch's share of a multi-branch figure (FN-09).
+type BranchValue struct {
+	BranchID   int64  `json:"branchId"`
+	BranchName string `json:"branchName"`
+	Total      int64  `json:"total"`
+	Positions  int    `json:"positions"`
+}
+
+// InventoryReport is the inventory valuation with, for an "all branches"
+// scope, the per-branch split (FN-09).
+type InventoryReport struct {
+	Positions []InventoryPosition
+	Total     int64
+	ByBranch  []BranchValue
+}
+
+// InventoryValue values every cost position at moving average, decorated
+// with product code/name. Single-branch view; see InventoryReport for the
+// multi-branch one.
+func (s *Service) InventoryValue(ctx context.Context, branchID int64) ([]InventoryPosition, int64, error) {
+	rep, err := s.InventoryReport(ctx, branchID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rep.Positions, rep.Total, nil
+}
+
+// InventoryReport values the cost positions of the branch in scope: the session
+// branch, or every branch of an "all branches" report (the handler narrowed the
+// ctx to what the user may see, FN-09). Positions of the same product merge
+// across branches (quantity and value add up); ByBranch keeps the split.
+//
+// Cost: one positions read per branch plus ONE grouped product read and one
+// branch-name read, whatever the catalog size.
+func (s *Service) InventoryReport(ctx context.Context, branchID int64) (*InventoryReport, error) {
+	scope := []int64{branchID}
+	if ids, ok := infrastructure.BranchSetFrom(ctx); ok {
+		scope = ids
+	}
+	type key struct{ product, variant int64 }
+	merged := map[key]*InventoryPosition{}
+	rep := &InventoryReport{}
+	for _, b := range scope {
+		positions, err := s.repo.CostPositions(ctx, b)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		bv := BranchValue{BranchID: b}
+		for _, p := range positions {
+			if p.Qty <= 0 {
+				continue
+			}
+			avg := p.Average()
+			value := money.Round(p.Qty * avg)
+			bv.Total += value
+			bv.Positions++
+			k := key{p.ProductID, p.VariantID}
+			cur, ok := merged[k]
+			if !ok {
+				merged[k] = &InventoryPosition{ProductID: p.ProductID, VariantID: p.VariantID, Qty: p.Qty, AvgCost: avg, Value: value}
+				continue
+			}
+			cur.Qty += p.Qty
+			cur.Value += value
+			cur.AvgCost = float64(cur.Value) / cur.Qty
+		}
+		rep.Total += bv.Total
+		rep.ByBranch = append(rep.ByBranch, bv)
+	}
+	out := make([]InventoryPosition, 0, len(merged))
+	ids := make([]int64, 0, len(merged))
+	for _, p := range merged {
+		out = append(out, *p)
+		ids = append(ids, p.ProductID)
+	}
+	labels := s.productLabels(ctx, ids)
+	for i := range out {
+		if l, ok := labels[out[i].ProductID]; ok {
+			out[i].ProductCode, out[i].ProductName = l.Code, l.Name
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ProductCode == out[j].ProductCode {
@@ -488,15 +561,56 @@ func (s *Service) InventoryValue(ctx context.Context, branchID int64) ([]Invento
 		}
 		return out[i].ProductCode < out[j].ProductCode
 	})
-	return out, total, nil
+	rep.Positions = out
+	names := s.branchNames(ctx, scope)
+	for i := range rep.ByBranch {
+		rep.ByBranch[i].BranchName = names[rep.ByBranch[i].BranchID]
+	}
+	return rep, nil
 }
 
-// Margin is revenue/cogs/gross for a range.
+// branchNames resolves branch names with one grouped read (best effort).
+func (s *Service) branchNames(ctx context.Context, ids []int64) map[int64]string {
+	names := map[int64]string{}
+	if len(ids) == 0 || s.branches == nil {
+		return names
+	}
+	list, err := s.branches.GetByIDs(ctx, ids)
+	if err != nil {
+		return names
+	}
+	for _, b := range list {
+		names[b.ID] = b.Name
+	}
+	return names
+}
+
+// BranchMargin is one branch's margin inside a multi-branch Margin (FN-09).
+type BranchMargin struct {
+	BranchID   int64   `json:"branchId"`
+	BranchName string  `json:"branchName"`
+	Revenue    int64   `json:"revenue"`
+	Cogs       int64   `json:"cogs"`
+	Gross      int64   `json:"gross"`
+	Percent    float64 `json:"percent"`
+}
+
+// Margin is revenue/cogs/gross for a range. ByBranch is filled when the report
+// spans an "all branches" scope: it carries one row per branch and sums to the
+// totals above.
 type Margin struct {
-	Revenue int64   `json:"revenue"`
-	Cogs    int64   `json:"cogs"`
-	Gross   int64   `json:"gross"`
-	Percent float64 `json:"percent"`
+	Revenue  int64          `json:"revenue"`
+	Cogs     int64          `json:"cogs"`
+	Gross    int64          `json:"gross"`
+	Percent  float64        `json:"percent"`
+	ByBranch []BranchMargin `json:"byBranch,omitempty"`
+}
+
+func marginPercent(gross, revenue int64) float64 {
+	if revenue <= 0 {
+		return 0
+	}
+	return float64(gross) * 100 / float64(revenue)
 }
 
 // Margin computes the gross margin from the same core as P&L.
@@ -509,9 +623,19 @@ func (s *Service) Margin(ctx context.Context, branchID int64, from, to string) (
 	if err != nil {
 		return nil, err
 	}
-	m := &Margin{Revenue: rep.Revenue, Cogs: rep.Cogs, Gross: rep.Gross}
-	if m.Revenue > 0 {
-		m.Percent = float64(m.Gross) * 100 / float64(m.Revenue)
+	m := &Margin{Revenue: rep.Revenue, Cogs: rep.Cogs, Gross: rep.Gross, Percent: marginPercent(rep.Gross, rep.Revenue)}
+	if ids, ok := infrastructure.BranchSetFrom(ctx); ok && len(ids) > 1 {
+		// "All branches": the same core, once per branch, so the split always
+		// sums to the total (FN-09).
+		names := s.branchNames(ctx, ids)
+		for _, b := range ids {
+			one, err := s.profitLoss(infrastructure.WithBranchSet(ctx, []int64{b}), b, start, end, fullBooks)
+			if err != nil {
+				return nil, err
+			}
+			m.ByBranch = append(m.ByBranch, BranchMargin{BranchID: b, BranchName: names[b], Revenue: one.Revenue,
+				Cogs: one.Cogs, Gross: one.Gross, Percent: marginPercent(one.Gross, one.Revenue)})
+		}
 	}
 	return m, nil
 }
@@ -524,6 +648,64 @@ type CashRow struct {
 	Credit int64  `json:"credit"`
 	// Balance is debit-normal net (cash accounts are assets).
 	Balance int64 `json:"balance"`
+}
+
+// CashFlowRow is one cash account over a range: where it started, what came in
+// and went out, and where it ended.
+type CashFlowRow struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Opening int64  `json:"opening"`
+	In      int64  `json:"in"`
+	Out     int64  `json:"out"`
+	Closing int64  `json:"closing"`
+}
+
+// CashFlow reports the cash accounts' opening balance (everything before
+// from), receipts (debits), payments (credits) and closing balance for an
+// inclusive date range. Opening + in - out = closing by construction.
+func (s *Service) CashFlow(ctx context.Context, branchID int64, from, to string) ([]CashFlowRow, int64, int64, error) {
+	start, end, err := validateRange(from, to)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	day, err := timeutil.ParseDateInput(strings.TrimSpace(from))
+	if err != nil {
+		return nil, 0, 0, apperror.Validation("", []apperror.FieldError{{Field: "from", Message: "format tanggal harus YYYY-MM-DD"}})
+	}
+	before := day.AddDate(0, 0, -1).Format("2006-01-02") + " 23:59:59"
+	prior, err := s.repo.AccountFootings(ctx, branchID, "", before)
+	if err != nil {
+		return nil, 0, 0, apperror.Internal(err)
+	}
+	within, err := s.repo.AccountFootings(ctx, branchID, start, end)
+	if err != nil {
+		return nil, 0, 0, apperror.Internal(err)
+	}
+	accounts, err := s.repo.ListAccounts(ctx, "")
+	if err != nil {
+		return nil, 0, 0, apperror.Internal(err)
+	}
+	rows := []CashFlowRow{}
+	var openingTotal, closingTotal int64
+	for _, a := range accounts {
+		if !a.IsCash {
+			continue
+		}
+		p, w := prior[a.ID], within[a.ID]
+		if _, ok := prior[a.ID]; !ok {
+			if _, ok := within[a.ID]; !ok {
+				continue
+			}
+		}
+		opening := p[0] - p[1]
+		row := CashFlowRow{Code: a.Code, Name: a.Name, Opening: opening, In: w[0], Out: w[1], Closing: opening + w[0] - w[1]}
+		rows = append(rows, row)
+		openingTotal += row.Opening
+		closingTotal += row.Closing
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Code < rows[j].Code })
+	return rows, openingTotal, closingTotal, nil
 }
 
 // CashSummary lists month footings for is_cash accounts — the cash report

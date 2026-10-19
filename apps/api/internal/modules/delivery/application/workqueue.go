@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"mini-erp/internal/modules/delivery/infrastructure"
+	mediacontracts "mini-erp/internal/modules/media/contracts"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/timeutil"
@@ -47,6 +49,8 @@ type QueueOrder struct {
 	TotalOrdered   float64     `json:"totalOrdered"`
 	TotalDelivered float64     `json:"totalDelivered"`
 	PendingDrafts  int64       `json:"pendingDrafts"`
+	// ItemCount is the number of product lines still to ship (DL-02 card).
+	ItemCount int `json:"itemCount"`
 }
 
 // WaitingNote is one draft SJ whose physical papers have not come back.
@@ -60,6 +64,8 @@ type WaitingNote struct {
 	AgeDays      int    `json:"ageDays"`
 	DriverName   string `json:"driverName"`
 	VehiclePlate string `json:"vehiclePlate"`
+	// HasSignedDocument says the signed-SJ scan/photo is already uploaded (DL-01).
+	HasSignedDocument bool `json:"hasSignedDocument"`
 }
 
 // WorkQueue is the warehouse worklist: shippable orders + waiting drafts.
@@ -69,12 +75,21 @@ type WorkQueue struct {
 	Limit         int           `json:"limit"`
 }
 
-// WorkQueue composes the warehouse worklist (J3) in a bounded, constant
-// number of grouped reads (P3): 1 open-shipments read (sales) + 1 delivered
-// bulk + 1 draft counts + 1 waiting drafts — plus rare per-order fallbacks
-// when a draft SJ outlives its order's confirmed status. Text search filters
-// the capped worklist in memory (number/customer/SJ), like the finance
-// posting queue's operator-worklist cap.
+// queueScanPages bounds how many pages of open orders one request may scan to
+// fill the list after hiding unpaid prepaid orders (DL-02).
+const queueScanPages = 5
+
+// WorkQueue composes the warehouse worklist (J3) in a bounded number of grouped
+// reads (P3). DL-02: the search and both date filters run in SQL BEFORE the
+// page cut (orders beyond the first page are findable); an order on prepaid
+// terms that is not fully paid is hidden (no SJ may be made for it); each card
+// carries its item count.
+//
+// create_sj: per scanned page 1 open-shipments read (sales; search = number OR
+// customer through the party contract) + 1 delivered bulk + 1 draft counts, plus
+// 1 paid-for-orders read when the page has prepaid orders. waiting_return: 1
+// order-id search (only with a search term) + 1 notes read + 1 order summaries +
+// 1 signed-document presence read.
 func (s *Service) WorkQueue(ctx context.Context, branchID int64, search, from, to, age string, limit int) (*WorkQueue, error) {
 	if limit <= 0 || limit > QueueMaxLimit {
 		limit = QueueDefaultLimit
@@ -84,104 +99,146 @@ func (s *Service) WorkQueue(ctx context.Context, branchID int64, search, from, t
 	default:
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "age", Message: "harus today, gt_2, atau gt_7"}})
 	}
-	if strings.TrimSpace(from) != "" {
-		if _, err := timeutil.ParseDateInput(strings.TrimSpace(from)); err != nil {
+	from, to, search = strings.TrimSpace(from), strings.TrimSpace(to), strings.TrimSpace(search)
+	if from != "" {
+		if _, err := timeutil.ParseDateInput(from); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "from", Message: "format tanggal harus YYYY-MM-DD"}})
 		}
 	}
-	if strings.TrimSpace(to) != "" {
-		if _, err := timeutil.ParseDateInput(strings.TrimSpace(to)); err != nil {
+	if to != "" {
+		if _, err := timeutil.ParseDateInput(to); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "to", Message: "format tanggal harus YYYY-MM-DD"}})
 		}
 	}
 
-	open, err := s.sales.OpenShipments(ctx, branchID, limit)
+	createSJ, err := s.queueCreateSJ(ctx, branchID, search, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]int64, 0, len(open))
-	for _, o := range open {
-		ids = append(ids, o.OrderID)
-	}
-	delivered, err := s.repo.DeliveredQtyBulk(ctx, ids)
+	waitingOut, err := s.queueWaiting(ctx, branchID, search, from, to, age, limit)
 	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	drafts, err := s.repo.DraftCounts(ctx, ids)
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-	waiting, err := s.repo.WaitingReturn(ctx, branchID,
-		strings.TrimSpace(from), strings.TrimSpace(to), age, limit)
-	if err != nil {
-		return nil, apperror.Internal(err)
-	}
-
-	byOrder := make(map[int64]*salescontracts.OpenShipment, len(open))
-	for _, o := range open {
-		byOrder[o.OrderID] = o
-	}
-	needles := strings.Fields(strings.ToLower(strings.TrimSpace(search)))
-	match := func(haystacks ...string) bool {
-		if len(needles) == 0 {
-			return true
-		}
-		for _, n := range needles {
-			found := false
-			for _, h := range haystacks {
-				if strings.Contains(strings.ToLower(h), n) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-		return true
-	}
-
-	createSJ := make([]QueueOrder, 0, len(open))
-	for _, o := range open {
-		q := buildQueueOrder(o, delivered, drafts[o.OrderID])
-		if len(q.Lines) == 0 {
-			continue
-		}
-		if !match(o.Number, o.PartyName) {
-			continue
-		}
-		createSJ = append(createSJ, *q)
-	}
-
-	today := timeutil.NowUTC().In(timeutil.Jakarta)
-	waitingOut := make([]WaitingNote, 0, len(waiting))
-	for _, n := range waiting {
-		orderNumber, partyName := "", ""
-		if o, ok := byOrder[n.SalesOrderID]; ok {
-			orderNumber, partyName = o.Number, o.PartyName
-		} else {
-			// Rare edge: a draft SJ outliving its order's confirmed status
-			// (the order completed through another SJ). One fallback read.
-			so, err := s.sales.GetByID(ctx, n.SalesOrderID)
-			if err != nil {
-				return nil, err
-			}
-			if so == nil || so.BranchID != branchID {
-				continue
-			}
-			orderNumber, partyName = so.Number, so.PartyName
-		}
-		if !match(n.Number, orderNumber, partyName) {
-			continue
-		}
-		waitingOut = append(waitingOut, WaitingNote{
-			ID: n.ID, Number: n.Number, SalesOrderID: n.SalesOrderID,
-			OrderNumber: orderNumber, PartyName: partyName,
-			DeliveryDate: n.DeliveryDate, AgeDays: ageDays(n.DeliveryDate, today),
-			DriverName: n.DriverName, VehiclePlate: n.VehiclePlate,
-		})
+		return nil, err
 	}
 	return &WorkQueue{CreateSJ: createSJ, WaitingReturn: waitingOut, Limit: limit}, nil
+}
+
+// queueCreateSJ builds the shippable-orders tab.
+func (s *Service) queueCreateSJ(ctx context.Context, branchID int64, search, from, to string, limit int) ([]QueueOrder, error) {
+	out := make([]QueueOrder, 0, limit)
+	for page := 0; page < queueScanPages && len(out) < limit; page++ {
+		open, err := s.sales.OpenShipmentsFiltered(ctx, branchID, salescontracts.OpenShipmentFilter{
+			Search: search, From: from, To: to, Limit: limit, Offset: page * limit})
+		if err != nil {
+			return nil, err
+		}
+		if len(open) == 0 {
+			break
+		}
+		ids := make([]int64, 0, len(open))
+		var prepaid []int64
+		for _, o := range open {
+			ids = append(ids, o.OrderID)
+			if o.PaymentTerms == "prepaid" {
+				prepaid = append(prepaid, o.OrderID)
+			}
+		}
+		unpaid, err := s.unpaidPrepaid(ctx, open, prepaid)
+		if err != nil {
+			return nil, err
+		}
+		delivered, err := s.repo.DeliveredQtyBulk(ctx, ids)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		drafts, err := s.repo.DraftCounts(ctx, ids)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		for _, o := range open {
+			if unpaid[o.OrderID] || len(out) >= limit {
+				continue
+			}
+			q := buildQueueOrder(o, delivered, drafts[o.OrderID])
+			if len(q.Lines) == 0 {
+				continue
+			}
+			out = append(out, *q)
+		}
+		if len(open) < limit {
+			break // last page
+		}
+	}
+	return out, nil
+}
+
+// unpaidPrepaid marks the prepaid orders that still owe money: no shipment can
+// be drafted for them, so the warehouse queue must not offer them (DL-02).
+func (s *Service) unpaidPrepaid(ctx context.Context, open []*salescontracts.OpenShipment, prepaid []int64) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	if len(prepaid) == 0 || s.payments == nil {
+		return out, nil
+	}
+	paid, err := s.payments.PaidForOrders(ctx, paymentcontracts.OrderSales, prepaid)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	for _, o := range open {
+		if o.PaymentTerms == "prepaid" && o.GrandTotal-paid[o.OrderID] > 0 {
+			out[o.OrderID] = true
+		}
+	}
+	return out, nil
+}
+
+// queueWaiting builds the "waiting for the signed SJ" tab.
+func (s *Service) queueWaiting(ctx context.Context, branchID int64, search, from, to, age string, limit int) ([]WaitingNote, error) {
+	var orderIDs []int64
+	if search != "" {
+		ids, err := s.sales.SearchOrderIDs(ctx, branchID, search, 0)
+		if err != nil {
+			return nil, err
+		}
+		orderIDs = ids
+	}
+	waiting, err := s.repo.WaitingReturn(ctx, branchID, search, orderIDs, from, to, age, limit)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	if len(waiting) == 0 {
+		return []WaitingNote{}, nil
+	}
+	soIDs := make([]int64, 0, len(waiting))
+	noteIDs := make([]int64, 0, len(waiting))
+	for _, n := range waiting {
+		soIDs = append(soIDs, n.SalesOrderID)
+		noteIDs = append(noteIDs, n.ID)
+	}
+	orders, err := s.sales.SummariesByIDs(ctx, soIDs)
+	if err != nil {
+		return nil, err
+	}
+	signed := map[int64]string{}
+	if s.media != nil {
+		if signed, err = s.media.PrimaryByOwners(ctx, mediacontracts.OwnerDeliveryDocument, noteIDs); err != nil {
+			return nil, apperror.Internal(err)
+		}
+	}
+	today := timeutil.NowUTC().In(timeutil.Jakarta)
+	out := make([]WaitingNote, 0, len(waiting))
+	for _, n := range waiting {
+		o := orders[n.SalesOrderID]
+		if o == nil || o.BranchID != branchID {
+			continue
+		}
+		_, has := signed[n.ID]
+		out = append(out, WaitingNote{
+			ID: n.ID, Number: n.Number, SalesOrderID: n.SalesOrderID,
+			OrderNumber: o.Number, PartyName: o.PartyName,
+			DeliveryDate: n.DeliveryDate, AgeDays: ageDays(n.DeliveryDate, today),
+			DriverName: n.DriverName, VehiclePlate: n.VehiclePlate, HasSignedDocument: has,
+		})
+	}
+	return out, nil
 }
 
 // buildQueueOrder aggregates one open order's lines per (product, variant)
@@ -221,6 +278,7 @@ func buildQueueOrder(o *salescontracts.OpenShipment, delivered map[string]float6
 		q.TotalOrdered += row.Ordered
 		q.TotalDelivered += row.Delivered
 	}
+	q.ItemCount = len(q.Lines)
 	return q
 }
 

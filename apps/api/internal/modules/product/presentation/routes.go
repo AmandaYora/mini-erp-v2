@@ -3,22 +3,22 @@ package presentation
 import (
 	"net/http"
 
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	mediacontracts "mini-erp/internal/modules/media/contracts"
 )
 
 // importMaxBytes caps import workbooks at 10 MB.
 const importMaxBytes = 10 << 20
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
 // RegisterRoutes mounts product endpoints with explicit permissions.
 // Media endpoints close over the media contract client — bytes never cross
 // module internals.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, media mediacontracts.MediaClient, perm Permission) {
-	mux.Handle("GET /api/v1/products", perm("products.view", h.List))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, media mediacontracts.MediaClient, perm authcontracts.Permission) {
+	mux.Handle("GET /api/v1/products", perm("products.view",
+		func(w http.ResponseWriter, r *http.Request) { h.List(w, r, media) }))
 	mux.Handle("POST /api/v1/products", perm("products.create", h.Create))
 	mux.Handle("GET /api/v1/products/search-options", perm("products.view", h.SearchOptions))
+	mux.Handle("GET /api/v1/products/scan", perm("products.view", h.ScanLookup))
 	mux.Handle("GET /api/v1/products/qr-codes/export", perm("products.view", h.QRExport))
 	mux.Handle("GET /api/v1/products/{id}", perm("products.view", h.Get))
 	mux.Handle("GET /api/v1/products/{id}/qr", perm("products.view", h.QR))

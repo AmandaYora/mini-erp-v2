@@ -89,11 +89,17 @@ func (s *Service) GrossTurnoverBasis(ctx context.Context, year, month int) (*Tur
 	if !validYearMonth(year, month) {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "period", Message: "periode tidak valid"}})
 	}
+	return s.grossTurnoverBasisThrough(ctx, year, monthEnd(year, month))
+}
+
+// grossTurnoverBasisThrough accumulates the fiscal year's turnover from 1
+// January through `to` (a "YYYY-MM-DD 23:59:59" timestamp, FN-04: a tax package
+// may end on any day, not only a month end).
+func (s *Service) grossTurnoverBasisThrough(ctx context.Context, year int, to string) (*TurnoverBasis, error) {
 	// Bounds carry the TIME component. entry_date is DATETIME, so comparing
 	// it against a bare "YYYY-MM-DD" makes MySQL read the bound as midnight
 	// and silently drop everything booked later on the last day.
 	from := fmt.Sprintf("%04d-01-01 00:00:00", year)
-	to := monthEnd(year, month)
 	cutoff := to[:10]
 
 	rows, err := s.repo.TurnoverEntries(ctx, from, to)
@@ -256,10 +262,4 @@ func (b *TurnoverBasis) ceilingHeadroom() int64 {
 		return 0
 	}
 	return b.Ceiling - b.IncludedTurnover
-}
-
-// summaryRow is one labelled figure on the working paper's first sheet.
-type summaryRow struct {
-	Label string
-	Value string
 }

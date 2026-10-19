@@ -24,20 +24,6 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
-}
-
 func locationView(l *contracts.Location) map[string]any {
 	var parent any
 	if l.ParentID != nil {
@@ -45,7 +31,8 @@ func locationView(l *contracts.Location) map[string]any {
 	}
 	return map[string]any{
 		"id": l.ID, "branchId": l.BranchID, "code": l.Code, "name": l.Name,
-		"parentId": parent, "isSystem": l.IsSystem, "status": l.Status,
+		"parentId": parent, "isSystem": l.IsSystem, "kind": l.Kind, "status": l.Status,
+		"isPickingArea": l.IsPickingArea, "isPrimary": l.IsPrimary, "sortOrder": l.SortOrder,
 	}
 }
 
@@ -67,7 +54,21 @@ func contractBalanceView(b *contracts.Balance) map[string]any {
 
 // ListLocations handles GET /api/v1/stock/locations.
 func (h *Handler) ListLocations(w http.ResponseWriter, r *http.Request) {
-	locations, err := h.svc.ListLocations(r.Context(), branchID(r), r.URL.Query().Get("status"))
+	branchID := authcontracts.BranchID(r)
+	if raw := r.URL.Query().Get("branchId"); raw != "" {
+		target, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil || target <= 0 {
+			response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "branchId", Message: "tidak valid"}}))
+			return
+		}
+		// Another branch's locations (transfer destination) need access to it.
+		if err := h.svc.AuthorizeBranch(r.Context(), authcontracts.ActorID(r), branchID, target); err != nil {
+			response.FailErr(w, err)
+			return
+		}
+		branchID = target
+	}
+	locations, err := h.svc.ListLocations(r.Context(), branchID, r.URL.Query().Get("status"))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -82,16 +83,21 @@ func (h *Handler) ListLocations(w http.ResponseWriter, r *http.Request) {
 // CreateLocation handles POST /api/v1/stock/locations.
 func (h *Handler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Code     string `json:"code" validate:"required"`
-		Name     string `json:"name" validate:"required"`
-		ParentID *int64 `json:"parentId"`
+		Code          string `json:"code" validate:"required"`
+		Name          string `json:"name" validate:"required"`
+		ParentID      *int64 `json:"parentId"`
+		ForceTransfer bool   `json:"forceTransfer"`
+		IsPickingArea *bool  `json:"isPickingArea"`
+		IsPrimary     *bool  `json:"isPrimary"`
+		SortOrder     *int   `json:"sortOrder"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	l, err := h.svc.CreateLocation(r.Context(), actorID(r), branchID(r), application.LocationInput{
-		Code: in.Code, Name: in.Name, ParentID: in.ParentID,
+	l, err := h.svc.CreateLocation(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), application.LocationInput{
+		Code: in.Code, Name: in.Name, ParentID: in.ParentID, ForceTransfer: in.ForceTransfer,
+		IsPickingArea: in.IsPickingArea, IsPrimary: in.IsPrimary, SortOrder: in.SortOrder,
 	})
 	if err != nil {
 		response.FailErr(w, err)
@@ -108,15 +114,21 @@ func (h *Handler) UpdateLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name     string `json:"name" validate:"required"`
-		ParentID *int64 `json:"parentId"`
+		Code          string `json:"code"`
+		Name          string `json:"name" validate:"required"`
+		ParentID      *int64 `json:"parentId"`
+		ForceTransfer bool   `json:"forceTransfer"`
+		IsPickingArea *bool  `json:"isPickingArea"`
+		IsPrimary     *bool  `json:"isPrimary"`
+		SortOrder     *int   `json:"sortOrder"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	l, appErr := h.svc.UpdateLocation(r.Context(), actorID(r), branchID(r), id, application.LocationInput{
-		Name: in.Name, ParentID: in.ParentID,
+	l, appErr := h.svc.UpdateLocation(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, application.LocationInput{
+		Code: in.Code, Name: in.Name, ParentID: in.ParentID, ForceTransfer: in.ForceTransfer,
+		IsPickingArea: in.IsPickingArea, IsPrimary: in.IsPrimary, SortOrder: in.SortOrder,
 	})
 	if appErr != nil {
 		response.FailErr(w, appErr)
@@ -132,7 +144,7 @@ func (h *Handler) ArchiveLocation(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Lokasi"))
 		return
 	}
-	if appErr := h.svc.ArchiveLocation(r.Context(), actorID(r), branchID(r), id); appErr != nil {
+	if appErr := h.svc.ArchiveLocation(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -145,7 +157,7 @@ func (h *Handler) Balances(w http.ResponseWriter, r *http.Request) {
 	productID := queryInt(q.Get("productId"))
 	var out []any
 	if productID != 0 {
-		balances, err := h.svc.BalancesByProduct(r.Context(), branchID(r), productID)
+		balances, err := h.svc.BalancesByProduct(r.Context(), authcontracts.BranchID(r), productID)
 		if err != nil {
 			response.FailErr(w, err)
 			return
@@ -155,7 +167,24 @@ func (h *Handler) Balances(w http.ResponseWriter, r *http.Request) {
 			out = append(out, contractBalanceView(b))
 		}
 	} else {
-		out = []any{}
+		page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
+		list, total, err := h.svc.ListBalances(r.Context(), authcontracts.BranchID(r), application.BalanceQuery{
+			LocationID: queryInt(q.Get("locationId")), Search: q.Get("search"),
+			CriticalOnly: q.Get("criticalOnly") == "true", IncludeDamaged: q.Get("includeDamaged") == "true",
+			Negative: q.Get("negative") == "true", Page: page, Limit: limit})
+		if err != nil {
+			response.FailErr(w, err)
+			return
+		}
+		items := make([]any, 0, len(list))
+		for _, b := range list {
+			items = append(items, b)
+		}
+		response.Paginated(w, "Saldo stok", items, response.Meta{
+			Page: page, Limit: limit, Total: total,
+			TotalPages: pagination.TotalPages(total, limit),
+		})
+		return
 	}
 	response.OK(w, "Saldo stok", out)
 }
@@ -169,7 +198,7 @@ func (h *Handler) BalanceDetail(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Produk"))
 		return
 	}
-	balances, appErr := h.svc.BalancesByProduct(r.Context(), branchID(r), productID)
+	balances, appErr := h.svc.BalancesByProduct(r.Context(), authcontracts.BranchID(r), productID)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -185,7 +214,7 @@ func (h *Handler) BalanceDetail(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Movements(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	res, err := h.svc.ListMovements(r.Context(), branchID(r),
+	res, err := h.svc.ListMovements(r.Context(), authcontracts.BranchID(r),
 		queryInt(q.Get("productId")), queryInt(q.Get("variantId")), queryInt(q.Get("locationId")),
 		q.Get("type"), q.Get("dateFrom"), q.Get("dateTo"), page, limit)
 	if err != nil {
@@ -199,6 +228,7 @@ func (h *Handler) Movements(w http.ResponseWriter, r *http.Request) {
 			"locationId": m.LocationID, "direction": m.Direction, "type": m.Type,
 			"qty": m.Qty, "refType": m.RefType, "refId": m.RefID, "notes": m.Notes,
 			"createdBy": m.CreatedBy, "createdAt": m.CreatedAt,
+			"balanceBefore": m.BalanceBefore, "balanceAfter": m.BalanceAfter, "movedAt": m.MovedAt,
 		})
 	}
 	response.Paginated(w, "Mutasi stok", items, response.Meta{
@@ -227,7 +257,7 @@ func (h *Handler) Scan(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	res, err := h.svc.Scan(r.Context(), branchID(r), in.Barcode)
+	res, err := h.svc.Scan(r.Context(), authcontracts.BranchID(r), in.Barcode)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -246,7 +276,7 @@ func (h *Handler) Suggest(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	suggestions, shortfall, err := h.svc.Suggest(r.Context(), branchID(r), in.ProductID, in.VariantID, in.Qty)
+	suggestions, shortfall, err := h.svc.Suggest(r.Context(), authcontracts.BranchID(r), in.ProductID, in.VariantID, in.Qty)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -268,7 +298,7 @@ func (h *Handler) Hold(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	id, err := h.svc.Hold(r.Context(), actorID(r), branchID(r), in.ProductID, in.VariantID, in.LocationID, in.Qty, in.Key, in.TTLMinutes)
+	id, err := h.svc.Hold(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.ProductID, in.VariantID, in.LocationID, in.Qty, in.Key, in.TTLMinutes)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -285,7 +315,7 @@ func (h *Handler) Release(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if err := h.svc.Release(r.Context(), actorID(r), in.Key); err != nil {
+	if err := h.svc.Release(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.Key); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -309,7 +339,7 @@ func (h *Handler) Adjust(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if err := h.svc.Adjust(r.Context(), actorID(r), branchID(r), application.AdjustInput{
+	if err := h.svc.Adjust(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), application.AdjustInput{
 		ProductID: in.ProductID, VariantID: in.VariantID, Location: in.Location,
 		Mode: in.Mode, QtyAfter: in.QtyAfter, QtyDelta: in.QtyDelta,
 		Reason: in.Reason, Approver: in.Approver, ApproverP: in.ApproverP,
@@ -327,11 +357,15 @@ func (h *Handler) CreateTransfer(w http.ResponseWriter, r *http.Request) {
 		FromLocation int64  `json:"fromLocationId" validate:"required"`
 		ToLocation   int64  `json:"toLocationId" validate:"required"`
 		Notes        string `json:"notes"`
+		DriverName   string `json:"driverName"`
+		VehiclePlate string `json:"vehiclePlate"`
+		TransferDate string `json:"transferDate"`
 		Items        []struct {
-			ProductID int64   `json:"productId" validate:"required"`
-			VariantID int64   `json:"variantId" validate:"required"`
-			Qty       float64 `json:"qty" validate:"required"`
-			Notes     string  `json:"notes"`
+			ProductID  int64   `json:"productId" validate:"required"`
+			VariantID  int64   `json:"variantId" validate:"required"`
+			Qty        float64 `json:"qty" validate:"required"`
+			Notes      string  `json:"notes"`
+			ToLocation int64   `json:"toLocationId"`
 		} `json:"items" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
@@ -342,10 +376,17 @@ func (h *Handler) CreateTransfer(w http.ResponseWriter, r *http.Request) {
 	for _, it := range in.Items {
 		items = append(items, application.TransferItemInput{
 			ProductID: it.ProductID, VariantID: it.VariantID, Qty: it.Qty, Notes: it.Notes,
+			ToLocationID: it.ToLocation,
 		})
 	}
-	t, err := h.svc.CreateTransfer(r.Context(), actorID(r), branchID(r), in.ToBranchID,
-		in.FromLocation, in.ToLocation, in.Notes, items)
+	if err := h.svc.AuthorizeBranch(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.ToBranchID); err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	t, err := h.svc.CreateTransferWith(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.ToBranchID,
+		in.FromLocation, in.ToLocation, in.Notes, items, application.TransferMeta{
+			DriverName: in.DriverName, VehiclePlate: in.VehiclePlate, TransferDate: in.TransferDate, Enforced: true,
+		})
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -358,12 +399,14 @@ func transferView(t *infrastructure.Transfer) map[string]any {
 	for _, it := range t.Items {
 		items = append(items, map[string]any{
 			"productId": it.ProductID, "variantId": it.VariantID, "qty": it.Qty, "notes": it.Notes,
+			"toLocationId": it.ToLocation,
 		})
 	}
 	return map[string]any{
 		"id": t.ID, "number": t.Number, "fromBranchId": t.FromBranchID, "toBranchId": t.ToBranchID,
 		"fromLocationId": t.FromLocation, "toLocationId": t.ToLocation,
 		"status": t.Status, "items": items,
+		"notes": t.Notes, "driverName": t.DriverName, "vehiclePlate": t.VehiclePlate, "transferDate": t.TransferDate,
 	}
 }
 
@@ -374,7 +417,7 @@ func (h *Handler) GetTransfer(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Transfer"))
 		return
 	}
-	t, appErr := h.svc.GetTransfer(r.Context(), branchID(r), id)
+	t, appErr := h.svc.GetTransfer(r.Context(), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -391,10 +434,11 @@ func (h *Handler) MoveLocation(w http.ResponseWriter, r *http.Request) {
 		ToLocation   int64  `json:"toLocationId" validate:"required"`
 		Notes        string `json:"notes"`
 		Items        []struct {
-			ProductID int64   `json:"productId" validate:"required"`
-			VariantID int64   `json:"variantId" validate:"required"`
-			Qty       float64 `json:"qty" validate:"required"`
-			Notes     string  `json:"notes"`
+			ProductID  int64   `json:"productId" validate:"required"`
+			VariantID  int64   `json:"variantId" validate:"required"`
+			Qty        float64 `json:"qty" validate:"required"`
+			Notes      string  `json:"notes"`
+			ToLocation int64   `json:"toLocationId"`
 		} `json:"items" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
@@ -405,9 +449,10 @@ func (h *Handler) MoveLocation(w http.ResponseWriter, r *http.Request) {
 	for _, it := range in.Items {
 		items = append(items, application.TransferItemInput{
 			ProductID: it.ProductID, VariantID: it.VariantID, Qty: it.Qty, Notes: it.Notes,
+			ToLocationID: it.ToLocation,
 		})
 	}
-	t, err := h.svc.MoveLocation(r.Context(), actorID(r), branchID(r),
+	t, err := h.svc.MoveLocation(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r),
 		in.FromLocation, in.ToLocation, in.Notes, items)
 	if err != nil {
 		response.FailErr(w, err)
@@ -419,7 +464,7 @@ func (h *Handler) MoveLocation(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListTransfers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	res, err := h.svc.ListTransfers(r.Context(), branchID(r), q.Get("status"), page, limit)
+	res, err := h.svc.ListTransfersDir(r.Context(), authcontracts.BranchID(r), q.Get("status"), q.Get("direction"), page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -459,11 +504,11 @@ func (h *Handler) transition(w http.ResponseWriter, r *http.Request, action stri
 	var appErr error
 	switch action {
 	case "dispatch":
-		t, appErr = h.svc.DispatchTransfer(r.Context(), actorID(r), branchID(r), id)
+		t, appErr = h.svc.DispatchTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	case "receive":
-		t, appErr = h.svc.ReceiveTransfer(r.Context(), actorID(r), branchID(r), id)
+		t, appErr = h.svc.ReceiveTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	default:
-		t, appErr = h.svc.CancelTransfer(r.Context(), actorID(r), branchID(r), id)
+		t, appErr = h.svc.CancelTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	}
 	if appErr != nil {
 		response.FailErr(w, appErr)
@@ -477,28 +522,41 @@ func (h *Handler) transition(w http.ResponseWriter, r *http.Request, action stri
 
 // DamagedList handles GET /api/v1/stock/damaged.
 func (h *Handler) DamagedList(w http.ResponseWriter, r *http.Request) {
-	items, err := h.svc.DamagedList(r.Context(), branchID(r))
+	q := r.URL.Query()
+	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
+	res, err := h.svc.DamagedListPage(r.Context(), authcontracts.BranchID(r), page, limit, q.Get("empty") == "true")
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
-	out := make([]any, 0, len(items))
-	for _, b := range items {
-		out = append(out, balanceView(b))
+	out := make([]any, 0, len(res.Items))
+	for _, b := range res.Items {
+		v := balanceView(b.BalanceView)
+		v["estimatedUnitCost"], v["estimatedLoss"] = b.EstimatedUnitCost, b.EstimatedLoss
+		out = append(out, v)
 	}
-	response.OK(w, "Stok rusak", out)
+	// data carries the whole-set figures next to the page (header total + count).
+	totalPages := pagination.TotalPages(res.Total, limit)
+	response.Paginated(w, "Stok rusak", map[string]any{
+		"items": out, "total": res.Total, "withStock": res.WithStock, "empty": res.Empty,
+		"totalEstimatedLoss": res.TotalEstimatedLoss,
+		"page":               page, "limit": limit, "totalPages": totalPages,
+	}, response.Meta{Page: page, Limit: limit, Total: res.Total, TotalPages: totalPages})
 }
 
-func damagedInput(r *http.Request) (application.DamagedInput, *apperror.AppError) {
+func damagedInput(r *http.Request, locationOptional bool) (application.DamagedInput, *apperror.AppError) {
 	var in struct {
 		ProductID  int64   `json:"productId" validate:"required"`
 		VariantID  int64   `json:"variantId" validate:"required"`
-		LocationID int64   `json:"locationId" validate:"required"`
+		LocationID int64   `json:"locationId"`
 		Qty        float64 `json:"qty" validate:"required"`
 		Reason     string  `json:"reason"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		return application.DamagedInput{}, apperror.Validation("", fields)
+	}
+	if in.LocationID <= 0 && !locationOptional {
+		return application.DamagedInput{}, apperror.Validation("", []apperror.FieldError{{Field: "locationId", Message: "wajib diisi"}})
 	}
 	return application.DamagedInput{
 		ProductID: in.ProductID, VariantID: in.VariantID,
@@ -508,12 +566,12 @@ func damagedInput(r *http.Request) (application.DamagedInput, *apperror.AppError
 
 // DamagedMoveIn handles POST /api/v1/stock/damaged/move-in.
 func (h *Handler) DamagedMoveIn(w http.ResponseWriter, r *http.Request) {
-	in, appErr := damagedInput(r)
+	in, appErr := damagedInput(r, true)
 	if appErr != nil {
 		response.Fail(w, appErr)
 		return
 	}
-	if err := h.svc.MoveToDamaged(r.Context(), actorID(r), branchID(r), in); err != nil {
+	if err := h.svc.MoveToDamaged(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -522,12 +580,12 @@ func (h *Handler) DamagedMoveIn(w http.ResponseWriter, r *http.Request) {
 
 // DamagedRestore handles POST /api/v1/stock/damaged/restore.
 func (h *Handler) DamagedRestore(w http.ResponseWriter, r *http.Request) {
-	in, appErr := damagedInput(r)
+	in, appErr := damagedInput(r, false)
 	if appErr != nil {
 		response.Fail(w, appErr)
 		return
 	}
-	if err := h.svc.RestoreDamaged(r.Context(), actorID(r), branchID(r), in); err != nil {
+	if err := h.svc.RestoreDamaged(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in); err != nil {
 		response.FailErr(w, err)
 		return
 	}
@@ -547,7 +605,7 @@ func (h *Handler) DamagedWriteOff(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if err := h.svc.WriteOff(r.Context(), actorID(r), branchID(r), application.DamagedInput{
+	if err := h.svc.WriteOff(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), application.DamagedInput{
 		ProductID: in.ProductID, VariantID: in.VariantID, Qty: in.Qty, Reason: in.Reason,
 	}); err != nil {
 		response.FailErr(w, err)
@@ -560,7 +618,7 @@ func (h *Handler) DamagedWriteOff(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) OpeningTemplate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", `attachment; filename="template-saldo-awal.xlsx"`)
-	if err := h.svc.OpeningTemplate(w); err != nil {
+	if err := h.svc.OpeningTemplate(r.Context(), authcontracts.BranchID(r), w); err != nil {
 		return
 	}
 }
@@ -573,7 +631,7 @@ func (h *Handler) OpeningPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = fh.Close() }()
-	prev, err := h.svc.PreviewOpening(r.Context(), branchID(r), fh)
+	prev, err := h.svc.PreviewOpening(r.Context(), authcontracts.BranchID(r), fh)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -589,7 +647,7 @@ func (h *Handler) OpeningCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = fh.Close() }()
-	res, err := h.svc.CommitOpening(r.Context(), actorID(r), branchID(r), fh)
+	res, err := h.svc.CommitOpening(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), fh)
 	if err != nil {
 		response.FailErr(w, err)
 		return

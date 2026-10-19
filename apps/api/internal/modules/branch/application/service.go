@@ -7,12 +7,13 @@ import (
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/modules/branch/contracts"
 	"mini-erp/internal/modules/branch/infrastructure"
+	usercontracts "mini-erp/internal/modules/user/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
 	"mini-erp/internal/shared/timeutil"
-	usercontracts "mini-erp/internal/modules/user/contracts"
 )
 
 // Service implements contracts.BranchClient plus branch administration.
@@ -20,11 +21,21 @@ type Service struct {
 	repo  *infrastructure.Repository
 	users usercontracts.UserClient
 	audit auditcontracts.AuditClient
+	// authz is announced to when a branch's status changes: auth caches
+	// BranchActive on the session, and a closed branch must stop authorizing
+	// business routes on the next request, not after a TTL.
+	authz authcontracts.AuthzInvalidator
 }
 
 // NewService wires branch use cases.
 func NewService(repo *infrastructure.Repository, users usercontracts.UserClient, audit auditcontracts.AuditClient) *Service {
 	return &Service{repo: repo, users: users, audit: audit}
+}
+
+// SetAuthzInvalidator injects auth's invalidator from the composition root
+// (auth is built after branch, so it cannot be a constructor argument).
+func (s *Service) SetAuthzInvalidator(authz authcontracts.AuthzInvalidator) {
+	s.authz = authz
 }
 
 // GetByID resolves a branch or returns nil when missing.
@@ -56,18 +67,45 @@ type CreateBranchInput struct {
 	City    string
 	Phone   string
 	IsHead  bool
+	// DefaultLocationLabel names the system default stock location.
+	DefaultLocationLabel string
+}
+
+// MaxBranchCodeLength is the code limit (legacy parity, F3b-6; document
+// numbers embed the code and their columns are wide enough, migration 000054).
+const MaxBranchCodeLength = 50
+
+// validateBranchFields enforces the server-side column limits (KI-41: the
+// browser limit alone let overlong values through to a 500).
+func validateBranchFields(code, name, city, label string) error {
+	var fields []apperror.FieldError
+	if len([]rune(code)) > MaxBranchCodeLength {
+		fields = append(fields, apperror.FieldError{Field: "code", Message: "maksimal 50 karakter"})
+	}
+	if len([]rune(name)) > 255 {
+		fields = append(fields, apperror.FieldError{Field: "name", Message: "maksimal 255 karakter"})
+	}
+	if len([]rune(city)) > 120 {
+		fields = append(fields, apperror.FieldError{Field: "city", Message: "maksimal 120 karakter"})
+	}
+	if len([]rune(label)) > 150 {
+		fields = append(fields, apperror.FieldError{Field: "defaultLocationLabel", Message: "maksimal 150 karakter"})
+	}
+	if len(fields) > 0 {
+		return apperror.Validation("", fields)
+	}
+	return nil
 }
 
 // CreateBranch inserts the branch with all document sequences in one
-// transaction. The server enforces the 10-char code limit (KI-41: the
-// browser limit alone let overlong codes through to a 500).
+// transaction. The server enforces the code limit (KI-41).
 func (s *Service) CreateBranch(ctx context.Context, actorID int64, in CreateBranchInput) (*contracts.Branch, error) {
 	code := strings.ToUpper(strings.TrimSpace(in.Code))
 	if code == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "code", Message: "wajib diisi"}})
 	}
-	if len(code) > 10 {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "code", Message: "maksimal 10 karakter"}})
+	if err := validateBranchFields(code, strings.TrimSpace(in.Name), strings.TrimSpace(in.City), strings.TrimSpace(in.DefaultLocationLabel)); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "name", Message: "wajib diisi"}})
@@ -80,6 +118,7 @@ func (s *Service) CreateBranch(ctx context.Context, actorID int64, in CreateBran
 	id, err := s.repo.Create(ctx, &contracts.Branch{
 		Code: code, Name: strings.TrimSpace(in.Name), Address: in.Address,
 		City: in.City, Phone: in.Phone, IsHead: in.IsHead,
+		DefaultLocationLabel: strings.TrimSpace(in.DefaultLocationLabel),
 	}, actorID, infrastructure.AllDocKinds(), timeutil.NowUTC())
 	if err != nil {
 		return nil, dberr.Map(err)
@@ -104,6 +143,17 @@ type UpdateBranchInput struct {
 	Phone   string
 	Status  string
 	IsHead  bool
+	// DefaultLocationLabel names the system default stock location; empty
+	// keeps the current label.
+	DefaultLocationLabel string
+}
+
+// branchSnapshot is the audit view of a branch (F3b-8).
+func branchSnapshot(b *contracts.Branch) map[string]any {
+	return map[string]any{
+		"code": b.Code, "name": b.Name, "address": b.Address, "city": b.City, "phone": b.Phone,
+		"status": b.Status, "isHead": b.IsHead, "defaultLocationLabel": b.DefaultLocationLabel,
+	}
 }
 
 // UpdateBranch rewrites a branch. Closing (status=inactive) is a supported
@@ -126,8 +176,8 @@ func (s *Service) UpdateBranch(ctx context.Context, actorID, id int64, in Update
 	if code == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "code", Message: "wajib diisi"}})
 	}
-	if len(code) > 10 {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "code", Message: "maksimal 10 karakter"}})
+	if err := validateBranchFields(code, strings.TrimSpace(in.Name), strings.TrimSpace(in.City), strings.TrimSpace(in.DefaultLocationLabel)); err != nil {
+		return nil, err
 	}
 	if code != existing.Code {
 		if dup, err := s.repo.ExistsByCode(ctx, code, id); err != nil {
@@ -142,21 +192,32 @@ func (s *Service) UpdateBranch(ctx context.Context, actorID, id int64, in Update
 		}
 		existing.Code = code
 	}
+	beforeBranch := branchSnapshot(existing)
 	existing.Name = strings.TrimSpace(in.Name)
 	existing.Address = in.Address
 	existing.City = in.City
 	existing.Phone = in.Phone
 	existing.Status = in.Status
 	existing.IsHead = in.IsHead
+	if label := strings.TrimSpace(in.DefaultLocationLabel); label != "" {
+		existing.DefaultLocationLabel = label
+	}
 	if err := s.repo.Update(ctx, existing, actorID); err != nil {
 		return nil, apperror.Internal(err)
+	}
+	// Status may have flipped: sessions carrying BranchActive must rebuild.
+	if s.authz != nil {
+		s.authz.InvalidateAll()
 	}
 	b, err := s.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if s.audit != nil {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "branches.update", Entity: "branch", EntityID: id, BranchID: id, ActorID: actorID, Note: existing.Code})
+		_ = s.audit.Log(ctx, auditcontracts.Entry{
+			Action: "branches.update", Entity: "branch", EntityID: id, BranchID: id, ActorID: actorID, Note: existing.Code,
+			Before: beforeBranch, After: branchSnapshot(existing),
+		})
 	}
 	return b, nil
 }
@@ -284,6 +345,8 @@ func (s *Service) NextDocumentNumber(ctx context.Context, branchID int64, kind c
 		return fmt.Sprintf("RTB-%s/%s/%05d", branch.Code, year, n), nil
 	case contracts.DocStockTransfer:
 		return fmt.Sprintf("TRF-%s/%s/%05d", branch.Code, year, n), nil
+	case contracts.DocGoodsReceipt:
+		return fmt.Sprintf("GR-%s/%s/%05d", branch.Code, year, n), nil
 	default:
 		return "", apperror.Validation("", []apperror.FieldError{{Field: "kind", Message: "jenis dokumen tidak dikenal"}})
 	}

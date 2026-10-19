@@ -2,13 +2,12 @@ package presentation
 
 import (
 	"net/http"
+
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 )
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
 // RegisterRoutes mounts party endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission) {
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission) {
 	mux.Handle("GET /api/v1/customers", perm("customers.view", h.ListCustomers))
 	mux.Handle("POST /api/v1/customers", perm("customers.create", h.CreateCustomer))
 	mux.Handle("GET /api/v1/customers/{id}", perm("customers.view", h.GetCustomer))
@@ -28,7 +27,8 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission) {
 	mux.Handle("PUT /api/v1/customers/{id}/addresses/{addrId}", perm("customers.update", h.UpdateAddress))
 	mux.Handle("POST /api/v1/customers/{id}/addresses/{addrId}/archive", perm("customers.update", h.ArchiveAddress))
 
-	mux.Handle("GET /api/v1/member-types", perm("member_types.manage", h.ListMemberTypes))
+	mux.Handle("GET /api/v1/member-types", perm("member_types.view", h.ListMemberTypes))
+	mux.Handle("GET /api/v1/member-types/{id}/customer-count", perm("member_types.view", h.MemberTypeCustomerCount))
 	mux.Handle("POST /api/v1/member-types", perm("member_types.manage", h.CreateMemberType))
 	mux.Handle("PUT /api/v1/member-types/{id}", perm("member_types.manage", h.UpdateMemberType))
 	mux.Handle("POST /api/v1/member-types/{id}/archive", perm("member_types.manage", h.ArchiveMemberType))

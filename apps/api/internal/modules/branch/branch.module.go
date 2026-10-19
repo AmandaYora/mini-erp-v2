@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/modules/branch/application"
 	"mini-erp/internal/modules/branch/contracts"
 	"mini-erp/internal/modules/branch/infrastructure"
@@ -19,8 +20,10 @@ type Module struct {
 }
 
 // NewModule builds the branch module over its own tables.
-func NewModule(db *sql.DB, users usercontracts.UserClient, audit auditcontracts.AuditClient) *Module {
+// authz is the auth hub (nil = no auth wired, a no-op).
+func NewModule(db *sql.DB, users usercontracts.UserClient, audit auditcontracts.AuditClient, authz authcontracts.AuthzInvalidator) *Module {
 	svc := application.NewService(infrastructure.NewRepository(db), users, audit)
+	svc.SetAuthzInvalidator(authz)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc)}
 }
 
@@ -38,6 +41,6 @@ func (m *Module) Service() *application.Service {
 // my-access is login-only (no branches.view needed, no branch guard — it is
 // what lets a branchless session pick a branch), so it takes the bare
 // authn wrapper instead of perm.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, perm presentation.Permission, authn func(func(http.ResponseWriter, *http.Request)) http.Handler) {
+func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission, authn func(func(http.ResponseWriter, *http.Request)) http.Handler) {
 	presentation.RegisterRoutes(mux, m.handler, perm, authn)
 }

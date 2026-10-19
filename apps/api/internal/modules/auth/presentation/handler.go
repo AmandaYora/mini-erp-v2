@@ -2,12 +2,15 @@ package presentation
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 
 	"mini-erp/internal/modules/auth/application"
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/httpx"
+	"mini-erp/internal/shared/reqctx"
 	"mini-erp/internal/shared/response"
 )
 
@@ -22,29 +25,46 @@ func NewHandler(svc *application.Service) *Handler {
 }
 
 func clientIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
+	if info := reqctx.From(r.Context()); info != nil && info.IP != "" {
+		return info.IP
 	}
-	host := r.RemoteAddr
-	for i := len(host) - 1; i >= 0; i-- {
-		if host[i] == ':' {
-			return host[:i]
-		}
+	// Fallback when the middleware did not run (tests, direct handler use):
+	// SplitHostPort handles IPv6 "[::1]:1234" correctly, unlike manual
+	// colon scanning (F1-3).
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
-	return host
+	return r.RemoteAddr
 }
 
 // Login handles POST /api/v1/auth/login (public, rate-limited).
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	// identifier is a username OR an email (F3b-1). The legacy `username`
+	// field and an `email` field stay accepted for older clients.
 	var in struct {
-		Username string `json:"username" validate:"required"`
-		Password string `json:"password" validate:"required"`
+		Identifier string `json:"identifier"`
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		Password   string `json:"password" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	res, err := h.svc.Login(r.Context(), in.Username, in.Password, clientIP(r))
+	identifier := strings.TrimSpace(in.Identifier)
+	if identifier == "" {
+		identifier = strings.TrimSpace(in.Username)
+	}
+	if identifier == "" {
+		identifier = strings.TrimSpace(in.Email)
+	}
+	if identifier == "" {
+		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "identifier", Message: "username atau email wajib diisi"}}))
+		return
+	}
+	res, err := h.svc.LoginWithMeta(r.Context(), identifier, in.Password, application.LoginMeta{
+		IP: clientIP(r), UserAgent: r.UserAgent(),
+	})
 	if err != nil {
 		response.FailErr(w, err)
 		return

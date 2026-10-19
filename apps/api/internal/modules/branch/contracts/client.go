@@ -13,6 +13,9 @@ type Branch struct {
 	Phone   string
 	Status  string // active | inactive
 	IsHead  bool
+	// DefaultLocationLabel names the branch's system default stock location
+	// (legacy default location label, F3b-6).
+	DefaultLocationLabel string
 }
 
 // DocKind identifies a document sequence owned by its own module but
@@ -28,6 +31,7 @@ const (
 	DocSalesReturn    DocKind = "sales_return"
 	DocPurchaseReturn DocKind = "purchase_return"
 	DocStockTransfer  DocKind = "stock_transfer"
+	DocGoodsReceipt   DocKind = "goods_receipt"
 )
 
 // BranchClient is the public surface of the branch module.

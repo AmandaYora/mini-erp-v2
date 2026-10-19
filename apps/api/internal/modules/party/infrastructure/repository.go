@@ -3,45 +3,57 @@ package infrastructure
 import (
 	"context"
 	"database/sql"
-	"strings"
+	"errors"
 
 	"mini-erp/internal/modules/party/contracts"
+	"mini-erp/internal/modules/party/infrastructure/sqlc"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Repository owns the party module tables.
 type Repository struct {
 	db *sql.DB
+	q  *sqlc.Queries
 }
 
 // NewRepository wires the module's storage.
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{db: db, q: sqlc.New(db)}
 }
 
-const partyColumns = `id, code, party_type, name, phone, email, address_text,
-	notes, member_type_id, status`
-
-func scanParty(row *sql.Row, p *contracts.Party) error {
-	var phone, email, address, notes sql.NullString
-	var member sql.NullInt64
-	err := row.Scan(&p.ID, &p.Code, &p.Type, &p.Name, &phone, &email,
-		&address, &notes, &member, &p.Status)
-	p.Phone, p.Email, p.Address, p.Notes = phone.String, email.String, address.String, notes.String
-	if member.Valid {
-		p.MemberTypeID = &member.Int64
-	}
-	return err
+// MaxCodeNumber returns the highest numeric suffix among codes shaped
+// prefix+digits for the party type (archived rows included: a retired code
+// is never reused), 0 when none.
+func (r *Repository) MaxCodeNumber(ctx context.Context, partyType, prefix string) (int64, error) {
+	return r.q.MaxPartyCodeNumber(ctx, sqlc.MaxPartyCodeNumberParams{
+		Start: int32(len(prefix) + 1), PartyType: partyType, CodeLike: prefix + "%", StartCheck: int32(len(prefix) + 1),
+	})
 }
 
 // GetParty returns nil, nil when missing.
 func (r *Repository) GetParty(ctx context.Context, id int64) (*contracts.Party, error) {
-	p := &contracts.Party{}
-	err := scanParty(r.db.QueryRowContext(ctx,
-		"SELECT "+partyColumns+" FROM parties WHERE id = ?", id), p)
-	if err == sql.ErrNoRows {
+	row, err := r.q.GetParty(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	return toParty(row), nil
+}
+
+// uniqueNonZero drops zero and duplicate ids, keeping first-seen order.
+func uniqueNonZero(ids []int64) []int64 {
+	seen := make(map[int64]bool, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // NamesByIDs resolves party names for many ids in one grouped read — the
@@ -49,57 +61,47 @@ func (r *Repository) GetParty(ctx context.Context, id int64) (*contracts.Party, 
 // absent from the map (best-effort, like the per-row loops it replaces).
 func (r *Repository) NamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error) {
 	out := map[int64]string{}
-	seen := map[int64]bool{}
-	args := make([]any, 0, len(ids))
-	for _, id := range ids {
-		if id == 0 || seen[id] {
-			continue
-		}
-		seen[id] = true
-		args = append(args, id)
-	}
-	if len(args) == 0 {
+	uniq := uniqueNonZero(ids)
+	if len(uniq) == 0 {
 		return out, nil
 	}
-	placeholders := strings.Repeat("?,", len(args)-1) + "?"
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, name FROM parties WHERE id IN ("+placeholders+")", args...)
+	rows, err := r.q.ListPartyNames(ctx, uniq)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
-		}
-		out[id] = name
+	for _, row := range rows {
+		out[row.ID] = row.Name
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // PartyByCode returns nil, nil when the (code, type) pair is free.
 func (r *Repository) PartyByCode(ctx context.Context, code, partyType string) (*contracts.Party, error) {
-	p := &contracts.Party{}
-	err := scanParty(r.db.QueryRowContext(ctx,
-		"SELECT "+partyColumns+" FROM parties WHERE code = ? AND party_type = ?", code, partyType), p)
-	if err == sql.ErrNoRows {
+	row, err := r.q.GetPartyByCode(ctx, sqlc.GetPartyByCodeParams{Code: code, PartyType: partyType})
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	return toParty(sqlc.GetPartyRow(row)), nil
 }
 
 // CreateParty inserts a party row.
 func (r *Repository) CreateParty(ctx context.Context, p *contracts.Party, actorID int64) (int64, error) {
-	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO parties
-		 (code, party_type, name, phone, email, address_text, notes, member_type_id,
-		  status, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-		p.Code, p.Type, p.Name, nullIfEmpty(p.Phone), nullIfEmpty(p.Email),
-		nullIfEmpty(p.Address), nullIfEmpty(p.Notes), nullInt64(p.MemberTypeID),
-		actorID, actorID)
+	res, err := r.q.InsertParty(ctx, sqlc.InsertPartyParams{
+		Code:         p.Code,
+		PartyType:    p.Type,
+		Name:         p.Name,
+		Phone:        nullStr(p.Phone),
+		Email:        nullStr(p.Email),
+		AddressText:  nullStr(p.Address),
+		Notes:        nullStr(p.Notes),
+		MemberTypeID: nullPtr(p.MemberTypeID),
+		Attributes:   encodeAttributes(p.Attributes),
+		CreatedBy:    actor(actorID),
+		UpdatedBy:    actor(actorID),
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -108,165 +110,69 @@ func (r *Repository) CreateParty(ctx context.Context, p *contracts.Party, actorI
 
 // UpdateParty rewrites a party row.
 func (r *Repository) UpdateParty(ctx context.Context, p *contracts.Party, actorID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE parties SET name = ?, phone = ?, email = ?, address_text = ?, notes = ?,
-		 member_type_id = ?, updated_at = UTC_TIMESTAMP(6), updated_by = ? WHERE id = ?`,
-		p.Name, nullIfEmpty(p.Phone), nullIfEmpty(p.Email), nullIfEmpty(p.Address),
-		nullIfEmpty(p.Notes), nullInt64(p.MemberTypeID), actorID, p.ID)
-	return err
+	return r.q.UpdateParty(ctx, sqlc.UpdatePartyParams{
+		Name:         p.Name,
+		Phone:        nullStr(p.Phone),
+		Email:        nullStr(p.Email),
+		AddressText:  nullStr(p.Address),
+		Notes:        nullStr(p.Notes),
+		MemberTypeID: nullPtr(p.MemberTypeID),
+		Attributes:   encodeAttributes(p.Attributes),
+		Now:          timeutil.NowUTC(),
+		UpdatedBy:    actor(actorID),
+		ID:           p.ID,
+	})
 }
 
 // SetPartyStatus flips active/archived with timestamp.
 func (r *Repository) SetPartyStatus(ctx context.Context, id int64, status string, actorID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE parties SET status = ?,
-		 archived_at = CASE WHEN ? = 'archived' THEN UTC_TIMESTAMP(6) ELSE NULL END,
-		 updated_at = UTC_TIMESTAMP(6), updated_by = ? WHERE id = ?`,
-		status, status, actorID, id)
-	return err
-}
-
-// ListParties searches code/name/phone per word, filtered by type + status.
-// Member codes ride along via LEFT JOIN — one query, no per-row lookup.
-func (r *Repository) ListParties(ctx context.Context, partyType, search, status string, limit, offset int) ([]*contracts.Party, error) {
-	conds := []string{"p.party_type = ?"}
-	args := []any{partyType}
-	if status != "" {
-		conds = append(conds, "p.status = ?")
-		args = append(args, status)
+	now := timeutil.NowUTC()
+	if status == "archived" {
+		return r.q.ArchiveParty(ctx, sqlc.ArchivePartyParams{
+			Status: status, ArchivedAt: sql.NullTime{Time: now, Valid: true}, Now: now, UpdatedBy: actor(actorID), ID: id,
+		})
 	}
-	for _, word := range strings.Fields(search) {
-		like := "%" + word + "%"
-		conds = append(conds, "(p.code LIKE ? OR p.name LIKE ? OR p.phone LIKE ?)")
-		args = append(args, like, like, like)
-	}
-	args = append(args, limit, offset)
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT p.id, p.code, p.party_type, p.name, p.phone, p.email, p.address_text,
-			p.notes, p.member_type_id, p.status, m.code
-		 FROM parties p LEFT JOIN member_types m ON m.id = p.member_type_id
-		 WHERE `+strings.Join(conds, " AND ")+
-			` ORDER BY p.name ASC LIMIT ? OFFSET ?`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*contracts.Party
-	for rows.Next() {
-		p := &contracts.Party{}
-		var phone, email, address, notes, memberCode sql.NullString
-		var member sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.Code, &p.Type, &p.Name, &phone, &email,
-			&address, &notes, &member, &p.Status, &memberCode); err != nil {
-			return nil, err
-		}
-		p.Phone, p.Email, p.Address, p.Notes = phone.String, email.String, address.String, notes.String
-		if member.Valid {
-			p.MemberTypeID = &member.Int64
-		}
-		p.MemberCode = memberCode.String
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
-// CountParties counts the List filter set.
-func (r *Repository) CountParties(ctx context.Context, partyType, search, status string) (int64, error) {
-	conds := []string{"party_type = ?"}
-	args := []any{partyType}
-	if status != "" {
-		conds = append(conds, "status = ?")
-		args = append(args, status)
-	}
-	for _, word := range strings.Fields(search) {
-		like := "%" + word + "%"
-		conds = append(conds, "(code LIKE ? OR name LIKE ? OR phone LIKE ?)")
-		args = append(args, like, like, like)
-	}
-	var total int64
-	err := r.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM parties WHERE "+strings.Join(conds, " AND "), args...).Scan(&total)
-	return total, err
-}
-
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func nullInt64(v *int64) any {
-	if v == nil {
-		return nil
-	}
-	return *v
+	return r.q.RestoreParty(ctx, sqlc.RestorePartyParams{Status: status, Now: now, UpdatedBy: actor(actorID), ID: id})
 }
 
 // --- addresses --------------------------------------------------------------
 
-const addressColumns = `id, party_id, label, recipient_name, phone,
-	address_text, is_primary, sort_order, status`
-
-func scanAddress(row *sql.Row, a *contracts.Address) error {
-	var label, recipient, phone sql.NullString
-	var primary int
-	err := row.Scan(&a.ID, &a.PartyID, &label, &recipient, &phone,
-		&a.Text, &primary, &a.SortOrder, &a.Status)
-	a.Label, a.Recipient, a.Phone = label.String, recipient.String, phone.String
-	a.IsPrimary = primary == 1
-	return err
-}
-
 // AddressesByParty returns a party's active addresses, primary first.
 func (r *Repository) AddressesByParty(ctx context.Context, partyID int64) ([]*contracts.Address, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT "+addressColumns+" FROM party_delivery_addresses WHERE party_id = ? AND status = 'active' ORDER BY is_primary DESC, sort_order ASC, id ASC",
-		partyID)
+	rows, err := r.q.ListActiveAddressesByParty(ctx, partyID)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 	var out []*contracts.Address
-	for rows.Next() {
-		a := &contracts.Address{}
-		var label, recipient, phone sql.NullString
-		var primary int
-		if err := rows.Scan(&a.ID, &a.PartyID, &label, &recipient, &phone,
-			&a.Text, &primary, &a.SortOrder, &a.Status); err != nil {
-			return nil, err
-		}
-		a.Label, a.Recipient, a.Phone = label.String, recipient.String, phone.String
-		a.IsPrimary = primary == 1
-		out = append(out, a)
+	for _, row := range rows {
+		out = append(out, toAddress(sqlc.GetAddressRow(row)))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // AddressByID returns nil, nil when missing or foreign-owned.
 func (r *Repository) AddressByID(ctx context.Context, partyID, addrID int64) (*contracts.Address, error) {
-	a := &contracts.Address{}
-	err := scanAddress(r.db.QueryRowContext(ctx,
-		"SELECT "+addressColumns+" FROM party_delivery_addresses WHERE id = ? AND party_id = ?",
-		addrID, partyID), a)
-	if err == sql.ErrNoRows {
+	row, err := r.q.GetAddress(ctx, sqlc.GetAddressParams{ID: addrID, PartyID: partyID})
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return a, err
+	if err != nil {
+		return nil, err
+	}
+	return toAddress(row), nil
 }
 
 // CreateAddress inserts an address row.
 func (r *Repository) CreateAddress(ctx context.Context, a *contracts.Address) (int64, error) {
-	def := 0
-	if a.IsPrimary {
-		def = 1
-	}
-	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO party_delivery_addresses
-		 (party_id, label, recipient_name, phone, address_text, is_primary, sort_order, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-		a.PartyID, nullIfEmpty(a.Label), nullIfEmpty(a.Recipient), nullIfEmpty(a.Phone),
-		a.Text, def, a.SortOrder)
+	res, err := r.q.InsertAddress(ctx, sqlc.InsertAddressParams{
+		PartyID:       a.PartyID,
+		Label:         nullStr(a.Label),
+		RecipientName: nullStr(a.Recipient),
+		Phone:         nullStr(a.Phone),
+		AddressText:   a.Text,
+		IsPrimary:     a.IsPrimary,
+		SortOrder:     int32(a.SortOrder),
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -275,150 +181,81 @@ func (r *Repository) CreateAddress(ctx context.Context, a *contracts.Address) (i
 
 // UpdateAddress rewrites an address row.
 func (r *Repository) UpdateAddress(ctx context.Context, a *contracts.Address) error {
-	def := 0
-	if a.IsPrimary {
-		def = 1
-	}
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE party_delivery_addresses SET label = ?, recipient_name = ?, phone = ?,
-		 address_text = ?, is_primary = ?, sort_order = ?, updated_at = UTC_TIMESTAMP(6)
-		 WHERE id = ?`,
-		nullIfEmpty(a.Label), nullIfEmpty(a.Recipient), nullIfEmpty(a.Phone),
-		a.Text, def, a.SortOrder, a.ID)
-	return err
+	return r.q.UpdateAddress(ctx, sqlc.UpdateAddressParams{
+		Label:         nullStr(a.Label),
+		RecipientName: nullStr(a.Recipient),
+		Phone:         nullStr(a.Phone),
+		AddressText:   a.Text,
+		IsPrimary:     a.IsPrimary,
+		SortOrder:     int32(a.SortOrder),
+		Now:           timeutil.NowUTC(),
+		ID:            a.ID,
+	})
 }
 
 // ClearPrimary clears every primary flag of the party (exclusive-primary step).
 func (r *Repository) ClearPrimary(ctx context.Context, partyID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE party_delivery_addresses SET is_primary = 0 WHERE party_id = ? AND status = 'active'",
-		partyID)
-	return err
+	return r.q.ClearPrimaryAddresses(ctx, partyID)
 }
 
 // PromoteOldestActive marks the oldest active address primary (keeps the
 // exactly-one-primary invariant after the primary is archived).
 func (r *Repository) PromoteOldestActive(ctx context.Context, partyID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE party_delivery_addresses SET is_primary = 1 WHERE id = (
-			SELECT id FROM (SELECT id FROM party_delivery_addresses
-			WHERE party_id = ? AND status = 'active' ORDER BY id ASC LIMIT 1) t)`,
-		partyID)
-	return err
+	return r.q.PromoteOldestActiveAddress(ctx, partyID)
 }
 
 // SetAddressStatus flips active/archived with timestamp.
 func (r *Repository) SetAddressStatus(ctx context.Context, addrID int64, status string) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE party_delivery_addresses SET status = ?,
-		 archived_at = CASE WHEN ? = 'archived' THEN UTC_TIMESTAMP(6) ELSE NULL END,
-		 updated_at = UTC_TIMESTAMP(6) WHERE id = ?`,
-		status, status, addrID)
-	return err
+	now := timeutil.NowUTC()
+	if status == "archived" {
+		return r.q.ArchiveAddress(ctx, sqlc.ArchiveAddressParams{
+			Status: status, ArchivedAt: sql.NullTime{Time: now, Valid: true}, Now: now, ID: addrID,
+		})
+	}
+	return r.q.RestoreAddress(ctx, sqlc.RestoreAddressParams{Status: status, Now: now, ID: addrID})
 }
 
 // --- member types -----------------------------------------------------------
 
-func scanMemberType(row *sql.Row, m *contracts.MemberType) error {
-	return row.Scan(&m.ID, &m.Code, &m.Name, &m.Description, &m.PriceBasis,
-		&m.Direction, &m.AdjustmentType, &m.Adjustment, &m.RoundingMode,
-		&m.RoundingStep, &m.Status)
-}
-
-const memberColumns = `id, code, name, description_text, price_basis,
-	price_adjustment_direction, price_adjustment_type, price_adjustment_value,
-	rounding_mode, rounding_increment, status`
-
 // MemberTypeByID returns nil, nil when missing.
 func (r *Repository) MemberTypeByID(ctx context.Context, id int64) (*contracts.MemberType, error) {
-	m := &contracts.MemberType{}
-	var desc sql.NullString
-	var step sql.NullFloat64
-	err := r.db.QueryRowContext(ctx,
-		"SELECT "+memberColumns+" FROM member_types WHERE id = ?", id).
-		Scan(&m.ID, &m.Code, &m.Name, &desc, &m.PriceBasis, &m.Direction,
-			&m.AdjustmentType, &m.Adjustment, &m.RoundingMode, &step, &m.Status)
-	if err == sql.ErrNoRows {
+	row, err := r.q.GetMemberType(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	m.Description = desc.String
-	m.RoundingStep = step.Float64
-	return m, nil
+	return toMemberType(row), nil
 }
 
 // MemberTypeByCode returns nil, nil when the code is free.
 func (r *Repository) MemberTypeByCode(ctx context.Context, code string) (*contracts.MemberType, error) {
-	m := &contracts.MemberType{}
-	var desc sql.NullString
-	var step sql.NullFloat64
-	err := r.db.QueryRowContext(ctx,
-		"SELECT "+memberColumns+" FROM member_types WHERE code = ?", code).
-		Scan(&m.ID, &m.Code, &m.Name, &desc, &m.PriceBasis, &m.Direction,
-			&m.AdjustmentType, &m.Adjustment, &m.RoundingMode, &step, &m.Status)
-	if err == sql.ErrNoRows {
+	row, err := r.q.GetMemberTypeByCode(ctx, code)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	m.Description = desc.String
-	m.RoundingStep = step.Float64
-	return m, nil
-}
-
-// ListMemberTypes searches code/name per word.
-func (r *Repository) ListMemberTypes(ctx context.Context, search, status string) ([]*contracts.MemberType, error) {
-	var conds []string
-	var args []any
-	if status != "" {
-		conds = append(conds, "status = ?")
-		args = append(args, status)
-	}
-	for _, word := range strings.Fields(search) {
-		like := "%" + word + "%"
-		conds = append(conds, "(code LIKE ? OR name LIKE ?)")
-		args = append(args, like, like)
-	}
-	where := ""
-	if len(conds) > 0 {
-		where = "WHERE " + strings.Join(conds, " AND ")
-	}
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT "+memberColumns+" FROM member_types "+where+" ORDER BY name ASC", args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []*contracts.MemberType
-	for rows.Next() {
-		m := &contracts.MemberType{}
-		var desc sql.NullString
-		var step sql.NullFloat64
-		if err := rows.Scan(&m.ID, &m.Code, &m.Name, &desc, &m.PriceBasis, &m.Direction,
-			&m.AdjustmentType, &m.Adjustment, &m.RoundingMode, &step, &m.Status); err != nil {
-			return nil, err
-		}
-		m.Description = desc.String
-		m.RoundingStep = step.Float64
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return toMemberType(sqlc.GetMemberTypeRow(row)), nil
 }
 
 // CreateMemberType inserts a member type row.
 func (r *Repository) CreateMemberType(ctx context.Context, m *contracts.MemberType, actorID int64) (int64, error) {
-	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO member_types
-		 (code, name, description_text, price_basis, price_adjustment_direction,
-		  price_adjustment_type, price_adjustment_value, rounding_mode, rounding_increment,
-		  status, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-		m.Code, m.Name, nullIfEmpty(m.Description), m.PriceBasis, m.Direction,
-		m.AdjustmentType, m.Adjustment, m.RoundingMode, nullStep(m.RoundingStep),
-		actorID, actorID)
+	res, err := r.q.InsertMemberType(ctx, sqlc.InsertMemberTypeParams{
+		Code:                     m.Code,
+		Name:                     m.Name,
+		DescriptionText:          nullStr(m.Description),
+		PriceBasis:               m.PriceBasis,
+		PriceAdjustmentDirection: m.Direction,
+		PriceAdjustmentType:      m.AdjustmentType,
+		PriceAdjustmentValue:     m.Adjustment,
+		RoundingMode:             m.RoundingMode,
+		RoundingIncrement:        nullStep(m.RoundingStep),
+		CreatedBy:                actor(actorID),
+		UpdatedBy:                actor(actorID),
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -427,30 +264,52 @@ func (r *Repository) CreateMemberType(ctx context.Context, m *contracts.MemberTy
 
 // UpdateMemberType rewrites a member type row.
 func (r *Repository) UpdateMemberType(ctx context.Context, m *contracts.MemberType, actorID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE member_types SET name = ?, description_text = ?, price_basis = ?,
-		 price_adjustment_direction = ?, price_adjustment_type = ?, price_adjustment_value = ?,
-		 rounding_mode = ?, rounding_increment = ?,
-		 updated_at = UTC_TIMESTAMP(6), updated_by = ? WHERE id = ?`,
-		m.Name, nullIfEmpty(m.Description), m.PriceBasis, m.Direction,
-		m.AdjustmentType, m.Adjustment, m.RoundingMode, nullStep(m.RoundingStep),
-		actorID, m.ID)
-	return err
+	return r.q.UpdateMemberType(ctx, sqlc.UpdateMemberTypeParams{
+		Name:                     m.Name,
+		DescriptionText:          nullStr(m.Description),
+		PriceBasis:               m.PriceBasis,
+		PriceAdjustmentDirection: m.Direction,
+		PriceAdjustmentType:      m.AdjustmentType,
+		PriceAdjustmentValue:     m.Adjustment,
+		RoundingMode:             m.RoundingMode,
+		RoundingIncrement:        nullStep(m.RoundingStep),
+		Now:                      timeutil.NowUTC(),
+		UpdatedBy:                actor(actorID),
+		ID:                       m.ID,
+	})
+}
+
+// CountActiveCustomersByMemberType counts active customers on a member type
+// (the ones whose price would fall back to standard when the type is archived).
+func (r *Repository) CountActiveCustomersByMemberType(ctx context.Context, memberTypeID int64) (int64, error) {
+	return r.q.CountActiveCustomersByMemberType(ctx, sql.NullInt64{Int64: memberTypeID, Valid: true})
 }
 
 // SetMemberTypeStatus flips active/archived with timestamp.
 func (r *Repository) SetMemberTypeStatus(ctx context.Context, id int64, status string, actorID int64) error {
-	_, err := r.db.ExecContext(ctx,
-		`UPDATE member_types SET status = ?,
-		 archived_at = CASE WHEN ? = 'archived' THEN UTC_TIMESTAMP(6) ELSE NULL END,
-		 updated_at = UTC_TIMESTAMP(6), updated_by = ? WHERE id = ?`,
-		status, status, actorID, id)
-	return err
+	now := timeutil.NowUTC()
+	if status == "archived" {
+		return r.q.ArchiveMemberType(ctx, sqlc.ArchiveMemberTypeParams{
+			Status: status, ArchivedAt: sql.NullTime{Time: now, Valid: true}, Now: now, UpdatedBy: actor(actorID), ID: id,
+		})
+	}
+	return r.q.RestoreMemberType(ctx, sqlc.RestoreMemberTypeParams{Status: status, Now: now, UpdatedBy: actor(actorID), ID: id})
 }
 
-func nullStep(v float64) any {
-	if v == 0 {
-		return nil
+// LabelsByIDs resolves code+name for many parties in one grouped read, for
+// readers that show both. Duplicate and zero ids collapse before the query.
+func (r *Repository) LabelsByIDs(ctx context.Context, ids []int64) (map[int64]contracts.Label, error) {
+	out := map[int64]contracts.Label{}
+	uniq := uniqueNonZero(ids)
+	if len(uniq) == 0 {
+		return out, nil
 	}
-	return v
+	rows, err := r.q.ListPartyLabels(ctx, uniq)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.ID] = contracts.Label{Code: row.Code, Name: row.Name}
+	}
+	return out, nil
 }

@@ -23,20 +23,6 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
-}
-
 func receiptView(rec *contracts.GoodsReceipt) map[string]any {
 	items := make([]any, 0, len(rec.Items))
 	for _, it := range rec.Items {
@@ -46,11 +32,18 @@ func receiptView(rec *contracts.GoodsReceipt) map[string]any {
 			"qty": it.Qty, "qtyBase": it.QtyBase,
 		})
 	}
-	return map[string]any{
+	v := map[string]any{
 		"id": rec.ID, "branchId": rec.BranchID, "purchaseOrderId": rec.PurchaseOrderID,
-		"orderNumber": rec.OrderNumber, "receivedAt": rec.ReceivedAt,
+		"number": rec.Number, "status": rec.Status,
+		"supplierDeliveryNumber": rec.SupplierDeliveryNumber,
+		"orderNumber":            rec.OrderNumber, "receivedAt": rec.ReceivedAt,
 		"notes": rec.Notes, "items": items,
+		"lineCount": rec.LineCount, "receivedBy": rec.CreatedBy, "receivedByName": rec.ReceivedByName,
 	}
+	if rec.Payment != nil {
+		v["payment"] = map[string]any{"id": rec.Payment.ID, "number": rec.Payment.Number}
+	}
+	return v
 }
 
 // List handles GET /api/v1/goods-receipts.
@@ -63,7 +56,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			poID = id
 		}
 	}
-	res, err := h.svc.List(r.Context(), branchID(r), poID, page, limit)
+	res, err := h.svc.List(r.Context(), authcontracts.BranchID(r), poID, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -90,7 +83,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		response.FailErr(w, appErr)
 		return
 	}
-	if rec == nil || rec.BranchID != branchID(r) {
+	if rec == nil || rec.BranchID != authcontracts.BranchID(r) {
 		response.Fail(w, apperror.NotFound("Penerimaan"))
 		return
 	}
@@ -100,13 +93,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /api/v1/goods-receipts.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		PurchaseOrderID int64  `json:"purchaseOrderId" validate:"required"`
-		ReceivedAt      string `json:"receivedAt"`
-		Notes           string `json:"notes"`
-		Items           []struct {
+		PurchaseOrderID        int64              `json:"purchaseOrderId" validate:"required"`
+		ReceivedAt             string             `json:"receivedAt"`
+		Notes                  string             `json:"notes"`
+		SupplierDeliveryNumber string             `json:"supplierDeliveryNumber"`
+		ClientRef              string             `json:"clientRef"`
+		Settlement             *settlementPayload `json:"settlement"`
+		Items                  []struct {
 			ProductID  int64   `json:"productId" validate:"required"`
 			VariantID  int64   `json:"variantId" validate:"required"`
-			LocationID int64   `json:"locationId" validate:"required"`
+			LocationID int64   `json:"locationId"`
 			UOM        string  `json:"uom" validate:"required"`
 			Qty        float64 `json:"qty" validate:"required"`
 		} `json:"items" validate:"required"`
@@ -122,7 +118,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			LocationID: l.LocationID, UOM: l.UOM, Qty: l.Qty,
 		})
 	}
-	rec, err := h.svc.Create(r.Context(), actorID(r), branchID(r), in.PurchaseOrderID, in.ReceivedAt, in.Notes, lines)
+	st, ok := settlementFrom(w, r, in.Settlement)
+	if !ok {
+		return
+	}
+	rec, err := h.svc.Create(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.PurchaseOrderID, in.ReceivedAt, in.Notes, lines,
+		application.WithSupplierDeliveryNumber(in.SupplierDeliveryNumber),
+		application.WithClientRef(in.ClientRef),
+		application.WithSettlement(st))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -130,17 +133,84 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	response.Created(w, "Penerimaan dicatat", receiptView(rec))
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
+// Complete handles POST /api/v1/goods-receipts/{id}/complete: re-run the
+// stock posting of a pending receipt (idempotent).
+func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Penerimaan"))
+		return
+	}
+	var in struct {
+		Settlement *settlementPayload `json:"settlement"`
+	}
+	if r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
+		if fields := httpx.DecodeJSON(r, &in); fields != nil {
+			response.Fail(w, apperror.Validation("", fields))
+			return
+		}
+	}
+	st, ok := settlementFrom(w, r, in.Settlement)
+	if !ok {
+		return
+	}
+	rec, appErr := h.svc.Complete(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, st)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Penerimaan diposting", receiptView(rec))
+}
 
-// guarded adapts the branch guard into func-style middleware.
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
+// Discard handles POST /api/v1/goods-receipts/{id}/discard: abandon a
+// pending receipt, undoing any stock it already moved.
+func (h *Handler) Discard(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Penerimaan"))
+		return
+	}
+	rec, appErr := h.svc.Discard(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Penerimaan dibatalkan", receiptView(rec))
+}
+
+type settlementPayload struct {
+	Mode        string `json:"mode"`
+	Method      string `json:"method"`
+	PaymentDate string `json:"paymentDate"`
+	Reference   string `json:"reference"`
+	DueDate     string `json:"dueDate"`
+	Notes       string `json:"notes"`
+}
+
+// settlementFrom converts the optional settlement body, checking the caller may
+// do what it asks: paying needs payment.create, converting to net terms needs
+// purchasing.update.
+func settlementFrom(w http.ResponseWriter, r *http.Request, in *settlementPayload) (*application.Settlement, bool) {
+	if in == nil {
+		return nil, true
+	}
+	need := "payment.create"
+	if in.Mode == application.SettleSwitchToNet {
+		need = "purchasing.update"
+	}
+	if sess := authcontracts.SessionFromContext(r.Context()); sess == nil || !sess.HasPermission(need) {
+		response.Fail(w, apperror.Forbidden())
+		return nil, false
+	}
+	return &application.Settlement{Mode: in.Mode, Method: in.Method, PaymentDate: in.PaymentDate,
+		Reference: in.Reference, DueDate: in.DueDate, Notes: in.Notes}, true
 }
 
 // RegisterRoutes mounts goodsreceipt endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/goods-receipts", perm("goodsreceipt.view", guarded(h.List, branchGuard)))
-	mux.Handle("POST /api/v1/goods-receipts", perm("goodsreceipt.create", guarded(h.Create, branchGuard)))
-	mux.Handle("GET /api/v1/goods-receipts/{id}", perm("goodsreceipt.view", guarded(h.Get, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/goods-receipts", perm("goodsreceipt.view", authcontracts.Guard(h.List, branchGuard)))
+	mux.Handle("POST /api/v1/goods-receipts", perm("goodsreceipt.create", authcontracts.Guard(h.Create, branchGuard)))
+	mux.Handle("GET /api/v1/goods-receipts/{id}", perm("goodsreceipt.view", authcontracts.Guard(h.Get, branchGuard)))
+	mux.Handle("POST /api/v1/goods-receipts/{id}/complete", perm("goodsreceipt.create", authcontracts.Guard(h.Complete, branchGuard)))
+	mux.Handle("POST /api/v1/goods-receipts/{id}/discard", perm("goodsreceipt.create", authcontracts.Guard(h.Discard, branchGuard)))
 }

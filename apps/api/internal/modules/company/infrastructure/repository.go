@@ -3,52 +3,52 @@ package infrastructure
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"mini-erp/internal/modules/company/contracts"
+	"mini-erp/internal/modules/company/infrastructure/sqlc"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Repository owns the company module tables (both singletons).
 type Repository struct {
 	db *sql.DB
+	q  *sqlc.Queries
 }
 
 // NewRepository wires the module's storage.
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db}
+	return &Repository{db: db, q: sqlc.New(db)}
 }
 
 // GetProfile returns the singleton profile, or nil when never saved.
 func (r *Repository) GetProfile(ctx context.Context) (*contracts.Profile, error) {
-	p := &contracts.Profile{}
-	var legal, address, city, phone, email, taxID sql.NullString
-	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, legal_name, address, city, phone, email, tax_id
-		 FROM company_profile ORDER BY id ASC LIMIT 1`).
-		Scan(&p.ID, &p.Name, &legal, &address, &city, &phone, &email, &taxID)
-	if err == sql.ErrNoRows {
+	row, err := r.q.GetCompanyProfile(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	p.LegalName, p.Address, p.City = legal.String, address.String, city.String
-	p.Phone, p.Email, p.TaxID = phone.String, email.String, taxID.String
-	return p, nil
+	return toProfile(row), nil
 }
 
 // SaveProfile inserts the first profile or updates the singleton row.
-func (r *Repository) SaveProfile(ctx context.Context, p *contracts.Profile, actorID int64) (*contracts.Profile, error) {
+// The optional hook runs in the same transaction so the audit row co-commits
+// with the write (ADR-0011).
+func (r *Repository) SaveProfile(ctx context.Context, p *contracts.Profile, actorID int64, hook func(ctx context.Context, tx *sql.Tx, id int64) error) (*contracts.Profile, error) {
 	existing, err := r.GetProfile(ctx)
 	if err != nil {
 		return nil, err
 	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	tq := r.q.WithTx(tx)
 	if existing == nil {
-		res, err := r.db.ExecContext(ctx,
-			`INSERT INTO company_profile
-			 (name, legal_name, address, city, phone, email, tax_id, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			p.Name, nullIfEmpty(p.LegalName), nullIfEmpty(p.Address), nullIfEmpty(p.City),
-			nullIfEmpty(p.Phone), nullIfEmpty(p.Email), nullIfEmpty(p.TaxID), actorID, actorID)
+		res, err := tq.InsertCompanyProfile(ctx, insertParams(p, actorID))
 		if err != nil {
 			return nil, err
 		}
@@ -57,64 +57,57 @@ func (r *Repository) SaveProfile(ctx context.Context, p *contracts.Profile, acto
 			return nil, err
 		}
 		p.ID = id
-		return p, nil
+		if hook != nil {
+			if err := hook(ctx, tx, id); err != nil {
+				return nil, err
+			}
+		}
+		return p, tx.Commit()
 	}
-	_, err = r.db.ExecContext(ctx,
-		`UPDATE company_profile SET name = ?, legal_name = ?, address = ?, city = ?,
-		 phone = ?, email = ?, tax_id = ?, updated_at = UTC_TIMESTAMP(6), updated_by = ?
-		 WHERE id = ?`,
-		p.Name, nullIfEmpty(p.LegalName), nullIfEmpty(p.Address), nullIfEmpty(p.City),
-		nullIfEmpty(p.Phone), nullIfEmpty(p.Email), nullIfEmpty(p.TaxID), actorID, existing.ID)
-	if err != nil {
+	if err := tq.UpdateCompanyProfile(ctx, updateParams(p, actorID, existing.ID, timeutil.NowUTC())); err != nil {
 		return nil, err
 	}
 	p.ID = existing.ID
-	return p, nil
+	if hook != nil {
+		if err := hook(ctx, tx, existing.ID); err != nil {
+			return nil, err
+		}
+	}
+	return p, tx.Commit()
 }
 
 // GetSettings returns all settings as key → raw JSON.
 func (r *Repository) GetSettings(ctx context.Context) (map[string]string, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT setting_key, setting_value FROM company_settings")
+	rows, err := r.q.ListCompanySettings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	out := map[string]string{}
-	for rows.Next() {
-		var key string
-		var value sql.NullString
-		if err := rows.Scan(&key, &value); err != nil {
-			return nil, err
-		}
-		out[key] = value.String
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.SettingKey] = row.SettingValue.String
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SaveSettings merges the given keys (upsert per key). Keys NOT provided are
 // left untouched — a single-setting call must never wipe its siblings (KI-30).
-func (r *Repository) SaveSettings(ctx context.Context, settings map[string]string, actorID int64) error {
+func (r *Repository) SaveSettings(ctx context.Context, settings map[string]string, actorID int64, hook func(ctx context.Context, tx *sql.Tx) error) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	tq := r.q.WithTx(tx)
+	now := timeutil.NowUTC()
 	for key, value := range settings {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO company_settings (setting_key, setting_value, updated_by)
-			 VALUES (?, ?, ?)
-			 ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value),
-			 updated_at = UTC_TIMESTAMP(6), updated_by = VALUES(updated_by)`,
-			key, nullIfEmpty(value), actorID); err != nil {
+		if err := tq.UpsertCompanySetting(ctx, settingParams(key, value, actorID, now)); err != nil {
+			return err
+		}
+	}
+	if hook != nil {
+		if err := hook(ctx, tx); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
-}
-
-func nullIfEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }

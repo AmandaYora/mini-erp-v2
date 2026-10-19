@@ -31,3 +31,26 @@ func TestOffsetTotalPages(t *testing.T) {
 		t.Fatal("bad total pages")
 	}
 }
+
+func TestParseDisplayLimit(t *testing.T) {
+	cases := []struct {
+		raw      string
+		def, max int
+		want     int
+	}{
+		{"", 0, 100, 0},
+		{"abc", 5, 100, 5},
+		{"0", 5, 100, 5},
+		{"-3", 5, 100, 5},
+		{"7", 0, 100, 7},
+		{"100", 0, 100, 100},
+		{"101", 0, 100, 100},
+		{"99999999999", 0, 100, 100},
+		{"500", 0, 0, 500}, // max 0 = unbounded
+	}
+	for _, c := range cases {
+		if got := ParseDisplayLimit(c.raw, c.def, c.max); got != c.want {
+			t.Errorf("ParseDisplayLimit(%q,%d,%d)=%d want %d", c.raw, c.def, c.max, got, c.want)
+		}
+	}
+}

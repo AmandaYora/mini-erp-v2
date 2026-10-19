@@ -3,6 +3,7 @@ package presentation
 import (
 	"net/http"
 
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/modules/user/application"
 	"mini-erp/internal/modules/user/contracts"
 	"mini-erp/internal/shared/apperror"
@@ -27,12 +28,15 @@ type branchPayload struct {
 }
 
 type userPayload struct {
-	Username string          `json:"username" validate:"required"`
-	Email    *string         `json:"email,omitempty" validate:"omitempty,email"`
-	FullName string          `json:"fullName" validate:"required"`
-	Password string          `json:"password,omitempty"`
-	RoleIDs  []int64         `json:"roleIds"`
-	Branches []branchPayload `json:"branches"`
+	Username string  `json:"username" validate:"required"`
+	Email    *string `json:"email,omitempty" validate:"omitempty,email"`
+	FullName string  `json:"fullName" validate:"required"`
+	Phone    string  `json:"phone,omitempty"`
+	// DisplayTitle is the optional job title (legacy display_title).
+	DisplayTitle string          `json:"displayTitle,omitempty"`
+	Password     string          `json:"password,omitempty"`
+	RoleIDs      []int64         `json:"roleIds"`
+	Branches     []branchPayload `json:"branches"`
 }
 
 func toAccess(in []branchPayload) []contracts.BranchAccess {
@@ -51,21 +55,46 @@ func userView(u *contracts.User) map[string]any {
 	return map[string]any{
 		"id": u.ID, "username": u.Username, "email": email,
 		"fullName": u.FullName, "status": u.Status,
+		"phone": u.Phone, "displayTitle": u.DisplayTitle,
 	}
+}
+
+// listUserView extends userView with the list-only decoration (U-01): role
+// and branch labels plus lastLoginAt (null = never logged in).
+func listUserView(u *contracts.User, m *application.UserListMeta) map[string]any {
+	view := userView(u)
+	roles := make([]any, 0)
+	branches := make([]any, 0)
+	if m != nil {
+		for _, r := range m.Roles {
+			roles = append(roles, map[string]any{"id": r.ID, "name": r.Name})
+		}
+		for _, b := range m.Branches {
+			branches = append(branches, map[string]any{"id": b.ID, "name": b.Name, "isDefault": b.IsDefault})
+		}
+	}
+	view["roles"] = roles
+	view["branches"] = branches
+	if u.LastLoginAt != nil {
+		view["lastLoginAt"] = u.LastLoginAt.Format("2006-01-02 15:04:05")
+	} else {
+		view["lastLoginAt"] = nil
+	}
+	return view
 }
 
 // ListUsers handles GET /api/v1/users.
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	res, err := h.svc.ListUsers(r.Context(), q.Get("search"), q.Get("status"), page, limit)
+	res, err := h.svc.ListUsers(r.Context(), authcontracts.ActorID(r), q.Get("search"), q.Get("status"), page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
 	items := make([]any, 0, len(res.Users))
 	for _, u := range res.Users {
-		items = append(items, userView(u))
+		items = append(items, listUserView(u, res.Meta[u.ID]))
 	}
 	response.Paginated(w, "Data pengguna", items, response.Meta{
 		Page: page, Limit: limit, Total: res.Total,
@@ -81,13 +110,9 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Pengguna"))
 		return
 	}
-	u, appErr := h.svc.GetByID(r.Context(), id)
+	u, appErr := h.svc.GetUser(r.Context(), authcontracts.ActorID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
-		return
-	}
-	if u == nil {
-		response.Fail(w, apperror.NotFound("Pengguna"))
 		return
 	}
 	view := userView(u)
@@ -121,8 +146,9 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "password", Message: "wajib diisi"}}))
 		return
 	}
-	u, appErr := h.svc.CreateUser(r.Context(), actorID(r), application.CreateUserInput{
+	u, appErr := h.svc.CreateUser(r.Context(), authcontracts.ActorID(r), application.CreateUserInput{
 		Username: in.Username, Email: in.Email, FullName: in.FullName,
+		Phone: in.Phone, DisplayTitle: in.DisplayTitle,
 		Password: in.Password, RoleIDs: in.RoleIDs, Branches: toAccess(in.Branches),
 	})
 	if appErr != nil {
@@ -144,8 +170,9 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	u, appErr := h.svc.UpdateUser(r.Context(), actorID(r), id, application.UpdateUserInput{
+	u, appErr := h.svc.UpdateUser(r.Context(), authcontracts.ActorID(r), id, application.UpdateUserInput{
 		Username: in.Username, Email: in.Email, FullName: in.FullName,
+		Phone: in.Phone, DisplayTitle: in.DisplayTitle,
 		RoleIDs: in.RoleIDs, Branches: toAccess(in.Branches),
 	})
 	if appErr != nil {
@@ -169,7 +196,7 @@ func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if appErr := h.svc.SetStatus(r.Context(), actorID(r), id, in.Status); appErr != nil {
+	if appErr := h.svc.SetStatus(r.Context(), authcontracts.ActorID(r), id, in.Status); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -190,7 +217,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if appErr := h.svc.ChangePassword(r.Context(), actorID(r), id, in.Password); appErr != nil {
+	if appErr := h.svc.ChangePassword(r.Context(), authcontracts.ActorID(r), id, in.Password); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -199,7 +226,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 // ListRoles handles GET /api/v1/roles.
 func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	roles, appErr := h.svc.List(r.Context())
+	roles, appErr := h.svc.ListRoles(r.Context(), authcontracts.ActorID(r))
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -212,6 +239,26 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	response.OK(w, "Data role", items)
+}
+
+// GetRole handles GET /api/v1/roles/{id}: the role with its permission codes
+// (the matrix UI seeds its checkboxes from this, never from a guess).
+func (h *Handler) GetRole(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Role"))
+		return
+	}
+	d, appErr := h.svc.GetRoleDetail(r.Context(), authcontracts.ActorID(r), id)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Data role", map[string]any{
+		"id": d.Role.ID, "code": d.Role.Code, "name": d.Role.Name,
+		"description": d.Role.Description, "isSystem": d.Role.IsSystem,
+		"locked": d.Locked, "permissions": d.Permissions,
+	})
 }
 
 // ListPermissions handles GET /api/v1/permissions (full catalog for the
@@ -240,7 +287,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	role, appErr := h.svc.CreateRole(r.Context(), actorID(r), application.CreateRoleInput{
+	role, appErr := h.svc.CreateRole(r.Context(), authcontracts.ActorID(r), application.CreateRoleInput{
 		Code: in.Code, Name: in.Name, Description: in.Description,
 	})
 	if appErr != nil {
@@ -267,7 +314,7 @@ func (h *Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	role, appErr := h.svc.UpdateRole(r.Context(), actorID(r), id, in.Name, in.Description)
+	role, appErr := h.svc.UpdateRole(r.Context(), authcontracts.ActorID(r), id, in.Name, in.Description)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -284,7 +331,7 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Role"))
 		return
 	}
-	if appErr := h.svc.DeleteRole(r.Context(), actorID(r), id); appErr != nil {
+	if appErr := h.svc.DeleteRole(r.Context(), authcontracts.ActorID(r), id); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
@@ -305,7 +352,7 @@ func (h *Handler) SetRolePermissions(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	if appErr := h.svc.SetRolePermissions(r.Context(), actorID(r), id, in.Permissions); appErr != nil {
+	if appErr := h.svc.SetRolePermissions(r.Context(), authcontracts.ActorID(r), id, in.Permissions); appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}

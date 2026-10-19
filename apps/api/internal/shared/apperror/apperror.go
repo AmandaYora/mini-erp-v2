@@ -7,6 +7,7 @@ type Code string
 const (
 	CodeValidation   Code = "validation_failed"
 	CodeUnauthorized Code = "unauthorized"
+	CodeRefreshRaced Code = "refresh_raced"
 	CodeForbidden    Code = "forbidden"
 	CodeNotFound     Code = "not_found"
 	CodeConflict     Code = "conflict"
@@ -41,7 +42,7 @@ func HTTPStatus(c Code) int {
 	switch c {
 	case CodeValidation:
 		return 400
-	case CodeUnauthorized:
+	case CodeUnauthorized, CodeRefreshRaced:
 		return 401
 	case CodeForbidden:
 		return 403

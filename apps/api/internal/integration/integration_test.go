@@ -6,7 +6,9 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,14 +16,19 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
+	"mini-erp/internal/bootstrap"
 	"mini-erp/internal/config"
+	"mini-erp/internal/modules/assistant"
 	"mini-erp/internal/modules/audit"
+	"mini-erp/internal/modules/auth"
 	"mini-erp/internal/modules/branch"
 	branchapp "mini-erp/internal/modules/branch/application"
 	"mini-erp/internal/modules/company"
+	"mini-erp/internal/modules/dashboard"
 	"mini-erp/internal/modules/delivery"
 	"mini-erp/internal/modules/finance"
 	"mini-erp/internal/modules/goodsreceipt"
@@ -33,12 +40,15 @@ import (
 	productapp "mini-erp/internal/modules/product/application"
 	"mini-erp/internal/modules/purchasereturn"
 	"mini-erp/internal/modules/purchasing"
+	"mini-erp/internal/modules/reporting"
 	"mini-erp/internal/modules/sales"
 	salesapp "mini-erp/internal/modules/sales/application"
 	"mini-erp/internal/modules/salesreturn"
 	"mini-erp/internal/modules/stock"
 	stockapp "mini-erp/internal/modules/stock/application"
 	"mini-erp/internal/modules/user"
+	"mini-erp/internal/shared/signedurl"
+	"mini-erp/internal/testutil/dsnguard"
 )
 
 // mods mirrors cmd/server/main.go wiring over the test database.
@@ -48,6 +58,8 @@ type mods struct {
 	user           *user.Module
 	branch         *branch.Module
 	company        *company.Module
+	auth           *auth.Module
+	assistant      *assistant.Module
 	media          *media.Module
 	product        *product.Module
 	party          *party.Module
@@ -60,67 +72,159 @@ type mods struct {
 	purchasereturn *purchasereturn.Module
 	payment        *payment.Module
 	finance        *finance.Module
+	dashboard      *dashboard.Module
+	reporting      *reporting.Module
 }
 
 var testMods *mods
 
-// testDBDSN reads TEST_DB_DSN or defaults to localhost. The database must
-// exist or be creatable by these credentials (CI: grant CREATE).
+// testDBDSN reads TEST_DB_DSN or defaults to the restricted account that
+// scripts/test-db.mjs creates (it can only touch mini_erp_test, so a wrong DSN
+// cannot reach another project's database on a shared MySQL server).
 func testDBDSN() string {
 	if v := os.Getenv("TEST_DB_DSN"); v != "" {
 		return v
 	}
-	return "root:@tcp(localhost:3306)/mini_erp_test"
+	return "mini_erp_test:mini_erp_test@tcp(127.0.0.1:3306)/mini_erp_test"
 }
 
-func splitDSN(dsn string) (server, name string) {
-	name = dsn
-	if i := strings.LastIndex(dsn, "/"); i >= 0 {
-		server, name = dsn[:i+1], dsn[i+1:]
-	}
-	if i := strings.Index(name, "?"); i >= 0 {
-		name = name[:i]
-	}
-	return server, name
-}
+func splitDSN(dsn string) (server, name string) { return dsnguard.Split(dsn) }
 
-func truncateAll(t *testing.T, db *sql.DB, dbName string) {
-	t.Helper()
-	rows, err := db.Query(
+// metaTablePrefix marks bookkeeping tables of this harness; truncateAll and
+// the rebuild path leave them alone.
+const metaTablePrefix = "_it_"
+
+// baseTables lists the application tables of the connected database.
+func baseTables(ctx context.Context, conn *sql.Conn, dbName string) ([]string, error) {
+	rows, err := conn.QueryContext(ctx,
 		`SELECT table_name FROM information_schema.tables WHERE table_schema = ? AND table_type = 'BASE TABLE'`, dbName)
 	if err != nil {
-		t.Fatalf("list tables: %v", err)
+		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	var tables []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			t.Fatalf("scan table: %v", err)
+			return nil, err
 		}
 		tables = append(tables, name)
 	}
-	_ = rows.Close()
-	if _, err := db.Exec("SET FOREIGN_KEY_CHECKS=0"); err != nil {
+	return tables, rows.Err()
+}
+
+// truncateAll empties every application table. It runs on ONE dedicated
+// connection (SET FOREIGN_KEY_CHECKS is per session, so a pooled connection
+// could silently lose it) and re-checks the live database name first.
+func truncateAll(t *testing.T, db *sql.DB, dbName string) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	var live string
+	if err := conn.QueryRowContext(ctx, `SELECT DATABASE()`).Scan(&live); err != nil {
+		t.Fatalf("select database: %v", err)
+	}
+	if err := dsnguard.CheckName(live); err != nil {
+		t.Fatalf("%v", err)
+	}
+	tables, err := baseTables(ctx, conn, dbName)
+	if err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=0"); err != nil {
 		t.Fatalf("fk off: %v", err)
 	}
+	defer func() { _, _ = conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=1") }()
 	for _, tbl := range tables {
-		if _, err := db.Exec("TRUNCATE TABLE `" + tbl + "`"); err != nil {
+		if strings.HasPrefix(tbl, metaTablePrefix) || strings.HasPrefix(tbl, "legacy_") || strings.HasPrefix(tbl, "etl_") {
+			continue
+		}
+		if _, err := conn.ExecContext(ctx, "TRUNCATE TABLE `"+tbl+"`"); err != nil {
 			t.Fatalf("truncate %s: %v", tbl, err)
 		}
 	}
-	if _, err := db.Exec("SET FOREIGN_KEY_CHECKS=1"); err != nil {
-		t.Fatalf("fk on: %v", err)
+}
+
+// dropAllTables removes every table (including bookkeeping) from the connected
+// database. It never drops the database itself.
+func dropAllTables(ctx context.Context, db *sql.DB, dbName string) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = conn.Close() }()
+	var live string
+	if err := conn.QueryRowContext(ctx, `SELECT DATABASE()`).Scan(&live); err != nil {
+		return err
+	}
+	if err := dsnguard.CheckName(live); err != nil {
+		return err
+	}
+	tables, err := baseTables(ctx, conn, dbName)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=0"); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS=1") }()
+	for _, tbl := range tables {
+		if _, err := conn.ExecContext(ctx, "DROP TABLE IF EXISTS `"+tbl+"`"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// schemaHash fingerprints the ordered migration contents so a changed schema
+// forces a rebuild instead of silently reusing a stale test database.
+func schemaHash(dir string, names []string) (string, error) {
+	h := sha256.New()
+	for _, name := range names {
+		raw, err := os.ReadFile(dir + "/" + name)
+		if err != nil {
+			return "", err
+		}
+		h.Write([]byte(name))
+		h.Write([]byte{0})
+		h.Write(raw)
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func TestMain(m *testing.M) {
 	dsn := testDBDSN()
+	// Guard first: nothing below (DROP/CREATE/TRUNCATE) may run against a
+	// database that is not a *_test database on this machine.
+	if err := dsnguard.Check(dsn, os.Getenv("ALLOW_REMOTE_TEST_DB") != ""); err != nil {
+		fmt.Println("integration: DSN ditolak:", err)
+		os.Exit(2)
+	}
 	serverDSN, dbName := splitDSN(dsn)
 	server, err := sql.Open("mysql", serverDSN)
 	if err != nil {
 		fmt.Println("integration: open server:", err)
 		os.Exit(1)
 	}
+	// Without MySQL fail loudly (a silent skip would look like a green run).
+	// INTEGRATION_OPTIONAL=1 is for laptops without a database; CI must not set it.
+	pingCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := server.PingContext(pingCtx); err != nil {
+		cancel()
+		if os.Getenv("INTEGRATION_OPTIONAL") != "" {
+			fmt.Println("integration: MySQL tidak terjangkau, test integrasi DILEWATI (INTEGRATION_OPTIONAL=1):", err)
+			os.Exit(0)
+		}
+		fmt.Println("integration: MySQL tidak terjangkau:", err)
+		fmt.Println("integration: nyalakan dengan `node scripts/test-db.mjs up`, atau set INTEGRATION_OPTIONAL=1 untuk melewati.")
+		os.Exit(1)
+	}
+	cancel()
 	// TESTDB_REBUILD=1 drops first (schema changed: re-migrate from zero).
 	if os.Getenv("TESTDB_REBUILD") != "" {
 		if _, err := server.Exec("DROP DATABASE IF EXISTS `" + dbName + "`"); err != nil {
@@ -140,16 +244,22 @@ func TestMain(m *testing.M) {
 	if strings.Contains(mdsn, "?") {
 		sep = "&"
 	}
-	mdsn += sep + "multiStatements=true&parseTime=true"
+	// READ COMMITTED + UTC mirror production (database.ensureParams); a test
+	// DB on the server default (REPEATABLE READ) would hide or invent races.
+	mdsn += sep + "multiStatements=true&parseTime=true" +
+		"&transaction_isolation=%27READ-COMMITTED%27&time_zone=%27%2B00%3A00%27"
 	db, err := sql.Open("mysql", mdsn)
 	if err != nil {
 		fmt.Println("integration: open db:", err)
 		os.Exit(1)
 	}
-	// Apply migrations once via a throwaway testing.T shim.
-	t := &testing.T{}
-	_ = t
-	entries, err := os.ReadDir("../../migrations")
+	// Mirror production pool bounds (F2a-11): concurrency tests must prove
+	// the code works with 25 connections, not with an unbounded pool that
+	// hides exhaustion (Error 1040) on the shared server.
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	const migrationsDir = "../../migrations"
+	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		fmt.Println("integration: read migrations:", err)
 		os.Exit(1)
@@ -161,17 +271,25 @@ func TestMain(m *testing.M) {
 		}
 	}
 	sort.Strings(ups)
-	var tableCount int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()`).Scan(&tableCount); err != nil {
-		fmt.Println("integration: count tables:", err)
+	want, err := schemaHash(migrationsDir, ups)
+	if err != nil {
+		fmt.Println("integration: hash migrations:", err)
 		os.Exit(1)
 	}
-	if tableCount > 0 {
+	// A stored hash that differs (or is absent) means the migrations changed
+	// since this database was built: rebuild instead of reusing stale tables.
+	var have string
+	_ = db.QueryRow("SELECT hash FROM `" + metaTablePrefix + "schema` LIMIT 1").Scan(&have)
+	if have == want {
 		fmt.Println("integration: reusing migrated test db")
 	} else {
+		ctx := context.Background()
+		if err := dropAllTables(ctx, db, dbName); err != nil {
+			fmt.Println("integration: reset schema:", err)
+			os.Exit(1)
+		}
 		for _, name := range ups {
-			raw, err := os.ReadFile("../../migrations/" + name)
+			raw, err := os.ReadFile(migrationsDir + "/" + name)
 			if err != nil {
 				fmt.Println("integration: read", name, err)
 				os.Exit(1)
@@ -181,45 +299,56 @@ func TestMain(m *testing.M) {
 				os.Exit(1)
 			}
 		}
+		if _, err := db.Exec("CREATE TABLE `" + metaTablePrefix + "schema` (hash CHAR(64) NOT NULL)"); err != nil {
+			fmt.Println("integration: create schema marker:", err)
+			os.Exit(1)
+		}
+		if _, err := db.Exec("INSERT INTO `"+metaTablePrefix+"schema` (hash) VALUES (?)", want); err != nil {
+			fmt.Println("integration: store schema hash:", err)
+			os.Exit(1)
+		}
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	auditMod := audit.NewModule(db, log)
-	userMod := user.NewModule(db, auditMod.Audit())
-	branchMod := branch.NewModule(db, userMod.Users(), auditMod.Audit())
-	companyMod := company.NewModule(db, auditMod.Audit())
-	mediaMod, err := media.NewModule(db, config.Storage{Driver: "local"}, os.TempDir(), auditMod.Audit())
+	sessionDir, err := os.MkdirTemp("", "wa-test-*")
 	if err != nil {
-		fmt.Println("integration: media:", err)
+		fmt.Println("integration: session dir:", err)
 		os.Exit(1)
 	}
-	productMod := product.NewModule(db, auditMod.Audit())
-	partyMod := party.NewModule(db, productMod.Products(), auditMod.Audit())
-	stockMod := stock.NewModule(db, productMod.Products(), branchMod.Branches(),
-		userMod.Users(), userMod.Roles(), companyMod.Company(), auditMod.Audit())
-	purchasingMod := purchasing.NewModule(db, partyMod.Parties(), productMod.Products(), branchMod.Branches(), auditMod.Audit())
-	salesMod := sales.NewModule(db, partyMod.Parties(), productMod.Products(), partyMod.Pricing(), branchMod.Branches(), auditMod.Audit())
-	goodsreceiptMod := goodsreceipt.NewModule(db, purchasingMod.PurchaseOrders(), productMod.Products(), stockMod.Stock(), auditMod.Audit())
-	deliveryMod := delivery.NewModule(db, salesMod.Service(), productMod.Products(), stockMod.Stock(), branchMod.Branches(), mediaMod.Media(), auditMod.Audit())
-	salesreturnMod := salesreturn.NewModule(db, salesMod.SalesOrders(), deliveryMod.Deliveries(), productMod.Products(), stockMod.Stock(), branchMod.Branches(), auditMod.Audit())
-	purchasereturnMod := purchasereturn.NewModule(db, purchasingMod.PurchaseOrders(), goodsreceiptMod.GoodsReceipts(), productMod.Products(), stockMod.Stock(), branchMod.Branches(), auditMod.Audit())
-	paymentMod := payment.NewModule(db, partyMod.Parties(), purchasingMod.PurchaseOrders(), salesMod.SalesOrders(), salesreturnMod.Returns(), purchasereturnMod.Returns(), branchMod.Branches(), mediaMod.Media(), auditMod.Audit())
-	salesreturnMod.SetPayments(paymentMod.Payments())
-	purchasereturnMod.SetPayments(paymentMod.Payments())
-	financeMod := finance.NewModule(db, branchMod.Branches(), productMod.Products(), partyMod.Parties(),
-		purchasingMod.PurchaseOrders(), salesMod.SalesOrders(),
-		salesreturnMod.SalesReturns(), purchasereturnMod.PurchaseReturns(),
-		goodsreceiptMod.GoodsReceipts(), deliveryMod.Deliveries(),
-		paymentMod.Payments(), stockMod.Stock(), auditMod.Audit())
-	financeMod.SetOps(salesMod.Service(), purchasingMod.Service())
-
-	testMods = &mods{db: db, audit: auditMod, user: userMod, branch: branchMod,
-		company: companyMod, media: mediaMod, product: productMod, party: partyMod,
-		stock: stockMod, purchasing: purchasingMod, sales: salesMod,
-		goodsreceipt: goodsreceiptMod, delivery: deliveryMod, salesreturn: salesreturnMod,
-		purchasereturn: purchasereturnMod, payment: paymentMod, finance: financeMod}
+	// The very wiring the server runs (bootstrap.Wire): tests exercise the
+	// production module graph, not a hand-copied one.
+	w, err := bootstrap.Wire(db, bootstrap.Options{
+		Log: log, JWTSecret: "integration-test-jwt-secret-minimal-32-karakter",
+		AccessTTL: 15 * time.Minute, RefreshTTL: 24 * time.Hour,
+		Storage: config.Storage{Driver: "local", SignedURLTTLSecs: 300}, MediaDir: os.TempDir(),
+		Signer: signedurl.New([]byte("integration-test-key")), SessionDir: sessionDir,
+	})
+	if err != nil {
+		fmt.Println("integration: wire:", err)
+		os.Exit(1)
+	}
+	// Serialise with the ETL tests (they truncate the same database): hold the
+	// cross-process advisory lock for the whole run.
+	lockConn, lerr := db.Conn(context.Background())
+	if lerr == nil {
+		var got int
+		if err := lockConn.QueryRowContext(context.Background(), "SELECT GET_LOCK('mini_erp_test_db', 3000)").Scan(&got); err != nil || got != 1 {
+			fmt.Println("integration: kunci database test tidak didapat:", err, got)
+			os.Exit(1)
+		}
+	}
+	testMods = &mods{db: db, audit: w.Audit, user: w.User, branch: w.Branch,
+		company: w.Company, auth: w.Auth, assistant: w.Assistant, media: w.Media, product: w.Product, party: w.Party,
+		stock: w.Stock, purchasing: w.Purchasing, sales: w.Sales,
+		goodsreceipt: w.GoodsReceipt, delivery: w.Delivery, salesreturn: w.SalesReturn,
+		purchasereturn: w.PurchaseReturn, payment: w.Payment, finance: w.Finance,
+		dashboard: w.Dashboard, reporting: w.Reporting}
 
 	code := m.Run()
+	if lockConn != nil {
+		_, _ = lockConn.ExecContext(context.Background(), "SELECT RELEASE_LOCK('mini_erp_test_db')")
+		_ = lockConn.Close()
+	}
 	_ = db.Close()
 	os.Exit(code)
 }
@@ -229,6 +358,8 @@ func freshDB(t *testing.T) {
 	t.Helper()
 	_, dbName := splitDSN(testDBDSN())
 	truncateAll(t, testMods.db, dbName)
+	// Auto-increment ids restart after TRUNCATE: drop sessions cached under ids the previous test used.
+	testMods.auth.Service().InvalidateAll()
 }
 
 // shopFixture builds branch + product (1 variant) + customer + location +
@@ -245,6 +376,13 @@ type shopFixture struct {
 func newShop(t *testing.T, ctx context.Context) shopFixture {
 	t.Helper()
 	m := testMods
+	// Fixtures adjust stock without an approver; the always-approve rule
+	// (default in production) is exercised by its own tests.
+	if _, err := m.db.Exec(`INSERT INTO company_settings (setting_key, setting_value) VALUES
+		('stock_adjust_always_approve', 'false'), ('delivery_require_evidence', 'false')
+		ON DUPLICATE KEY UPDATE setting_value = 'false'`); err != nil {
+		t.Fatalf("fixture setting: %v", err)
+	}
 	br, err := m.branch.Service().CreateBranch(ctx, 0, branchapp.CreateBranchInput{
 		Code: "TST", Name: "Test", IsHead: true,
 	})
@@ -264,7 +402,7 @@ func newShop(t *testing.T, ctx context.Context) shopFixture {
 		t.Fatal("product has no default variant")
 	}
 	cust, err := m.party.Service().CreateCustomer(ctx, 0, partyapp.PartyInput{
-		Name: "Customer Uji",
+		Name: "Customer Uji", Phone: "081234567890",
 	})
 	if err != nil {
 		t.Fatalf("create customer: %v", err)

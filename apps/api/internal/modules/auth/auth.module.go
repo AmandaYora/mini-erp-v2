@@ -34,11 +34,18 @@ func NewModule(
 	accessTTL, refreshTTL time.Duration,
 	log *slog.Logger,
 	audit auditcontracts.AuditClient,
+	hub *contracts.AuthzHub,
 ) *Module {
 	svc := application.NewService(
 		infrastructure.NewRepository(db), users, roles, branches, company,
 		jwtSecret, accessTTL, refreshTTL, log, audit,
 	)
+	// user and branch announce their writes through the hub, which was handed
+	// to them before auth existed; auth subscribes itself here.
+	if hub != nil {
+		hub.Subscribe(svc)
+		hub.AttachRevoker(svc)
+	}
 	return &Module{svc: svc, handler: presentation.NewHandler(svc), log: log}
 }
 
@@ -47,15 +54,23 @@ func (m *Module) Sessions() contracts.SessionProvider {
 	return m.svc
 }
 
-// Checker exposes permission checks to route guards.
-func (m *Module) Checker() contracts.PermissionChecker {
+// Service exposes use cases to integration tests (composition root
+// privilege, same as user.Module.Service).
+func (m *Module) Service() *application.Service {
+	return m.svc
+}
+
+// Invalidator exposes authorization-cache invalidation directly (tests). The
+// running app reaches it through the AuthzHub that user and branch hold.
+func (m *Module) Invalidator() contracts.AuthzInvalidator {
 	return m.svc
 }
 
 // Permission builds the fail-closed guard: authentication is always applied
 // inside, so guarded routes can never forget it.
 func (m *Module) Permission(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler {
-	return contracts.Authenticate(m.log, m.svc, contracts.RequirePermission(m.svc, perm, http.HandlerFunc(next)))
+	return contracts.NewGuardedHandler(perm,
+		contracts.Authenticate(m.log, m.svc, contracts.RequirePermission(m.svc, perm, http.HandlerFunc(next))))
 }
 
 // RegisterRoutes mounts auth endpoints.

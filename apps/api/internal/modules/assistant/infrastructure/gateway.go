@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -24,6 +25,17 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// waSocket is the slice of *whatsmeow.Client the gateway uses; tests swap in
+// a fake so connect/send/reset/reconnect run without a real WhatsApp socket.
+type waSocket interface {
+	IsConnected() bool
+	Connect() error
+	Disconnect()
+	Logout(ctx context.Context) error
+	GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelItem, error)
+	SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
+}
+
 // Gateway wraps one whatsmeow client (single-tenant: one company number).
 // The session cryptostore is a SQLite file beside uploads (current whatsmeow
 // sqlstore supports SQLite/Postgres only — no MySQL). App data stays in
@@ -36,28 +48,75 @@ type Gateway struct {
 	mu        sync.Mutex
 	container *sqlstore.Container
 	device    *store.Device
-	client    *whatsmeow.Client
+	client    waSocket
 	qr        string
 	qrWatch   bool
 	lastErr   string
+	// appCtx outlives any request: the QR channel and socket are bound to it
+	// (F6-6), never to the HTTP request that happened to start pairing.
+	appCtx   context.Context
+	closed   bool
+	watchers sync.WaitGroup
 
 	// OnMessage receives normalized inbound DMs (digits phone, trimmed text).
 	OnMessage func(phone, text string)
 }
 
 // NewGateway builds the wrapper. Nothing connects until Connect/Boot.
-func NewGateway(storageDir string, log *slog.Logger) *Gateway {
-	return &Gateway{sessionFile: filepath.Join(storageDir, "whatsapp_session.db"), log: log}
+// sessionDir must be a folder the API never serves: the session file is the
+// credential of the linked WhatsApp number.
+func NewGateway(sessionDir string, log *slog.Logger) *Gateway {
+	return &Gateway{sessionFile: filepath.Join(sessionDir, "whatsapp_session.db"), log: log, appCtx: context.Background()}
+}
+
+// SetContext binds long-lived gateway work (QR channel, socket) to the
+// application lifecycle context instead of a request context (F6-6).
+func (g *Gateway) SetContext(ctx context.Context) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.appCtx = ctx
+}
+
+// Close disconnects the socket, waits for the QR watcher and closes the
+// session store. Idempotent and safe before any connection was made.
+func (g *Gateway) Close() {
+	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		return
+	}
+	g.closed = true
+	client, container := g.client, g.container
+	g.client, g.container, g.device = nil, nil, nil
+	g.qr = ""
+	g.mu.Unlock()
+	if client != nil {
+		client.Disconnect()
+	}
+	// Bounded: a QR watcher that never sees its channel close must not
+	// hang shutdown.
+	done := make(chan struct{})
+	go func() { g.watchers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+	}
+	if container != nil {
+		_ = container.Close()
+	}
 }
 
 // ensureClient lazily opens the session store and client (idempotent).
 func (g *Gateway) ensureClient(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.closed {
+		return errGatewayClosed()
+	}
 	if g.client != nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(g.sessionFile), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(g.sessionFile), 0o700); err != nil {
 		return err
 	}
 	db, err := sql.Open("sqlite", "file:"+g.sessionFile)
@@ -69,6 +128,8 @@ func (g *Gateway) ensureClient(ctx context.Context) error {
 		_ = db.Close()
 		return err
 	}
+	// The file now exists: keep it readable by the service account only.
+	_ = os.Chmod(g.sessionFile, 0o600)
 	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		return err
@@ -145,13 +206,20 @@ func (g *Gateway) Connect(ctx context.Context) error {
 		return err
 	}
 	g.mu.Lock()
-	if g.client.IsConnected() {
+	if g.client == nil {
+		g.mu.Unlock()
+		return errGatewayClosed()
+	}
+	client := g.client
+	if client.IsConnected() {
 		g.mu.Unlock()
 		return nil
 	}
 	var qrChan <-chan whatsmeow.QRChannelItem
 	if g.device.ID == nil && !g.qrWatch {
-		ch, err := g.client.GetQRChannel(ctx)
+		// The app context, not the request's: a request context ends as soon
+		// as the handler returns and would kill the pairing channel.
+		ch, err := client.GetQRChannel(g.appCtx)
 		if err != nil {
 			g.mu.Unlock()
 			g.setError(err.Error())
@@ -162,9 +230,13 @@ func (g *Gateway) Connect(ctx context.Context) error {
 	g.mu.Unlock()
 
 	if qrChan != nil {
-		go g.watchQR(qrChan)
+		g.watchers.Add(1)
+		go func() {
+			defer g.watchers.Done()
+			g.watchQR(qrChan)
+		}()
 	}
-	if err := g.client.Connect(); err != nil {
+	if err := client.Connect(); err != nil {
 		g.setError(err.Error())
 		return err
 	}
@@ -285,19 +357,22 @@ func (g *Gateway) onEvent(raw any) {
 // onMessage filters one inbound event down to a DM worth answering:
 // human text in a 1:1 chat, not from us. Groups, broadcasts, statuses,
 // stickers, audio, locations and documents are ignored silently (legacy).
+// LID-addressed chats (N-44) are DMs too: the whitelist is matched against
+// the sender's phone number (PN), never against a LID.
 func (g *Gateway) onMessage(ev *events.Message) {
 	if ev.Info.IsFromMe || ev.Info.IsGroup {
 		return
 	}
-	if ev.Info.Chat.Server != types.DefaultUserServer {
+	if srv := ev.Info.Chat.Server; srv != types.DefaultUserServer && srv != types.HiddenUserServer {
 		return
 	}
-	phone := digits(ev.Info.Sender.User)
-	if !validPhone(phone) {
-		phone = digits(ev.Info.SenderAlt.User)
-		if !validPhone(phone) {
-			return
-		}
+	phone, ok := senderPhone(ev.Info.MessageSource)
+	if !ok {
+		// Only a LID (or junk) is known: answering an unidentifiable sender
+		// would leak a reply to an unknown number, so drop it and say why.
+		g.log.Warn("whatsapp inbound dropped: sender phone number unavailable",
+			"sender_server", ev.Info.Sender.Server, "addressing", string(ev.Info.AddressingMode))
+		return
 	}
 	text := messageText(ev)
 	if strings.TrimSpace(text) == "" {
@@ -313,6 +388,21 @@ func (g *Gateway) onMessage(ev *events.Message) {
 		}()
 		g.OnMessage(phone, text)
 	}()
+}
+
+// senderPhone resolves the sender's phone-number digits. Only JIDs on the
+// phone-number server count: a LID user (even 8-15 digits long) is an opaque
+// identifier, not a phone. Falls back to SenderAlt when Sender is a LID.
+func senderPhone(src types.MessageSource) (string, bool) {
+	for _, j := range []types.JID{src.Sender, src.SenderAlt} {
+		if j.Server != types.DefaultUserServer {
+			continue
+		}
+		if p := digits(j.User); validPhone(p) {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // messageText extracts conversation / extended text / image / video caption.
@@ -362,3 +452,5 @@ type gatewayError struct{ msg string }
 func (e *gatewayError) Error() string { return e.msg }
 
 func errNotConnected() error { return &gatewayError{"Kanal WhatsApp belum terhubung"} }
+
+func errGatewayClosed() error { return &gatewayError{"Kanal WhatsApp sudah ditutup"} }

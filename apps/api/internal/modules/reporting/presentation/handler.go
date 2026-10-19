@@ -2,6 +2,7 @@ package presentation
 
 import (
 	"net/http"
+	"strconv"
 
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/modules/reporting/application"
@@ -18,17 +19,10 @@ func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
-}
-
 // GetSalesTrend handles GET /api/v1/reporting/sales-trend?from&to.
 func (h *Handler) GetSalesTrend(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	points, err := h.svc.SalesTrend(r.Context(), branchID(r), q.Get("from"), q.Get("to"))
+	points, err := h.svc.SalesTrend(r.Context(), authcontracts.BranchID(r), q.Get("from"), q.Get("to"))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -36,9 +30,11 @@ func (h *Handler) GetSalesTrend(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Tren penjualan", points)
 }
 
-// GetInventory handles GET /api/v1/reporting/inventory.
+// GetInventory handles GET /api/v1/reporting/inventory. Same data as
+// GET /api/v1/finance/reports/inventory-value (finance owns the valuation),
+// exposed under reporting.view for that audience.
 func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
-	rep, err := h.svc.Inventory(r.Context(), branchID(r))
+	rep, err := h.svc.Inventory(r.Context(), authcontracts.BranchID(r))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -46,15 +42,36 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Laporan persediaan", rep)
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
+// GetOrders handles GET /api/v1/reporting/orders?type=sales|purchasing&status=&from=&to=&page=&limit=.
+func (h *Handler) GetOrders(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	rep, err := h.svc.Orders(r.Context(), authcontracts.BranchID(r), q.Get("type"), q.Get("status"), q.Get("from"), q.Get("to"), page, limit)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Laporan order", rep)
+}
 
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
+// GetStock handles GET /api/v1/reporting/stock?criticalOnly=&page=&limit=.
+func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	rep, err := h.svc.Stock(r.Context(), authcontracts.BranchID(r), q.Get("criticalOnly") == "true", page, limit)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Laporan stok", rep)
 }
 
 // RegisterRoutes mounts reporting endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/reporting/sales-trend", perm("reporting.view", guarded(h.GetSalesTrend, branchGuard)))
-	mux.Handle("GET /api/v1/reporting/inventory", perm("reporting.view", guarded(h.GetInventory, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/reporting/sales-trend", perm("reporting.view", authcontracts.Guard(h.GetSalesTrend, branchGuard)))
+	mux.Handle("GET /api/v1/reporting/inventory", perm("reporting.view", authcontracts.Guard(h.GetInventory, branchGuard)))
+	mux.Handle("GET /api/v1/reporting/orders", perm("reporting.view", authcontracts.Guard(h.GetOrders, branchGuard)))
+	mux.Handle("GET /api/v1/reporting/stock", perm("reporting.view", authcontracts.Guard(h.GetStock, branchGuard)))
 }

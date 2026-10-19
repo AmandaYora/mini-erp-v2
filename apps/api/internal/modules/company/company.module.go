@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/modules/company/application"
 	"mini-erp/internal/modules/company/contracts"
 	"mini-erp/internal/modules/company/infrastructure"
@@ -34,6 +35,6 @@ func (m *Module) Service() *application.Service {
 }
 
 // RegisterRoutes mounts endpoints with the auth-built permission wrapper.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, perm presentation.Permission) {
-	presentation.RegisterRoutes(mux, m.handler, perm)
+func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission, authn func(func(http.ResponseWriter, *http.Request)) http.Handler) {
+	presentation.RegisterRoutes(mux, m.handler, perm, authn)
 }

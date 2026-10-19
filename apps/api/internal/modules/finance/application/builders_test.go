@@ -1,11 +1,19 @@
 package application
 
-import "testing"
+import (
+	"testing"
+
+	"mini-erp/internal/shared/money"
+)
 
 // The invariant every posting builder leans on: `base` is what belongs in
 // Persediaan/Penjualan and `base + tax` is what the counterparty owes.
 // Booking a tax-inclusive line at `net` instead of `base` double-counts the
 // tax — once inside the asset/revenue and again as PPN.
+//
+// Since F8-7 these cases exercise the shared money kernel (ADR-0010): the
+// builders call money.LineAmounts, so the goldens below pin the kernel
+// through the finance call path.
 func TestLineEconomics(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -26,7 +34,7 @@ func TestLineEconomics(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			net, base, tax := lineEconomics(tc.qty, tc.unit, tc.pct, tc.nominal, tc.taxType, tc.rate)
+			net, base, tax, _ := money.LineAmounts(tc.qty, tc.unit, tc.pct, tc.nominal, tc.taxType, tc.rate).Split()
 			if net != tc.net || base != tc.base || tax != tc.tax {
 				t.Fatalf("= (net %d, base %d, tax %d), mau (net %d, base %d, tax %d)",
 					net, base, tax, tc.net, tc.base, tc.tax)
@@ -40,7 +48,7 @@ func TestLineEconomics(t *testing.T) {
 	}
 }
 
-// owed restates the counterparty amount independently of lineEconomics so
+// owed restates the counterparty amount independently of the kernel so
 // the assertion above is a real check, not a restatement of the code.
 func owed(taxType string, net, tax int64) int64 {
 	if taxType == "exclude" {
@@ -64,7 +72,7 @@ func TestProrate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := prorate(tc.amount, tc.part, tc.whole); got != tc.want {
+			if got := money.Prorate(tc.amount, tc.part, tc.whole); got != tc.want {
 				t.Fatalf("= %d, mau %d", got, tc.want)
 			}
 		})
@@ -76,12 +84,12 @@ func TestProrate(t *testing.T) {
 // billed the books twice.
 func TestPartialDeliveryBooksOnlyItsShare(t *testing.T) {
 	// SO line: 10 pcs × 10.000, PPN 11% di luar → base 100.000, tax 11.000.
-	_, base, tax := lineEconomics(10, 10_000, 0, 0, "exclude", 11)
+	_, base, tax, _ := money.LineAmounts(10, 10_000, 0, 0, "exclude", 11).Split()
 
 	var revenue, taxTotal int64
 	for _, shipped := range []float64{4, 6} { // dua surat jalan
-		revenue += prorate(base, shipped, 10)
-		taxTotal += prorate(tax, shipped, 10)
+		revenue += money.Prorate(base, shipped, 10)
+		taxTotal += money.Prorate(tax, shipped, 10)
 	}
 	if revenue != base {
 		t.Fatalf("penjualan terbukukan %d, mau %d", revenue, base)

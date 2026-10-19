@@ -32,3 +32,13 @@ func TestDayBoundsWIB(t *testing.T) {
 		t.Fatal("non-ISO input must be rejected")
 	}
 }
+
+func TestDateOrToday(t *testing.T) {
+	if got := DateOrToday("  2026-03-04 "); got != "2026-03-04" {
+		t.Fatalf("got %q", got)
+	}
+	today := NowUTC().In(Jakarta).Format("2006-01-02")
+	if got := DateOrToday("   "); got != today && got != NowUTC().In(Jakarta).Format("2006-01-02") {
+		t.Fatalf("blank must default to today, got %q", got)
+	}
+}

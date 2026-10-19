@@ -34,18 +34,24 @@ type TurnoverEntry struct {
 // an order means dropping its COGS and payment legs as well, and those legs
 // live in entries that carry no revenue of their own.
 //
+// A reversal entry is attributed to the document of the entry it reverses
+// (N10): an order whose journal was reversed nets to zero instead of leaving a
+// one-sided negative turnover under "reversal".
+//
 // Fiscal-correction entries are excluded via commercialOnly — the ceiling is
 // a commercial-turnover rule, and tax adjustments are not turnover.
 func (r *Repository) TurnoverEntries(ctx context.Context, from, to string) ([]TurnoverEntry, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT e.id, e.branch_id, DATE_FORMAT(e.entry_date, '%Y-%m-%d'),
-		        COALESCE(e.source_doc_type, ''), COALESCE(e.source_doc_id, 0),
+		        CASE WHEN e.source_doc_type = 'reversal' THEN COALESCE(o.source_doc_type, '') ELSE COALESCE(e.source_doc_type, '') END,
+		        CASE WHEN e.source_doc_type = 'reversal' THEN COALESCE(o.source_doc_id, 0) ELSE COALESCE(e.source_doc_id, 0) END,
 		        COALESCE(SUM(CASE WHEN a.type = ? THEN l.credit - l.debit ELSE 0 END), 0)
 		 FROM finance_journal_entries e
 		 JOIN finance_journal_lines l ON l.entry_id = e.id
 		 JOIN finance_accounts a ON a.id = l.account_id
+		 LEFT JOIN finance_journal_entries o ON e.source_doc_type = 'reversal' AND o.id = e.source_doc_id
 		 WHERE e.entry_date >= ? AND e.entry_date <= ?`+commercialOnly+`
-		 GROUP BY e.id, e.branch_id, e.entry_date, e.source_doc_type, e.source_doc_id
+		 GROUP BY e.id, e.branch_id, e.entry_date, e.source_doc_type, e.source_doc_id, o.source_doc_type, o.source_doc_id
 		 ORDER BY e.entry_date, e.id`,
 		contracts.AccountIncome, from, to)
 	if err != nil {

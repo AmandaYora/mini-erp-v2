@@ -10,6 +10,7 @@ import (
 	"mini-erp/internal/modules/payment/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/httpx"
+	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
 )
@@ -22,20 +23,6 @@ type Handler struct {
 // NewHandler wires payment endpoints.
 func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
-}
-
-func actorID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.UserID
-	}
-	return 0
-}
-
-func branchID(r *http.Request) int64 {
-	if s := authcontracts.SessionFromContext(r.Context()); s != nil {
-		return s.BranchID
-	}
-	return 0
 }
 
 func paymentView(p *contracts.Payment) map[string]any {
@@ -51,21 +38,47 @@ func paymentView(p *contracts.Payment) map[string]any {
 		"partyId": p.PartyID, "partyName": p.PartyName, "partyType": p.PartyType,
 		"direction": p.Direction, "amount": p.Amount, "method": p.Method,
 		"paidAt": p.PaidAt, "notes": p.Notes, "status": p.Status,
+		"clientRef": p.ClientRef, "reference": p.Reference,
+		"amountTendered": p.AmountTendered, "change": change(p),
+		"pairId":      p.PairID,
 		"allocations": allocs,
+		// N-41: the return whose saldo a use-credit leg spends (absent otherwise).
+		"creditSourceType": p.CreditSourceType, "creditSourceId": p.CreditSourceID,
 	}
+}
+
+// change is the cash returned to the payer, derived on display from the
+// amount handed over (never stored).
+func change(p *contracts.Payment) int64 {
+	if p.AmountTendered > p.Amount {
+		return p.AmountTendered - p.Amount
+	}
+	return 0
 }
 
 // List handles GET /api/v1/payments.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	var partyID int64
-	if raw := q.Get("partyId"); raw != "" {
-		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
-			partyID = id
-		}
+	c, err := listquery.ParseCommon(q, nil)
+	if err != nil {
+		response.FailErr(w, err)
+		return
 	}
-	res, err := h.svc.List(r.Context(), branchID(r), partyID, q.Get("status"), page, limit)
+	page, limit := c.Page, c.Limit
+	var orderID int64
+	if raw := q.Get("orderId"); raw != "" {
+		id, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil || id <= 0 {
+			response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "orderId", Message: "harus angka positif"}}))
+			return
+		}
+		orderID = id
+	}
+	res, err := h.svc.ListFiltered(r.Context(), authcontracts.BranchID(r), application.ListFilter{
+		Search: c.Search, PartyID: c.PartyID, Status: q.Get("status"), Method: q.Get("method"),
+		Direction: q.Get("direction"), From: c.From, To: c.To,
+		OrderType: q.Get("orderType"), OrderID: orderID,
+	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -92,23 +105,38 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		response.FailErr(w, appErr)
 		return
 	}
-	if p == nil || p.BranchID != branchID(r) {
+	if p == nil || p.BranchID != authcontracts.BranchID(r) {
 		response.Fail(w, apperror.NotFound("Pembayaran"))
 		return
 	}
 	response.OK(w, "Data pembayaran", paymentView(p))
 }
 
+// refundPermission maps a return order type to the permission its refunds
+// require; "" for ordinary orders.
+func refundPermission(orderType string) string {
+	switch orderType {
+	case contracts.OrderSalesReturn:
+		return "salesreturn.refund"
+	case contracts.OrderPurchaseReturn:
+		return "purchasereturn.refund"
+	}
+	return ""
+}
+
 // Create handles POST /api/v1/payments. Empty allocations auto-fill FIFO.
 // partyId 0 = walk-in cash (POS): allocations must be explicit.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		PartyID     int64  `json:"partyId"`
-		Amount      int64  `json:"amount" validate:"required"`
-		Method      string `json:"method"`
-		PaidAt      string `json:"paidAt"`
-		Notes       string `json:"notes"`
-		Allocations []struct {
+		PartyID        int64  `json:"partyId"`
+		Amount         int64  `json:"amount" validate:"required"`
+		Method         string `json:"method"`
+		PaidAt         string `json:"paidAt"`
+		Notes          string `json:"notes"`
+		ClientRef      string `json:"clientRef"`
+		AmountTendered int64  `json:"amountTendered"`
+		Reference      string `json:"reference"`
+		Allocations    []struct {
 			OrderType string `json:"orderType"`
 			OrderID   int64  `json:"orderId" validate:"required"`
 			Amount    int64  `json:"amount" validate:"required"`
@@ -117,6 +145,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
+	}
+	// A refund leg (an allocation against a return) moves money out: like the
+	// return settlement endpoints it demands the return's own refund
+	// permission on top of payment.create (F3b-2). Other payments need only
+	// payment.create, which the route already enforced.
+	for _, a := range in.Allocations {
+		need := refundPermission(a.OrderType)
+		if need == "" {
+			continue
+		}
+		if sess := authcontracts.SessionFromContext(r.Context()); sess == nil || !sess.HasPermission(need) {
+			response.Fail(w, &apperror.AppError{Code: apperror.CodeForbidden, Message: "Anda tidak memiliki izin memproses refund"})
+			return
+		}
 	}
 	method := in.Method
 	if method == "" {
@@ -128,7 +170,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			OrderType: a.OrderType, OrderID: a.OrderID, Amount: a.Amount,
 		})
 	}
-	p, err := h.svc.Create(r.Context(), actorID(r), branchID(r), in.PartyID, method, in.PaidAt, in.Notes, in.Amount, allocs)
+	p, err := h.svc.Create(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.PartyID, method, in.PaidAt, in.Notes, in.Amount, allocs,
+		application.WithClientRef(in.ClientRef),
+		application.WithAmountTendered(in.AmountTendered),
+		application.WithReference(in.Reference))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -143,7 +188,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Pembayaran"))
 		return
 	}
-	p, appErr := h.svc.Cancel(r.Context(), actorID(r), branchID(r), id)
+	p, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -168,13 +213,61 @@ func (h *Handler) SettleCredit(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	p, err := h.svc.SettleCredit(r.Context(), actorID(r), branchID(r), in.PartyID,
+	p, err := h.svc.SettleCredit(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.PartyID,
 		in.ReturnType, in.ReturnID, in.OrderType, in.OrderID, in.Amount, in.Notes)
 	if err != nil {
 		response.FailErr(w, err)
 		return
 	}
 	response.Created(w, "Kredit di-offset", paymentView(p))
+}
+
+// UseCredit handles POST /api/v1/payments/use-credit (N-41): spends part of the
+// saldo (uang muka) a confirmed return left as the party's balance on an open
+// bill of the same party. No cash moves; the bill leg is journalled
+// Dr Uang Muka Pelanggan / Cr Piutang (sales) or Dr Hutang / Cr Uang Muka
+// Supplier (purchase).
+func (h *Handler) UseCredit(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PartyID    int64  `json:"partyId" validate:"required"`
+		ReturnType string `json:"returnType" validate:"required"`
+		ReturnID   int64  `json:"returnId" validate:"required"`
+		OrderType  string `json:"orderType" validate:"required"`
+		OrderID    int64  `json:"orderId" validate:"required"`
+		Amount     int64  `json:"amount" validate:"required"`
+		Notes      string `json:"notes"`
+	}
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	p, err := h.svc.UseCredit(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.PartyID,
+		in.ReturnType, in.ReturnID, in.OrderType, in.OrderID, in.Amount, in.Notes)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.Created(w, "Saldo uang muka dipakai", paymentView(p))
+}
+
+// CreditBalances handles GET /api/v1/payments/credit-balances?partyId=: the
+// party's returns that hold saldo, with what was used and what remains.
+func (h *Handler) CreditBalances(w http.ResponseWriter, r *http.Request) {
+	partyID, err := strconv.ParseInt(r.URL.Query().Get("partyId"), 10, 64)
+	if err != nil || partyID <= 0 {
+		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "wajib diisi"}}))
+		return
+	}
+	rows, appErr := h.svc.CreditBalances(r.Context(), authcontracts.BranchID(r), partyID)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	var remaining int64
+	for _, row := range rows {
+		remaining += row.Remaining
+	}
+	response.OK(w, "Saldo uang muka pihak", map[string]any{"items": rows, "totalRemaining": remaining})
 }
 
 // Balance handles GET /api/v1/payments/party-balances?partyId=.
@@ -185,7 +278,7 @@ func (h *Handler) Balance(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "partyId", Message: "wajib diisi"}}))
 		return
 	}
-	bal, appErr := h.svc.GetPartyBalance(r.Context(), branchID(r), partyID)
+	bal, appErr := h.svc.GetPartyBalance(r.Context(), authcontracts.BranchID(r), partyID)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -202,7 +295,7 @@ func (h *Handler) Ledger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	payments, total, svcErr := h.svc.Ledger(r.Context(), branchID(r), partyID, page, limit)
+	payments, total, svcErr := h.svc.Ledger(r.Context(), authcontracts.BranchID(r), partyID, page, limit)
 	if svcErr != nil {
 		response.FailErr(w, svcErr)
 		return
@@ -215,6 +308,33 @@ func (h *Handler) Ledger(w http.ResponseWriter, r *http.Request) {
 		Page: page, Limit: limit, Total: total,
 		TotalPages: pagination.TotalPages(total, limit),
 	})
+}
+
+// OpenParties handles GET /api/v1/payments/open-parties?side=&search=&page=&limit=
+// (PY-01): every party with an unpaid balance on one side, oldest first.
+func (h *Handler) OpenParties(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	side := q.Get("side")
+	if side == "" {
+		side = application.SideReceivable
+	}
+	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
+	res, err := h.svc.OpenParties(r.Context(), authcontracts.BranchID(r), side, q.Get("search"), page, limit)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	items := make([]any, 0, len(res.Items))
+	for _, it := range res.Items {
+		items = append(items, it)
+	}
+	// data carries the figures of the WHOLE filtered set next to the page, so the
+	// header can show the total owed without a second request; meta stays standard.
+	totalPages := pagination.TotalPages(res.Total, limit)
+	response.Paginated(w, "Daftar pihak bersaldo", map[string]any{
+		"items": items, "total": res.Total, "totalOutstanding": res.TotalOutstanding,
+		"page": page, "limit": limit, "totalPages": totalPages,
+	}, response.Meta{Page: page, Limit: limit, Total: res.Total, TotalPages: totalPages})
 }
 
 // ProofUpload handles POST /api/v1/payments/{id}/proof (multipart image).
@@ -230,7 +350,7 @@ func (h *Handler) ProofUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = fh.Close() }()
-	url, svcErr := h.svc.Proof(r.Context(), actorID(r), branchID(r), id, mediacontracts.Upload{
+	url, svcErr := h.svc.Proof(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, mediacontracts.Upload{
 		OriginalName: header.Filename, MIME: header.Header.Get("Content-Type"),
 		Content: fh, Accept: []string{"image/"},
 	})
@@ -248,7 +368,7 @@ func (h *Handler) Proofs(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Pembayaran"))
 		return
 	}
-	proofs, appErr := h.svc.Proofs(r.Context(), branchID(r), id)
+	proofs, appErr := h.svc.Proofs(r.Context(), authcontracts.BranchID(r), id)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -260,23 +380,18 @@ func (h *Handler) Proofs(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Bukti bayar", items)
 }
 
-// Permission is injected by the composition root (built from the auth module).
-type Permission func(perm string, next func(http.ResponseWriter, *http.Request)) http.Handler
-
-// guarded adapts the branch guard into func-style middleware.
-func guarded(next func(http.ResponseWriter, *http.Request), branchGuard func(http.Handler) http.Handler) func(http.ResponseWriter, *http.Request) {
-	return branchGuard(http.HandlerFunc(next)).ServeHTTP
-}
-
 // RegisterRoutes mounts payment endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm Permission, branchGuard func(http.Handler) http.Handler) {
-	mux.Handle("GET /api/v1/payments", perm("payment.view", guarded(h.List, branchGuard)))
-	mux.Handle("POST /api/v1/payments", perm("payment.create", guarded(h.Create, branchGuard)))
-	mux.Handle("GET /api/v1/payments/{id}", perm("payment.view", guarded(h.Get, branchGuard)))
-	mux.Handle("POST /api/v1/payments/{id}/cancel", perm("payment.archive", guarded(h.Cancel, branchGuard)))
-	mux.Handle("POST /api/v1/payments/settle-credit", perm("payment.create", guarded(h.SettleCredit, branchGuard)))
-	mux.Handle("GET /api/v1/payments/party-balances", perm("payment.view", guarded(h.Balance, branchGuard)))
-	mux.Handle("GET /api/v1/payments/party-ledger", perm("payment.view", guarded(h.Ledger, branchGuard)))
-	mux.Handle("POST /api/v1/payments/{id}/proof", perm("payment.create", guarded(h.ProofUpload, branchGuard)))
-	mux.Handle("GET /api/v1/payments/{id}/proofs", perm("payment.view", guarded(h.Proofs, branchGuard)))
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+	mux.Handle("GET /api/v1/payments", perm("payment.view", authcontracts.Guard(h.List, branchGuard)))
+	mux.Handle("POST /api/v1/payments", perm("payment.create", authcontracts.Guard(h.Create, branchGuard)))
+	mux.Handle("GET /api/v1/payments/{id}", perm("payment.view", authcontracts.Guard(h.Get, branchGuard)))
+	mux.Handle("POST /api/v1/payments/{id}/cancel", perm("payment.archive", authcontracts.Guard(h.Cancel, branchGuard)))
+	mux.Handle("POST /api/v1/payments/settle-credit", perm("payment.create", authcontracts.Guard(h.SettleCredit, branchGuard)))
+	mux.Handle("POST /api/v1/payments/use-credit", perm("payment.create", authcontracts.Guard(h.UseCredit, branchGuard)))
+	mux.Handle("GET /api/v1/payments/credit-balances", perm("payment.view", authcontracts.Guard(h.CreditBalances, branchGuard)))
+	mux.Handle("GET /api/v1/payments/party-balances", perm("payment.view", authcontracts.Guard(h.Balance, branchGuard)))
+	mux.Handle("GET /api/v1/payments/open-parties", perm("payment.view", authcontracts.Guard(h.OpenParties, branchGuard)))
+	mux.Handle("GET /api/v1/payments/party-ledger", perm("payment.view", authcontracts.Guard(h.Ledger, branchGuard)))
+	mux.Handle("POST /api/v1/payments/{id}/proof", perm("payment.create", authcontracts.Guard(h.ProofUpload, branchGuard)))
+	mux.Handle("GET /api/v1/payments/{id}/proofs", perm("payment.view", authcontracts.Guard(h.Proofs, branchGuard)))
 }

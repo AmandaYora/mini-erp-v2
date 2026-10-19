@@ -35,7 +35,7 @@ func TestFinanceManualRejectsUnbalanced(t *testing.T) {
 
 	_, err := m.finance.Service().Manual(ctx(), 0, fx.branchID, "2026-09-10", "uji pincang",
 		[]financeapp.ManualLine{
-			{AccountCode: "1100", Debit: 1000},
+			{AccountCode: "1000", Debit: 1000},
 			{AccountCode: "4000", Credit: 999},
 		})
 	appErr := mustAppErr(t, err)
@@ -45,7 +45,7 @@ func TestFinanceManualRejectsUnbalanced(t *testing.T) {
 
 	entry, err := m.finance.Service().Manual(ctx(), 0, fx.branchID, "2026-09-10", "uji seimbang",
 		[]financeapp.ManualLine{
-			{AccountCode: "1100", Debit: 1000},
+			{AccountCode: "1000", Debit: 1000},
 			{AccountCode: "4000", Credit: 1000},
 		})
 	if err != nil {
@@ -77,7 +77,7 @@ func TestFinancePostIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
 	}
-	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestDeliveryConfirmMovesStock(t *testing.T) {
 	if mid.Available() != 50 {
 		t.Fatalf("draft SJ moved stock: available = %v, want 50", mid.Available())
 	}
-	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 	after, err := m.stock.Stock().GetBalance(ctx(), fx.branchID, fx.productID, fx.variantID, fx.locationID)

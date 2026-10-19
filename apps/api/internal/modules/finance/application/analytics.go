@@ -45,15 +45,15 @@ func (s *Service) MarginByProduct(ctx context.Context, branchID int64, from, to 
 	if err != nil {
 		return nil, err
 	}
-	revenue, err := s.repo.AccountByCode(ctx, "4000")
+	revenue, err := s.repo.MappingAccount(ctx, "revenue")
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	salesReturn, err := s.repo.AccountByCode(ctx, "4100")
+	salesReturn, err := s.repo.MappingAccount(ctx, "sales_return")
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	cogs, err := s.repo.AccountByCode(ctx, "5000")
+	cogs, err := s.repo.MappingAccount(ctx, "cogs")
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -87,16 +87,33 @@ func (s *Service) MarginByProduct(ctx context.Context, branchID int64, from, to 
 			row.Cogs += f.Debit - f.Credit
 		}
 	}
+	// Products whose ledger holds estimated cost rows are flagged: their margin
+	// is indicative until the real purchase cost is known.
+	estimated := map[int64]bool{}
+	if pairs, perr := s.repo.EstimatedProducts(ctx, branchID); perr == nil {
+		for _, pv := range pairs {
+			estimated[pv[0]] = true
+		}
+	}
 	out := make([]ProductMargin, 0, len(acc))
+	ids := make([]int64, 0, len(acc))
 	for _, row := range acc {
+		row.CostIncomplete = estimated[row.ProductID]
 		row.Gross = row.Revenue - row.Cogs
 		if row.Revenue > 0 {
 			row.Percent = float64(row.Gross) * 100 / float64(row.Revenue)
 		}
-		if p, err := s.products.GetByID(ctx, row.ProductID); err == nil && p != nil {
-			row.ProductCode, row.ProductName = p.Code, p.Name
-		}
+		ids = append(ids, row.ProductID)
 		out = append(out, *row)
+	}
+	// One grouped read for the whole report — the aggregation above is
+	// already grouped, and decorating it per product would have put the N+1
+	// straight back in.
+	labels := s.productLabels(ctx, ids)
+	for i := range out {
+		if l, ok := labels[out[i].ProductID]; ok {
+			out[i].ProductCode, out[i].ProductName = l.Code, l.Name
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Gross == out[j].Gross {
@@ -122,12 +139,12 @@ type PartyBalance struct {
 
 // Receivables lists what customers still owe as of a date, from the books.
 func (s *Service) Receivables(ctx context.Context, branchID int64, asOf string) ([]PartyBalance, int64, error) {
-	return s.partyBalances(ctx, branchID, "1200", asOf, +1)
+	return s.partyBalances(ctx, branchID, "receivable", asOf, +1)
 }
 
 // Payables lists what the company still owes suppliers as of a date.
 func (s *Service) Payables(ctx context.Context, branchID int64, asOf string) ([]PartyBalance, int64, error) {
-	return s.partyBalances(ctx, branchID, "2100", asOf, -1)
+	return s.partyBalances(ctx, branchID, "payable", asOf, -1)
 }
 
 // partyBalances foots one control account by counterparty.
@@ -136,12 +153,12 @@ func (s *Service) Payables(ctx context.Context, branchID int64, asOf string) ([]
 // (piutang) is debit-heavy, a liability (hutang) credit-heavy. Fully settled
 // parties are dropped — a list of zeroes is noise, and the ones that matter
 // are the ones that are left.
-func (s *Service) partyBalances(ctx context.Context, branchID int64, accountCode, asOf string, sign int64) ([]PartyBalance, int64, error) {
+func (s *Service) partyBalances(ctx context.Context, branchID int64, mappingKey, asOf string, sign int64) ([]PartyBalance, int64, error) {
 	cutoff, err := endOfDay(asOf)
 	if err != nil {
 		return nil, 0, err
 	}
-	account, err := s.repo.AccountByCode(ctx, accountCode)
+	account, err := s.repo.MappingAccount(ctx, mappingKey)
 	if err != nil {
 		return nil, 0, apperror.Internal(err)
 	}
@@ -153,20 +170,23 @@ func (s *Service) partyBalances(ctx context.Context, branchID int64, accountCode
 		return nil, 0, apperror.Internal(err)
 	}
 	out := make([]PartyBalance, 0, len(footings))
+	ids := make([]int64, 0, len(footings))
 	var total int64
 	for _, f := range footings {
 		balance := sign * (f.Debit - f.Credit)
 		if balance == 0 {
 			continue
 		}
-		row := PartyBalance{PartyID: f.PartyID, Debit: f.Debit, Credit: f.Credit, Balance: balance}
-		if s.parties != nil {
-			if p, err := s.parties.GetByID(ctx, f.PartyID); err == nil && p != nil {
-				row.PartyName, row.PartyCode = p.Name, p.Code
-			}
-		}
-		out = append(out, row)
+		out = append(out, PartyBalance{PartyID: f.PartyID, Debit: f.Debit, Credit: f.Credit, Balance: balance})
+		ids = append(ids, f.PartyID)
 		total += balance
+	}
+	// One grouped read, not one per counterparty.
+	labels := s.partyLabels(ctx, ids)
+	for i := range out {
+		if l, ok := labels[out[i].PartyID]; ok {
+			out[i].PartyCode, out[i].PartyName = l.Code, l.Name
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Balance == out[j].Balance {

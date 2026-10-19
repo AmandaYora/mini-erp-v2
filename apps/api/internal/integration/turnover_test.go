@@ -70,7 +70,7 @@ func sellAndPost(t *testing.T, ctx context.Context, fx shopFixture, qty float64,
 	if err != nil {
 		t.Fatalf("create delivery: %v", err)
 	}
-	if _, err := m.delivery.Service().Confirm(ctx, 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{}); err != nil {
+	if _, err := m.delivery.Service().Confirm(ctx, 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
 		t.Fatalf("confirm delivery: %v", err)
 	}
 	if _, err := m.finance.Service().Post(ctx, 0, fx.branchID,
@@ -326,5 +326,36 @@ func TestCappedViewIsConsistentEverywhere(t *testing.T) {
 	}
 	if capped.Summary.PpnOut > full.Summary.PpnOut {
 		t.Fatal("limited VAT payable exceeds the real books")
+	}
+}
+
+// N10: a reversed delivery journal nets its order's turnover to zero — the
+// reversal is attributed to the document it undoes, not left as a one-sided
+// negative amount under "reversal".
+func TestReversedJournalNetsOrderTurnover(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	fx = newBigTicket(t, ctx(), fx)
+	soID := sellAndPost(t, ctx(), fx, 1, "2026-04-10")
+	var noteID int64
+	if err := testMods.db.QueryRow(`SELECT id FROM delivery_notes WHERE sales_order_id = ?`, soID).Scan(&noteID); err != nil {
+		t.Fatalf("note: %v", err)
+	}
+	fin := testMods.finance.Service()
+	if _, err := fin.Reverse(ctx(), 0, fx.branchID, mustEntryID(t, fx.branchID, "delivery", noteID), "uji"); err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	// The mirror is booked today, so read the whole year.
+	basis, err := fin.GrossTurnoverBasis(ctx(), 2026, 12)
+	if err != nil {
+		t.Fatalf("basis: %v", err)
+	}
+	for _, o := range basis.Orders {
+		if o.OrderID == soID && o.Revenue != 0 {
+			t.Fatalf("order turnover after reversal = %d, want 0", o.Revenue)
+		}
+	}
+	if basis.IncludedTurnover+basis.ExcludedTurnover != 0 {
+		t.Fatalf("turnover after reversal = %d + %d, want 0", basis.IncludedTurnover, basis.ExcludedTurnover)
 	}
 }

@@ -9,13 +9,20 @@ import (
 	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
 	"mini-erp/internal/modules/finance/contracts"
 	"mini-erp/internal/modules/finance/infrastructure"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
+	purchasereturncontracts "mini-erp/internal/modules/purchasereturn/contracts"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
+	salesreturncontracts "mini-erp/internal/modules/salesreturn/contracts"
 	"mini-erp/internal/shared/apperror"
+	"mini-erp/internal/shared/money"
 )
 
 // rawLeg is one leg under construction (account by code, dimensions raw).
 type rawLeg struct {
+	// key is the mapping key the leg posts to; code is an explicit account
+	// code for the rare caller that already resolved one.
+	key       string
 	code      string
 	debit     int64
 	credit    int64
@@ -39,6 +46,12 @@ func (s *Service) buildLines(ctx context.Context, branchID int64, docType string
 		return s.buildSalesReturn(ctx, branchID, docID)
 	case SourcePurchaseReturn:
 		return s.buildPurchaseReturn(ctx, branchID, docID)
+	case SourceSalesReturnSettlement:
+		return s.buildSalesReturnSettlement(ctx, branchID, docID)
+	case SourcePurchaseReturnSettlement:
+		return s.buildPurchaseReturnSettlement(ctx, branchID, docID)
+	case SourceStockMovement:
+		return s.buildStockMovement(ctx, branchID, docID)
 	default:
 		return nil, "", "", apperror.Validation("", []apperror.FieldError{{Field: "docType", Message: "tipe dokumen tidak dikenal"}})
 	}
@@ -51,12 +64,21 @@ func (s *Service) finish(ctx context.Context, raw []rawLeg) ([]*contracts.Journa
 		if (l.debit == 0 && l.credit == 0) || (l.debit > 0 && l.credit > 0) {
 			continue // zero legs carry no information; drop them silently
 		}
-		a, err := s.repo.AccountByCode(ctx, l.code)
-		if err != nil {
-			return nil, apperror.Internal(err)
+		var a *contracts.Account
+		var err error
+		if l.key != "" {
+			a, err = s.mustMap(ctx, l.key)
+		} else {
+			a, err = s.repo.AccountByCode(ctx, l.code)
+			if err == nil && (a == nil || a.Status != "active") {
+				err = apperror.Conflict("Akun '" + l.code + "' tidak tersedia")
+			}
 		}
-		if a == nil || a.Status != "active" {
-			return nil, apperror.Conflict("Akun '" + l.code + "' tidak tersedia")
+		if err != nil {
+			if _, ok := err.(*apperror.AppError); ok {
+				return nil, err
+			}
+			return nil, apperror.Internal(err)
 		}
 		out = append(out, &contracts.JournalLine{
 			AccountID: a.ID, AccountCode: a.Code, AccountName: a.Name,
@@ -66,6 +88,13 @@ func (s *Service) finish(ctx context.Context, raw []rawLeg) ([]*contracts.Journa
 		})
 	}
 	return out, nil
+}
+
+// prorateWindow values the slice [prior, prior+part] of a line of `whole` units
+// as the difference of two cumulative roundings. Summed over consecutive
+// documents it telescopes to the exact line amount, whatever the split.
+func prorateWindow(amount int64, prior, part, whole float64) int64 {
+	return money.Prorate(amount, prior+part, whole) - money.Prorate(amount, prior, whole)
 }
 
 func lineKeyOf(productID, variantID int64, uom string) string {
@@ -84,51 +113,6 @@ func recordedValue(moves map[string]infrastructure.MoveValue, productID, variant
 		return 0, false
 	}
 	return mv.Value, true
-}
-
-// lineEconomics recomputes one order line's net / tax base / tax from its
-// stored economics. Finance recomputes instead of reading LineTotal because
-// LineTotal is tax-INCLUSIVE: booking revenue or inventory from it overstates
-// both by the tax whenever the document is tax-inclusive.
-//
-// Formula mirrors the order pricing domains (gross − pct − nominal, half away
-// from zero at each step); each module owns its math per the monorepo
-// standard, so this is deliberate duplication, not a missing shared helper.
-//
-//	none:    base = net,               tax = 0
-//	exclude: base = net,               tax = round(net × rate/100)
-//	include: base = round(net/(1+r)),  tax = net − base
-//
-// `base` is always the amount that belongs in Persediaan / Penjualan, and
-// base+tax is always what the counterparty owes. That invariant is what makes
-// every entry below balanced by construction.
-func lineEconomics(qty float64, unit int64, pct float64, nominal int64, taxType string, rate float64) (net, base, tax int64) {
-	gross := round(qty * float64(unit))
-	net = gross - round(float64(gross)*pct/100) - nominal
-	switch taxType {
-	case "exclude":
-		base = net
-		tax = round(float64(net) * rate / 100)
-	case "include":
-		if rate > 0 {
-			base = round(float64(net) / (1 + rate/100))
-		} else {
-			base = net
-		}
-		tax = net - base
-	default:
-		base = net
-	}
-	return net, base, tax
-}
-
-// prorate scales a line amount by the delivered/received share of that line.
-// Returns 0 for a zero-qty source line rather than dividing by zero.
-func prorate(amount int64, part, whole float64) int64 {
-	if whole <= 0 {
-		return 0
-	}
-	return round(float64(amount) * part / whole)
 }
 
 // buildGoodsReceipt: Dr Persediaan (per produk, pro-rata PO tax base) +
@@ -163,17 +147,35 @@ func (s *Service) buildGoodsReceipt(ctx context.Context, branchID, receiptID int
 	}
 	legs := make([]rawLeg, 0, len(gr.Items)+2)
 	var inventory, taxIn int64
+	trackedLine := map[string]bool{}
+	for _, l := range po.Items {
+		if l.StockTracked {
+			trackedLine[lineKeyOf(l.ProductID, l.VariantID, l.UOM)] = true
+		}
+	}
+	before, err := s.goodsreceipt.PostedQtyBefore(ctx, po.ID, gr.ID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
 	for _, it := range gr.Items {
 		pl, ok := byKey[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
 		if !ok {
 			return nil, "", "", apperror.Conflict("Baris penerimaan tak cocok PO")
 		}
-		_, base, tax := lineEconomics(pl.Qty, pl.UnitPrice, pl.DiscountPct, pl.DiscountNominal, po.TaxType, po.TaxRate)
-		value := prorate(base, it.Qty, pl.Qty)
+		_, base, tax, _ := money.LineAmounts(pl.Qty, pl.UnitPrice, pl.DiscountPct, pl.DiscountNominal, po.TaxType, po.TaxRate).Split()
+		// The receipt that completes a line takes the rounding remainder, so the
+		// receipts of one line add up to its value exactly.
+		prior := before[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
+		value := prorateWindow(base, prior, it.Qty, pl.Qty)
 		inventory += value
-		taxIn += prorate(tax, it.Qty, pl.Qty)
+		taxIn += prorateWindow(tax, prior, it.Qty, pl.Qty)
+		// A purchased SERVICE is an expense, not inventory (no stock moved).
+		debitKey := "inventory"
+		if !trackedLine[lineKeyOf(it.ProductID, it.VariantID, it.UOM)] {
+			debitKey = "expense"
+		}
 		legs = append(legs, rawLeg{
-			code: "1300", debit: value,
+			key: debitKey, debit: value,
 			productID: it.ProductID, variantID: it.VariantID, note: pl.ProductName,
 		})
 	}
@@ -182,9 +184,9 @@ func (s *Service) buildGoodsReceipt(ctx context.Context, branchID, receiptID int
 		return nil, "", "", apperror.Conflict("Nilai penerimaan nol")
 	}
 	if taxIn != 0 {
-		legs = append(legs, rawLeg{code: "1400", debit: taxIn, note: "PPN Masukan " + po.Number})
+		legs = append(legs, rawLeg{key: "ppn_in", debit: taxIn, note: "PPN Masukan " + po.Number})
 	}
-	legs = append(legs, rawLeg{code: "2100", credit: payable, partyID: po.PartyID, note: po.PartyName})
+	legs = append(legs, rawLeg{key: "payable", credit: payable, partyID: po.PartyID, note: po.PartyName})
 	lines, err := s.finish(ctx, legs)
 	if err != nil {
 		return nil, "", "", err
@@ -210,13 +212,13 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 	if note == nil || note.BranchID != branchID {
 		return nil, "", "", apperror.NotFound("Surat jalan")
 	}
-	// Replacement shipments carry no revenue: the goods were already sold
-	// on the original order. Posting them here would double-book revenue.
-	// Warranty cost, if material, goes through a manual journal (D6: the
-	// dispatch-time catalog-price guard keeps zero-cost goods out of stock
-	// moves, so the books never silently absorb them either).
+	if note.Status != deliverycontracts.StatusConfirmed {
+		return nil, "", "", apperror.Conflict("Surat jalan belum dikonfirmasi atau sudah dibatalkan")
+	}
+	// A replacement shipment is a NEW sale (the exchange's replacement goods):
+	// it books its own revenue, tax and cost (F2b-2).
 	if note.DocumentKind == deliverycontracts.DocumentKindReplacement {
-		return nil, "", "", apperror.Conflict("Surat jalan pengganti tidak dijurnal otomatis")
+		return s.buildReplacementDelivery(ctx, branchID, note)
 	}
 	so, err := s.sales.GetByID(ctx, note.SalesOrderID)
 	if err != nil {
@@ -239,34 +241,44 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 		return nil, "", "", apperror.Internal(err)
 	}
 	var revenue, tax int64
+	before, err := s.delivery.ConfirmedQtyBefore(ctx, so.ID, note.ID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
 	for _, it := range note.Items {
 		sl, ok := byKey[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
 		if !ok {
 			return nil, "", "", apperror.Conflict("Baris surat jalan tak cocok SO")
 		}
-		_, base, lineTax := lineEconomics(sl.Qty, sl.UnitPrice, sl.DiscountPct, sl.DiscountNominal, so.TaxType, so.TaxRate)
-		rev := prorate(base, it.Qty, sl.Qty)
+		_, base, lineTax, _ := money.LineAmounts(sl.Qty, sl.UnitPrice, sl.DiscountPct, sl.DiscountNominal, so.TaxType, so.TaxRate).Split()
+		// The shipment that completes a line takes the rounding remainder, so the
+		// shipments of one line add up to its value exactly (3 x 1/3 of 100.000
+		// books 33.333 + 33.333 + 33.334, not 99.999).
+		prior := before[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
+		rev := prorateWindow(base, prior, it.Qty, sl.Qty)
 		revenue += rev
-		tax += prorate(lineTax, it.Qty, sl.Qty)
+		tax += prorateWindow(lineTax, prior, it.Qty, sl.Qty)
 		revenueLegs = append(revenueLegs, rawLeg{
-			code: "4000", credit: rev,
+			key: "revenue", credit: rev,
 			productID: it.ProductID, variantID: it.VariantID, note: sl.ProductName,
 		})
 		var cogs int64
-		if v, ok := recordedValue(moves, it.ProductID, it.VariantID); ok {
-			// The SJ's own out-movement, recorded negative.
-			cogs = round(-v)
-		} else {
-			avg, err := s.averageCost(ctx, branchID, it.ProductID, it.VariantID)
-			if err != nil {
-				return nil, "", "", err
+		if sl.StockTracked {
+			// The SJ's own out-movement, recorded negative. A tracked product
+			// with no recorded cost is NEVER booked at zero: the document waits
+			// until its cost is known (F2b-11).
+			v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+			if !ok {
+				return nil, "", "", apperror.Conflict("Biaya persediaan surat jalan belum tercatat — sinkronkan costing")
 			}
-			cogs = round(it.QtyBase * avg)
+			if cogs = money.Round(-v); cogs <= 0 {
+				return nil, "", "", apperror.Conflict("Harga modal produk " + sl.ProductName + " belum tersedia")
+			}
 		}
 		if cogs != 0 {
 			costLegs = append(costLegs,
-				rawLeg{code: "5000", debit: cogs, productID: it.ProductID, variantID: it.VariantID, note: sl.ProductName},
-				rawLeg{code: "1300", credit: cogs, productID: it.ProductID, variantID: it.VariantID, note: sl.ProductName},
+				rawLeg{key: "cogs", debit: cogs, productID: it.ProductID, variantID: it.VariantID, note: sl.ProductName},
+				rawLeg{key: "inventory", credit: cogs, productID: it.ProductID, variantID: it.VariantID, note: sl.ProductName},
 			)
 		}
 	}
@@ -275,10 +287,10 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 		return nil, "", "", apperror.Conflict("Nilai surat jalan nol")
 	}
 	legs := make([]rawLeg, 0, len(revenueLegs)+len(costLegs)+2)
-	legs = append(legs, rawLeg{code: "1200", debit: receivable, partyID: so.PartyID, note: so.PartyName})
+	legs = append(legs, rawLeg{key: "receivable", debit: receivable, partyID: so.PartyID, note: so.PartyName})
 	legs = append(legs, revenueLegs...)
 	if tax != 0 {
-		legs = append(legs, rawLeg{code: "2200", credit: tax, note: "PPN Keluaran " + so.Number})
+		legs = append(legs, rawLeg{key: "ppn_out", credit: tax, note: "PPN Keluaran " + so.Number})
 	}
 	legs = append(legs, costLegs...)
 	lines, err := s.finish(ctx, legs)
@@ -304,55 +316,41 @@ func (s *Service) buildPayment(ctx context.Context, branchID, paymentID int64) (
 	if p.Status != "active" {
 		return nil, "", "", apperror.Conflict("Pembayaran sudah dibatalkan")
 	}
-	var cashKey string
-	switch p.Method {
-	case "cash":
-		cashKey = "cash"
-	case "transfer":
-		cashKey = "bank"
-	case "offset":
-		// Contra legs still need a cash-side account for double entry;
-		// the method tag (not the account) is what cash reports filter on.
-		// Direction decides the side below, account is the default cash box.
-		cashKey = "cash"
-	default:
-		return nil, "", "", apperror.Conflict("Metode pembayaran tak dikenal")
-	}
-	cash, err := s.mustMap(ctx, cashKey)
+	kind, err := classifyPayment(p)
 	if err != nil {
 		return nil, "", "", err
 	}
+	if kind.skip {
+		return nil, "", "", apperror.Conflict("Pembayaran offset tidak dijurnal: retur sudah mengurangi tagihan di pembukuan")
+	}
 	var legs []rawLeg
-	var memo string
 	switch p.Direction {
-	case "in":
-		recv, err := s.mustMap(ctx, "receivable")
-		if err != nil {
-			return nil, "", "", err
-		}
+	case paymentcontracts.DirectionIn: // money comes in: Dr cash/bank, Cr counter-account
 		legs = []rawLeg{
-			{code: cash.Code, debit: p.Amount, note: p.Number},
-			{code: recv.Code, credit: p.Amount, partyID: p.PartyID, note: p.PartyName},
+			{key: kind.cashKey, debit: p.Amount, partyID: advanceParty(kind, p), note: p.Number},
+			{key: kind.counterKey, credit: p.Amount, partyID: p.PartyID, note: p.PartyName},
 		}
-		memo = fmt.Sprintf("Terima %s", p.Number)
-	case "out":
-		pay, err := s.mustMap(ctx, "payable")
-		if err != nil {
-			return nil, "", "", err
-		}
+	default: // money goes out: Dr counter-account, Cr cash/bank
 		legs = []rawLeg{
-			{code: pay.Code, debit: p.Amount, partyID: p.PartyID, note: p.PartyName},
-			{code: cash.Code, credit: p.Amount, note: p.Number},
+			{key: kind.counterKey, debit: p.Amount, partyID: p.PartyID, note: p.PartyName},
+			{key: kind.cashKey, credit: p.Amount, partyID: advanceParty(kind, p), note: p.Number},
 		}
-		memo = fmt.Sprintf("Bayar %s", p.Number)
-	default:
-		return nil, "", "", apperror.Conflict("Arah pembayaran tak dikenal")
 	}
 	lines, err := s.finish(ctx, legs)
 	if err != nil {
 		return nil, "", "", err
 	}
-	return lines, memo, p.PaidAt, nil
+	return lines, kind.memo + " " + p.Number, p.PaidAt, nil
+}
+
+// advanceParty is the party dimension of the saldo leg of a saldo use (N-41):
+// the advance account is a per-party balance, so its leg names the party. Cash
+// and bank legs stay party-less.
+func advanceParty(kind paymentKind, p *paymentcontracts.Payment) int64 {
+	if kind.advance {
+		return p.PartyID
+	}
+	return 0
 }
 
 // buildSalesReturn: restock at average (Dr Persediaan / Cr HPP) plus revenue
@@ -367,15 +365,24 @@ func (s *Service) buildSalesReturn(ctx context.Context, branchID, returnID int64
 	if full == nil || full.BranchID != branchID {
 		return nil, "", "", apperror.NotFound("Retur")
 	}
+	if full.Status != salesreturncontracts.StatusConfirmed {
+		return nil, "", "", apperror.Conflict("Retur belum dikonfirmasi atau sudah dibatalkan")
+	}
 	// The party lives on the originating SO, not on the return document.
 	// Without it the credit to Piutang would land in an "unknown party"
 	// bucket and the receivables report would never clear.
 	var partyID int64
 	var partyName string
+	soTracked := map[string]bool{}
 	if so, err := s.sales.GetByID(ctx, full.SalesOrderID); err != nil {
 		return nil, "", "", apperror.Internal(err)
 	} else if so != nil {
 		partyID, partyName = so.PartyID, so.PartyName
+		for _, l := range so.Items {
+			if l.StockTracked {
+				soTracked[strconv.FormatInt(l.ProductID, 10)+"/"+strconv.FormatInt(l.VariantID, 10)] = true
+			}
+		}
 	}
 	legs := make([]rawLeg, 0, len(full.Items)*3+2)
 	moves, err := s.repo.MoveValues(ctx, branchID, "sales_return", returnID)
@@ -384,21 +391,23 @@ func (s *Service) buildSalesReturn(ctx context.Context, branchID, returnID int64
 	}
 	for _, it := range full.Items {
 		// Restock at the return's own recorded in-value (= pre-restock
-		// average by construction of the cost ledger).
+		// average by construction of the cost ledger). Goods the customer
+		// keeps (not_returned) never came back: value is returned, no restock.
 		var restock int64
-		if v, ok := recordedValue(moves, it.ProductID, it.VariantID); ok {
-			restock = round(v)
-		} else {
-			avg, err := s.averageCost(ctx, branchID, it.ProductID, it.VariantID)
-			if err != nil {
-				return nil, "", "", err
+		tracked := soTracked[strconv.FormatInt(it.ProductID, 10)+"/"+strconv.FormatInt(it.VariantID, 10)]
+		if it.Condition != salesreturncontracts.ConditionNotReturned && tracked {
+			v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+			if !ok {
+				return nil, "", "", apperror.Conflict("Biaya persediaan retur belum tercatat — sinkronkan costing")
 			}
-			restock = round(it.QtyBase * avg)
+			if restock = money.Round(v); restock <= 0 {
+				return nil, "", "", apperror.Conflict("Harga modal produk pada retur belum tersedia")
+			}
 		}
 		if restock != 0 {
 			legs = append(legs,
-				rawLeg{code: "1300", debit: restock, productID: it.ProductID, variantID: it.VariantID},
-				rawLeg{code: "5000", credit: restock, productID: it.ProductID, variantID: it.VariantID},
+				rawLeg{key: "inventory", debit: restock, productID: it.ProductID, variantID: it.VariantID},
+				rawLeg{key: "cogs", credit: restock, productID: it.ProductID, variantID: it.VariantID},
 			)
 		}
 		// Revenue reversal books the TAX BASE per product (D1): the tax
@@ -406,7 +415,7 @@ func (s *Service) buildSalesReturn(ctx context.Context, branchID, returnID int64
 		// double-count it for tax-inclusive orders.
 		if it.TaxBase != 0 {
 			legs = append(legs, rawLeg{
-				code: "4100", debit: it.TaxBase,
+				key: "sales_return", debit: it.TaxBase,
 				productID: it.ProductID, variantID: it.VariantID,
 			})
 		}
@@ -415,9 +424,9 @@ func (s *Service) buildSalesReturn(ctx context.Context, branchID, returnID int64
 		return nil, "", "", apperror.Conflict("Nilai retur nol")
 	}
 	if full.TaxTotal != 0 {
-		legs = append(legs, rawLeg{code: "2200", debit: full.TaxTotal})
+		legs = append(legs, rawLeg{key: "ppn_out", debit: full.TaxTotal})
 	}
-	legs = append(legs, rawLeg{code: "1200", credit: full.Total, partyID: partyID, note: partyName})
+	legs = append(legs, rawLeg{key: "receivable", credit: full.Total, partyID: partyID, note: partyName})
 	lines, err := s.finish(ctx, legs)
 	if err != nil {
 		return nil, "", "", err
@@ -437,17 +446,26 @@ func (s *Service) buildPurchaseReturn(ctx context.Context, branchID, returnID in
 	if full == nil || full.BranchID != branchID {
 		return nil, "", "", apperror.NotFound("Retur")
 	}
+	if full.Status != purchasereturncontracts.StatusConfirmed {
+		return nil, "", "", apperror.Conflict("Retur belum dikonfirmasi atau sudah dibatalkan")
+	}
 	var partyID int64
 	var partyName string
+	trackedPO := map[string]bool{}
 	if po, err := s.purchasing.GetByID(ctx, full.PurchaseOrderID); err != nil {
 		return nil, "", "", apperror.Internal(err)
 	} else if po != nil {
 		partyID, partyName = po.PartyID, po.PartyName
+		for _, l := range po.Items {
+			if l.StockTracked {
+				trackedPO[strconv.FormatInt(l.ProductID, 10)+"/"+strconv.FormatInt(l.VariantID, 10)] = true
+			}
+		}
 	}
 	legs := make([]rawLeg, 0, len(full.Items)+4)
-	legs = append(legs, rawLeg{code: "2100", debit: full.Total, partyID: partyID, note: partyName})
+	legs = append(legs, rawLeg{key: "payable", debit: full.Total, partyID: partyID, note: partyName})
 	if full.TaxTotal != 0 {
-		legs = append(legs, rawLeg{code: "1400", credit: full.TaxTotal})
+		legs = append(legs, rawLeg{key: "ppn_in", credit: full.TaxTotal})
 	}
 	moves, err := s.repo.MoveValues(ctx, branchID, "purchase_return", returnID)
 	if err != nil {
@@ -455,20 +473,25 @@ func (s *Service) buildPurchaseReturn(ctx context.Context, branchID, returnID in
 	}
 	var relieved int64
 	for _, it := range full.Items {
+		if !trackedPO[strconv.FormatInt(it.ProductID, 10)+"/"+strconv.FormatInt(it.VariantID, 10)] {
+			// A service line was never inventory: the credit goes back to the
+			// expense account it was booked to, at its own value (no variance).
+			relieved += it.TaxBase
+			legs = append(legs, rawLeg{key: "expense", credit: it.TaxBase, note: "Retur jasa"})
+			continue
+		}
 		// Relieve at the return's own recorded out-value (stored negative).
 		var value int64
-		if v, ok := recordedValue(moves, it.ProductID, it.VariantID); ok {
-			value = round(-v)
-		} else {
-			avg, err := s.averageCost(ctx, branchID, it.ProductID, it.VariantID)
-			if err != nil {
-				return nil, "", "", err
-			}
-			value = round(it.QtyBase * avg)
+		v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+		if !ok {
+			return nil, "", "", apperror.Conflict("Biaya persediaan retur belum tercatat — sinkronkan costing")
+		}
+		if value = money.Round(-v); value <= 0 {
+			return nil, "", "", apperror.Conflict("Harga modal produk pada retur belum tersedia")
 		}
 		relieved += value
 		legs = append(legs, rawLeg{
-			code: "1300", credit: value,
+			key: "inventory", credit: value,
 			productID: it.ProductID, variantID: it.VariantID,
 		})
 	}
@@ -477,13 +500,218 @@ func (s *Service) buildPurchaseReturn(ctx context.Context, branchID, returnID in
 	// variance account.
 	switch diff := full.Subtotal - relieved; {
 	case diff > 0:
-		legs = append(legs, rawLeg{code: "6200", credit: diff, note: "Selisih harga retur " + full.Number})
+		legs = append(legs, rawLeg{key: "purchase_return_difference", credit: diff, note: "Selisih harga retur " + full.Number})
 	case diff < 0:
-		legs = append(legs, rawLeg{code: "6200", debit: -diff, note: "Selisih harga retur " + full.Number})
+		legs = append(legs, rawLeg{key: "purchase_return_difference", debit: -diff, note: "Selisih harga retur " + full.Number})
 	}
 	lines, err := s.finish(ctx, legs)
 	if err != nil {
 		return nil, "", "", err
 	}
 	return lines, fmt.Sprintf("Retur %s", full.Number), full.ReturnDate, nil
+}
+
+// dayOf trims a stored datetime to its date part.
+func dayOf(v string) string {
+	if len(v) >= 10 {
+		return v[:10]
+	}
+	return v
+}
+
+// buildSalesReturnSettlement reclassifies the part of a return kept as the
+// customer's balance (K-04a, legacy buildSalesReturnSettlementPlan "customer
+// credit" branch): the return journal credited Piutang for its full value, so
+// any excess over the open bill sits as a NEGATIVE receivable. Dr Piutang /
+// Cr Uang Muka Pelanggan (both on the customer) moves that credit out of
+// Piutang into its own liability line, so the balance sheet shows what we owe
+// the customer instead of netting it into receivables.
+func (s *Service) buildSalesReturnSettlement(ctx context.Context, branchID, settlementID int64) ([]*contracts.JournalLine, string, string, error) {
+	st, err := s.salesReturns.GetCreditSettlement(ctx, settlementID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if st == nil || st.BranchID != branchID {
+		return nil, "", "", apperror.NotFound("Penyelesaian retur")
+	}
+	if st.ReturnStatus != salesreturncontracts.StatusConfirmed {
+		return nil, "", "", apperror.Conflict("Retur belum dikonfirmasi atau sudah dibatalkan")
+	}
+	if st.Amount <= 0 {
+		return nil, "", "", apperror.Conflict("Nilai penyelesaian nol")
+	}
+	so, err := s.sales.GetByID(ctx, st.OrderID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if so == nil || so.PartyID == 0 {
+		return nil, "", "", apperror.Conflict("Saldo customer butuh order dengan data customer")
+	}
+	lines, err := s.finish(ctx, []rawLeg{
+		{key: "receivable", debit: st.Amount, partyID: so.PartyID, note: so.PartyName},
+		{key: "customer_advance", credit: st.Amount, partyID: so.PartyID, note: so.PartyName},
+	})
+	if err != nil {
+		return nil, "", "", err
+	}
+	return lines, fmt.Sprintf("Saldo customer retur %s", st.ReturnNumber), dayOf(st.Date), nil
+}
+
+// buildPurchaseReturnSettlement is the supplier mirror (legacy
+// buildPurchaseReturnSettlementPlan "supplier credit" branch): the return
+// journal debited Hutang for its full value, so the excess over the open bill
+// sits as a DEBIT balance in Hutang. Dr Uang Muka Supplier / Cr Hutang (both on
+// the supplier) turns it into an asset we can see and recover.
+func (s *Service) buildPurchaseReturnSettlement(ctx context.Context, branchID, settlementID int64) ([]*contracts.JournalLine, string, string, error) {
+	st, err := s.purchaseReturns.GetCreditSettlement(ctx, settlementID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if st == nil || st.BranchID != branchID {
+		return nil, "", "", apperror.NotFound("Penyelesaian retur")
+	}
+	if st.ReturnStatus != purchasereturncontracts.StatusConfirmed {
+		return nil, "", "", apperror.Conflict("Retur belum dikonfirmasi atau sudah dibatalkan")
+	}
+	if st.Amount <= 0 {
+		return nil, "", "", apperror.Conflict("Nilai penyelesaian nol")
+	}
+	po, err := s.purchasing.GetByID(ctx, st.OrderID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if po == nil || po.PartyID == 0 {
+		return nil, "", "", apperror.Conflict("Saldo supplier butuh order dengan data supplier")
+	}
+	lines, err := s.finish(ctx, []rawLeg{
+		{key: "supplier_advance", debit: st.Amount, partyID: po.PartyID, note: po.PartyName},
+		{key: "payable", credit: st.Amount, partyID: po.PartyID, note: po.PartyName},
+	})
+	if err != nil {
+		return nil, "", "", err
+	}
+	return lines, fmt.Sprintf("Saldo supplier retur %s", st.ReturnNumber), dayOf(st.Date), nil
+}
+
+// buildReplacementDelivery books the replacement goods of an exchange as a new
+// sale (F2b-2): Dr Piutang (customer of the source order) / Cr Penjualan per
+// product at the stored tax base / Cr PPN Keluaran, plus cost of goods from the
+// shipment's own recorded stock-out. The signed difference to the returned
+// goods is NOT journalled separately: the net receivable already is that
+// difference.
+func (s *Service) buildReplacementDelivery(ctx context.Context, branchID int64, note *deliverycontracts.DeliveryNote) ([]*contracts.JournalLine, string, string, error) {
+	ret, err := s.salesReturns.GetByID(ctx, note.SalesReturnID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if ret == nil || ret.BranchID != branchID {
+		return nil, "", "", apperror.NotFound("Retur")
+	}
+	so, err := s.sales.GetByID(ctx, ret.SalesOrderID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if so == nil {
+		return nil, "", "", apperror.NotFound("Order")
+	}
+	byKey := map[string]*salesreturncontracts.ReplacementItem{}
+	for _, ri := range ret.ReplacementItems {
+		byKey[lineKeyOf(ri.ProductID, ri.VariantID, ri.UOM)] = ri
+	}
+	moves, err := s.repo.MoveValues(ctx, branchID, "delivery", note.ID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	var revenue, tax int64
+	legs := make([]rawLeg, 0, len(note.Items)*3+2)
+	for _, it := range note.Items {
+		ri, ok := byKey[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
+		if !ok {
+			return nil, "", "", apperror.Conflict("Baris surat jalan pengganti tak cocok retur tukar")
+		}
+		base := money.Prorate(ri.TaxBase, it.Qty, ri.Qty)
+		lineTax := money.Prorate(ri.TaxAmount, it.Qty, ri.Qty)
+		revenue += base
+		tax += lineTax
+		legs = append(legs, rawLeg{key: "revenue", credit: base, productID: it.ProductID, variantID: it.VariantID, note: "Barang pengganti"})
+		v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+		if !ok {
+			return nil, "", "", apperror.Conflict("Biaya persediaan surat jalan pengganti belum tercatat — sinkronkan costing")
+		}
+		if cogs := money.Round(-v); cogs != 0 {
+			legs = append(legs,
+				rawLeg{key: "cogs", debit: cogs, productID: it.ProductID, variantID: it.VariantID, note: "Barang pengganti"},
+				rawLeg{key: "inventory", credit: cogs, productID: it.ProductID, variantID: it.VariantID, note: "Barang pengganti"},
+			)
+		}
+	}
+	receivable := revenue + tax
+	if receivable <= 0 {
+		return nil, "", "", apperror.Conflict("Nilai surat jalan pengganti nol")
+	}
+	legs = append(legs, rawLeg{key: "receivable", debit: receivable, partyID: so.PartyID, note: so.PartyName})
+	if tax != 0 {
+		legs = append(legs, rawLeg{key: "ppn_out", credit: tax, note: "PPN Keluaran " + so.Number})
+	}
+	lines, err := s.finish(ctx, legs)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return lines, fmt.Sprintf("Kirim pengganti %s atas %s", note.Number, so.Number), note.DeliveryDate, nil
+}
+
+// buildStockMovement journals one stock adjustment or write-off at the value
+// its cost-ledger row recorded (exact, never the live average):
+//
+//	adjustment in  (surplus)  Dr inventory   / Cr adjustment
+//	adjustment out (shortage) Dr adjustment  / Cr inventory
+//	write-off      (out)      Dr writeoff    / Cr inventory
+//
+// A zero or estimated-with-no-price value blocks the document (F2b-11).
+func (s *Service) buildStockMovement(ctx context.Context, branchID, movementID int64) ([]*contracts.JournalLine, string, string, error) {
+	row, err := s.repo.CostRowByMovement(ctx, branchID, movementID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
+	if row == nil || (row.RefType != "adjustment" && row.RefType != "write_off") {
+		return nil, "", "", apperror.NotFound("Mutasi stok")
+	}
+	value := money.Round(row.TotalCost)
+	if value < 0 {
+		value = -value
+	}
+	if value == 0 {
+		return nil, "", "", apperror.Conflict("Harga modal produk pada mutasi stok belum tersedia")
+	}
+	var legs []rawLeg
+	var memo string
+	switch {
+	case row.RefType == "write_off":
+		legs = []rawLeg{
+			{key: "writeoff", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Hapus stok rusak"},
+			{key: "inventory", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Hapus stok rusak"},
+		}
+		memo = "Hapus stok rusak"
+	case row.Direction == "in":
+		legs = []rawLeg{
+			{key: "inventory", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Selisih stok lebih"},
+			{key: "adjustment", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Selisih stok lebih"},
+		}
+		memo = "Koreksi stok (lebih)"
+	default:
+		legs = []rawLeg{
+			{key: "adjustment", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Selisih stok kurang"},
+			{key: "inventory", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Selisih stok kurang"},
+		}
+		memo = "Koreksi stok (kurang)"
+	}
+	lines, err := s.finish(ctx, legs)
+	if err != nil {
+		return nil, "", "", err
+	}
+	date := row.MovedAt
+	if len(date) >= 10 {
+		date = date[:10]
+	}
+	return lines, memo, date, nil
 }

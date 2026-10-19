@@ -2,10 +2,12 @@ package application
 
 import (
 	"context"
-	"crypto/rand"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strconv"
 	"strings"
+	"time"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	"mini-erp/internal/modules/party/contracts"
@@ -63,6 +65,32 @@ func (s *Service) NamesByIDs(ctx context.Context, ids []int64) (map[int64]string
 	return names, nil
 }
 
+// SearchIDs implements contracts.PartyClient: ids of parties matching a term.
+func (s *Service) SearchIDs(ctx context.Context, partyType, term string, limit int) ([]int64, error) {
+	term = strings.TrimSpace(term)
+	if len([]rune(term)) < contracts.MinSearchChars {
+		return nil, nil
+	}
+	if limit <= 0 || limit > contracts.MaxSearchIDs {
+		limit = contracts.MaxSearchIDs
+	}
+	ids, err := s.repo.SearchIDs(ctx, partyType, term, limit)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return ids, nil
+}
+
+// LabelsByIDs resolves party code+name in one grouped read, for readers that
+// display both (receivables/payables).
+func (s *Service) LabelsByIDs(ctx context.Context, ids []int64) (map[int64]contracts.Label, error) {
+	labels, err := s.repo.LabelsByIDs(ctx, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return labels, nil
+}
+
 func (s *Service) enrich(ctx context.Context, p *contracts.Party) (*contracts.Party, error) {
 	if p.MemberTypeID != nil {
 		m, err := s.repo.MemberTypeByID(ctx, *p.MemberTypeID)
@@ -103,6 +131,44 @@ type PartyInput struct {
 	Notes        string
 	MemberTypeID *int64
 	ClearMember  bool
+	// Attributes replaces the "Informasi Tambahan" block when non-nil
+	// (an empty non-nil map clears it); nil keeps what is stored.
+	Attributes map[string]string
+}
+
+// Bounds of the Informasi Tambahan block (safety net; legacy has none).
+const (
+	maxAttributes     = 20
+	maxAttributeKey   = 60
+	maxAttributeValue = 255
+)
+
+// cleanAttributes trims, validates and returns the attribute map.
+func cleanAttributes(in map[string]string) (map[string]string, []apperror.FieldError) {
+	if in == nil {
+		return nil, nil
+	}
+	var fields []apperror.FieldError
+	if len(in) > maxAttributes {
+		fields = append(fields, apperror.FieldError{Field: "attributes", Message: "maksimal " + strconv.Itoa(maxAttributes) + " informasi tambahan"})
+		return nil, fields
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		key, val := strings.TrimSpace(k), strings.TrimSpace(v)
+		switch {
+		case key == "" || len([]rune(key)) > maxAttributeKey:
+			fields = append(fields, apperror.FieldError{Field: "attributes", Message: "nama informasi tambahan wajib 1-" + strconv.Itoa(maxAttributeKey) + " karakter"})
+		case val == "" || len([]rune(val)) > maxAttributeValue:
+			fields = append(fields, apperror.FieldError{Field: "attributes", Message: "isi '" + key + "' wajib 1-" + strconv.Itoa(maxAttributeValue) + " karakter"})
+		default:
+			if _, dup := out[key]; dup {
+				fields = append(fields, apperror.FieldError{Field: "attributes", Message: "nama '" + key + "' ganda"})
+			}
+			out[key] = val
+		}
+	}
+	return out, fields
 }
 
 func (s *Service) validateParty(partyType string, in PartyInput) []apperror.FieldError {
@@ -116,29 +182,31 @@ func (s *Service) validateParty(partyType string, in PartyInput) []apperror.Fiel
 	if !validPhone(strings.TrimSpace(in.Phone)) {
 		fail("phone", "format telepon tidak valid")
 	}
+	if _, attrFields := cleanAttributes(in.Attributes); len(attrFields) > 0 {
+		fields = append(fields, attrFields...)
+	}
 	return fields
 }
 
-// autoCode generates a collision-retried code for quick-add flows (KI-64:
-// concurrent creators must never share a code).
-func (s *Service) autoCode(ctx context.Context, partyType string) (string, error) {
-	prefix := "PLG-"
+// autoCodePrefix is the legacy sequential prefix (CUS-001 / SUP-001).
+func autoCodePrefix(partyType string) string {
 	if partyType == contracts.PartySupplier {
-		prefix = "SUP-"
+		return "SUP-"
 	}
-	for i := 0; i < 10; i++ {
-		var raw [4]byte
-		if _, err := rand.Read(raw[:]); err != nil {
-			return "", err
-		}
-		code := fmt.Sprintf("%s%X", prefix, raw)
-		if dup, err := s.repo.PartyByCode(ctx, code, partyType); err != nil {
-			return "", err
-		} else if dup == nil {
-			return code, nil
-		}
+	return "CUS-"
+}
+
+// autoCode proposes the next sequential code (legacy parity: max + 1 over ALL
+// rows of the type, archived included, 3-digit minimum). Two concurrent
+// creators may propose the same code; the UNIQUE (code, party_type) key lets
+// exactly one insert win and createParty retries the loser with a fresh read.
+func (s *Service) autoCode(ctx context.Context, partyType string) (string, error) {
+	prefix := autoCodePrefix(partyType)
+	max, err := s.repo.MaxCodeNumber(ctx, partyType, prefix)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("gagal membuat kode unik")
+	return fmt.Sprintf("%s%03d", prefix, max+1), nil
 }
 
 // resolveMember validates the member type for customers. Suppliers never
@@ -170,29 +238,43 @@ func (s *Service) createParty(ctx context.Context, actorID int64, partyType stri
 		return nil, apperror.Validation("", fields)
 	}
 	code := strings.ToUpper(strings.TrimSpace(in.Code))
-	if code == "" {
-		generated, err := s.autoCode(ctx, partyType)
-		if err != nil {
+	auto := code == ""
+	if !auto {
+		if dup, err := s.repo.PartyByCode(ctx, code, partyType); err != nil {
 			return nil, apperror.Internal(err)
+		} else if dup != nil {
+			return nil, dupConflict(dup)
 		}
-		code = generated
-	} else if dup, err := s.repo.PartyByCode(ctx, code, partyType); err != nil {
-		return nil, apperror.Internal(err)
-	} else if dup != nil {
-		return nil, dupConflict(dup)
 	}
 	if _, err := s.resolveMember(ctx, partyType, in.MemberTypeID); err != nil {
 		return nil, err
 	}
-	id, err := s.repo.CreateParty(ctx, &contracts.Party{
-		Code: code, Type: partyType, Name: strings.TrimSpace(in.Name),
-		Phone: strings.TrimSpace(in.Phone), Email: strings.TrimSpace(in.Email),
-		Address: in.Address, Notes: in.Notes, MemberTypeID: in.MemberTypeID,
-	}, actorID)
-	if err != nil {
-		return nil, dberr.Map(err)
+	attrs, _ := cleanAttributes(in.Attributes)
+	for attempt := 0; ; attempt++ {
+		if auto {
+			generated, err := s.autoCode(ctx, partyType)
+			if err != nil {
+				return nil, apperror.Internal(err)
+			}
+			code = generated
+		}
+		id, err := s.repo.CreateParty(ctx, &contracts.Party{
+			Code: code, Type: partyType, Name: strings.TrimSpace(in.Name),
+			Phone: strings.TrimSpace(in.Phone), Email: strings.TrimSpace(in.Email),
+			Address: in.Address, Notes: in.Notes, MemberTypeID: in.MemberTypeID,
+			Attributes: attrs,
+		}, actorID)
+		if err != nil {
+			if auto && attempt < 25 && dberr.IsDuplicate(err) {
+				// Lost the race for this number: back off a little (jittered
+				// so racers do not collide again in lockstep), read the new max.
+				time.Sleep(time.Duration(rand.IntN(4*(attempt+1))+1) * time.Millisecond)
+				continue
+			}
+			return nil, dberr.Map(err)
+		}
+		return s.GetByID(ctx, id)
 	}
-	return s.GetByID(ctx, id)
 }
 
 // dupConflict names the holder, adding "(ada di Sampah)" when archived
@@ -277,6 +359,9 @@ func (s *Service) updateParty(ctx context.Context, actorID, id int64, partyType 
 	existing.Address = in.Address
 	existing.Notes = in.Notes
 	existing.MemberTypeID = memberID
+	if in.Attributes != nil {
+		existing.Attributes, _ = cleanAttributes(in.Attributes)
+	}
 	if err := s.repo.UpdateParty(ctx, existing, actorID); err != nil {
 		return nil, dberr.Map(err)
 	}
@@ -574,8 +659,15 @@ func (s *Service) validateMemberType(in MemberTypeInput) []apperror.FieldError {
 	if in.Type != domain.AdjustPercent && in.Type != domain.AdjustNominal {
 		fail("type", "harus percent atau nominal")
 	}
-	if in.Type == domain.AdjustPercent && (in.Value < 0 || in.Value > 100) {
-		fail("value", "persen harus 0–100")
+	if in.Type == domain.AdjustPercent {
+		switch {
+		case in.Value < 0:
+			fail("value", "tidak boleh negatif")
+		case in.Direction == domain.DirMinus && in.Value > 100:
+			fail("value", "potongan persen maksimal 100")
+		case in.Value > domain.MaxPercent:
+			fail("value", "persen maksimal "+strconv.Itoa(domain.MaxPercent))
+		}
 	}
 	if in.Type == domain.AdjustNominal && in.Value < 0 {
 		fail("value", "tidak boleh negatif")
@@ -584,6 +676,9 @@ func (s *Service) validateMemberType(in MemberTypeInput) []apperror.FieldError {
 	// without a mode, is rejected — except step 0 with mode none.
 	if in.Mode == "" {
 		in.Mode = domain.RoundNone
+	}
+	if _, _, ok := domain.NormalizeRounding(in.Mode, in.Step); !ok {
+		fail("mode", "harus none, nearest, up, atau down")
 	}
 	if in.Mode != domain.RoundNone && in.Step <= 0 {
 		fail("step", "kelipatan wajib diisi bila mode pembulatan dipakai")
@@ -637,6 +732,11 @@ func normalizeMemberInput(in MemberTypeInput) MemberTypeInput {
 	in.Direction = orDefault(in.Direction, domain.DirMinus)
 	in.Type = orDefault(in.Type, domain.AdjustPercent)
 	in.Mode = orDefault(in.Mode, domain.RoundNone)
+	// Pre-parity names (round_100, floor, ceil...) are folded into the
+	// legacy vocabulary; unknown names are left for validation to reject.
+	if m, st, ok := domain.NormalizeRounding(in.Mode, in.Step); ok {
+		in.Mode, in.Step = m, st
+	}
 	return in
 }
 
@@ -654,6 +754,15 @@ func memberDupConflict(dup *contracts.MemberType) *apperror.AppError {
 	return apperror.Conflict("Kode member '" + dup.Code + "' sudah digunakan")
 }
 
+// memberTypeSnapshot is the audit view of a member type (F3b-8).
+func memberTypeSnapshot(m *contracts.MemberType) map[string]any {
+	return map[string]any{
+		"code": m.Code, "name": m.Name, "description": m.Description, "priceBasis": m.PriceBasis,
+		"direction": m.Direction, "adjustmentType": m.AdjustmentType, "adjustment": m.Adjustment,
+		"roundingMode": m.RoundingMode, "roundingStep": m.RoundingStep, "status": m.Status,
+	}
+}
+
 // UpdateMemberType rewrites a member type (code immutable).
 func (s *Service) UpdateMemberType(ctx context.Context, actorID, id int64, in MemberTypeInput) (*contracts.MemberType, error) {
 	existing, err := s.repo.MemberTypeByID(ctx, id)
@@ -667,6 +776,7 @@ func (s *Service) UpdateMemberType(ctx context.Context, actorID, id int64, in Me
 	if fields := s.validateMemberType(in); len(fields) > 0 {
 		return nil, apperror.Validation("", fields)
 	}
+	beforeMember := memberTypeSnapshot(existing)
 	existing.Name = strings.TrimSpace(in.Name)
 	existing.Description = in.Description
 	existing.PriceBasis = in.Basis
@@ -682,8 +792,30 @@ func (s *Service) UpdateMemberType(ctx context.Context, actorID, id int64, in Me
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "member_types.update", Entity: "member_type", EntityID: updated.ID, BranchID: 0, ActorID: actorID, Note: updated.Code})
+	_ = s.audit.Log(ctx, auditcontracts.Entry{
+		Action: "member_types.update", Entity: "member_type", EntityID: updated.ID, BranchID: 0, ActorID: actorID, Note: updated.Code,
+		Before: beforeMember, After: memberTypeSnapshot(updated),
+	})
 	return updated, nil
+}
+
+// CountMemberTypeCustomers is the archive-impact figure (D3/PR-09): how many
+// active customers currently hold this member type. Archiving stays allowed;
+// those customers then fall back to standard prices (KI-72), so the dialog
+// shows the number before the user confirms.
+func (s *Service) CountMemberTypeCustomers(ctx context.Context, id int64) (int64, error) {
+	existing, err := s.repo.MemberTypeByID(ctx, id)
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+	if existing == nil {
+		return 0, apperror.NotFound("Tipe member")
+	}
+	n, err := s.repo.CountActiveCustomersByMemberType(ctx, id)
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+	return n, nil
 }
 
 // ArchiveMemberType archives a member type (history keeps pointing at it).
@@ -733,15 +865,14 @@ func (s *Service) ListMemberTypes(ctx context.Context, search, status string) ([
 // --- pricing ----------------------------------------------------------------
 
 // Quote prices product lines for a customer. customerID 0 means walk-in
-// (standard prices, no member). Failures are explicit 400s naming the line —
-// never silent stale prices (OQ-A30). An inactive membership degrades to
-// standard with the memberInactive marker set (KI-72).
+// (standard prices, no member). Request-level problems (no lines, too many,
+// unknown customer) are 400/404s; a problem with one PRODUCT is reported on
+// its own line (QuoteLine.Error) so one bad line never fails the cart. An
+// inactive membership degrades to standard with the memberInactive marker
+// set (KI-72). Products resolve in ONE batch read, never one per line.
 func (s *Service) Quote(ctx context.Context, customerID int64, productIDs []int64) (*contracts.QuoteResult, error) {
-	if len(productIDs) == 0 {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "productIds", Message: "wajib diisi"}})
-	}
-	if len(productIDs) > 100 {
-		return nil, apperror.Validation("", []apperror.FieldError{{Field: "productIds", Message: "maksimal 100 baris per quote"}})
+	if appErr := checkQuoteLines(productIDs); appErr != nil {
+		return nil, appErr
 	}
 	res := &contracts.QuoteResult{Lines: []contracts.QuoteLine{}}
 	var member *contracts.MemberType
@@ -766,43 +897,105 @@ func (s *Service) Quote(ctx context.Context, customerID int64, productIDs []int6
 			}
 		}
 	}
-	for i, pid := range productIDs {
-		p, err := s.products.GetByID(ctx, pid)
-		if err != nil {
-			return nil, apperror.Internal(err)
-		}
-		if p == nil {
-			return nil, apperror.Validation("", []apperror.FieldError{
-				{Field: "productIds", Message: "produk baris " + strconv.Itoa(i+1) + " tidak ditemukan"},
-			})
-		}
-		if p.Status != "active" {
-			return nil, apperror.Validation("", []apperror.FieldError{
-				{Field: "productIds", Message: "produk baris " + strconv.Itoa(i+1) + " sudah diarsipkan"},
-			})
-		}
-		line := contracts.QuoteLine{ProductID: pid, StandardPrice: p.SellingPrice, MemberPrice: p.SellingPrice}
-		if member != nil {
-			base := p.SellingPrice
-			switch member.PriceBasis {
-			case domain.BasisMinSellingPrice:
-				base = p.MinSellingPrice
-			case domain.BasisPurchasePrice:
-				base = p.PurchasePrice
+	return s.priceLines(ctx, res, member, productIDs)
+}
+
+func checkQuoteLines(productIDs []int64) *apperror.AppError {
+	if len(productIDs) == 0 {
+		return apperror.Validation("", []apperror.FieldError{{Field: "productIds", Message: "wajib diisi"}})
+	}
+	if len(productIDs) > 100 {
+		return apperror.Validation("", []apperror.FieldError{{Field: "productIds", Message: "maksimal 100 baris per quote"}})
+	}
+	return nil
+}
+
+// QuoteForMemberType prices lines for an explicit member type with no
+// customer (PR-10: "what would this tier pay?" — price checks, the member
+// type form preview). An unknown type is a 404; an archived one degrades to
+// standard prices with the memberInactive marker, like an inactive membership.
+func (s *Service) QuoteForMemberType(ctx context.Context, memberTypeID int64, productIDs []int64) (*contracts.QuoteResult, error) {
+	if appErr := checkQuoteLines(productIDs); appErr != nil {
+		return nil, appErr
+	}
+	m, err := s.repo.MemberTypeByID(ctx, memberTypeID)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	if m == nil {
+		return nil, apperror.NotFound("Tipe member")
+	}
+	res := &contracts.QuoteResult{Lines: []contracts.QuoteLine{}}
+	var member *contracts.MemberType
+	if m.Status != "active" {
+		res.MemberInactive = true
+	} else {
+		member = m
+		res.MemberType = m.Code
+	}
+	return s.priceLines(ctx, res, member, productIDs)
+}
+
+// priceLines prices every product line (one batch read) under the resolved
+// member rule, or at standard prices when member is nil.
+func (s *Service) priceLines(ctx context.Context, res *contracts.QuoteResult, member *contracts.MemberType, productIDs []int64) (*contracts.QuoteResult, error) {
+	infos, err := s.products.PricingByIDs(ctx, productIDs)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	for _, pid := range productIDs {
+		line := contracts.QuoteLine{ProductID: pid}
+		info, ok := infos[pid]
+		switch {
+		case !ok:
+			line.Error = "produk tidak ditemukan"
+		case info.Status != "active":
+			line.StandardPrice, line.MemberPrice = info.SellingPrice, info.SellingPrice
+			line.Error = "produk '" + info.Code + "' tidak aktif"
+		default:
+			line.StandardPrice, line.MemberPrice = info.SellingPrice, info.SellingPrice
+			if member != nil {
+				price, msg := memberPrice(member, info)
+				if msg != "" {
+					line.Error = msg
+				} else {
+					line.MemberPrice = price
+					line.Applied = true
+				}
+			} else {
+				line.MemberInactive = res.MemberInactive
 			}
-			price := domain.ApplyRule(base, member.Direction, member.AdjustmentType,
-				member.Adjustment, member.RoundingMode, member.RoundingStep)
-			if price < 0 {
-				return nil, apperror.Validation("", []apperror.FieldError{
-					{Field: "productIds", Message: "harga member baris " + strconv.Itoa(i+1) + " negatif"},
-				})
-			}
-			line.MemberPrice = price
-			line.Applied = true
-		} else {
-			line.MemberInactive = res.MemberInactive
 		}
 		res.Lines = append(res.Lines, line)
 	}
 	return res, nil
+}
+
+// memberPrice applies a member rule to one product. A non-empty message is
+// the line error: the rule cannot price this product (legacy requirePrice —
+// an empty basis price is an error, never a silent zero).
+func memberPrice(m *contracts.MemberType, p productcontracts.PricingInfo) (int64, string) {
+	base, err := domain.BasePrice(m.PriceBasis, p.SellingPrice, p.MinSellingPrice,
+		p.PurchasePrice, p.PurchaseFactor, p.SalesFactor)
+	if err != nil {
+		if errors.Is(err, domain.ErrBasePrice) {
+			return 0, "Produk '" + p.Code + "' belum memiliki harga " + basisLabel(m.PriceBasis)
+		}
+		return 0, "Konversi satuan produk '" + p.Code + "' tidak valid"
+	}
+	price := domain.ApplyRule(base, m.Direction, m.AdjustmentType, m.Adjustment, m.RoundingMode, m.RoundingStep)
+	if price < 0 {
+		return 0, "harga member produk '" + p.Code + "' negatif"
+	}
+	return price, ""
+}
+
+func basisLabel(basis string) string {
+	switch basis {
+	case domain.BasisMinSellingPrice:
+		return "jual minimum"
+	case domain.BasisPurchasePrice:
+		return "beli"
+	}
+	return "jual normal"
 }
