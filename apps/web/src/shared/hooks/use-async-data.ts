@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useEffectEvent, useState } from "react";
-import { toApiError } from "@/shared/services/http-client";
+import { isAbort, toApiError } from "@/shared/services/http-client";
 
 export interface AsyncData<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
+  /** Status HTTP galat terakhir (404 = data tidak ada); null bila tak ada galat/bukan HTTP. */
+  errorStatus: number | null;
   reload: () => void;
 }
 
@@ -27,12 +29,13 @@ export interface AsyncData<T> {
  * disengaja dan terdokumentasi, bukan pengabaian massal per halaman.
  */
 export function useAsyncData<T>(
-  loader: () => Promise<T>,
+  loader: (signal: AbortSignal) => Promise<T>,
   deps: unknown[],
 ): AsyncData<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
 
   const loadNow = useEffectEvent(loader);
@@ -48,6 +51,12 @@ export function useAsyncData<T>(
 
   useEffect(() => {
     let alive = true;
+    // Pembatalan nyata, bukan sekadar mengabaikan hasil: ganti filter atau
+    // pindah halaman saat request masih jalan dulu hanya membuang responsnya
+    // — koneksinya tetap dipakai sampai selesai, dan di daftar yang berat
+    // request basi itu mengantre di depan request yang benar-benar dilihat
+    // pengguna. `alive` tetap ada untuk loader yang mengabaikan signal.
+    const controller = new AbortController();
     // Satu-satunya penekanan set-state-in-effect di seluruh frontend.
     // Baris di bawah adalah I/O (fetch + alive-guard), bukan derived state —
     // kasus sah untuk effect yang tidak bisa dipindah ke event handler
@@ -55,21 +64,29 @@ export function useAsyncData<T>(
     /* eslint-disable react-hooks/set-state-in-effect */
     setLoading(true);
     setError(null);
+    setErrorStatus(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-    loadNow()
+    loadNow(controller.signal)
       .then((result) => {
         if (alive) setData(result);
       })
       .catch((err) => {
-        if (alive) setError(toApiError(err).message);
+        // Request yang kita batalkan sendiri bukan kegagalan — jangan
+        // tampilkan pesan error untuk sesuatu yang memang sudah usang.
+        if (alive && !isAbort(err)) {
+          const apiErr = toApiError(err);
+          setError(apiErr.message);
+          setErrorStatus(apiErr.status > 0 ? apiErr.status : null);
+        }
       })
       .finally(() => {
         if (alive) setLoading(false);
       });
     return () => {
       alive = false;
+      controller.abort();
     };
   }, [depsKey, nonce]);
 
-  return { data, loading, error, reload };
+  return { data, loading, error, errorStatus, reload };
 }

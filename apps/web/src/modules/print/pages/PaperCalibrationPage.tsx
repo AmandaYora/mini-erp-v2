@@ -3,13 +3,17 @@
 // company_settings (merge di server, seperti halaman Perusahaan).
 
 import { useMemo, useState } from "react";
+import { Printer } from "lucide-react";
 import {
   Button,
+  Checkbox,
   FormField,
   PageHeader,
   SectionCard,
   TextInput,
 } from "@/shared/components/ui";
+import { Page } from "@/shared/components/patterns";
+import { CardSkeleton } from "@/shared/components/feedback/skeleton";
 import { Notice } from "@/shared/components/feedback/notice";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
@@ -150,156 +154,142 @@ export default function PaperCalibrationPage() {
     }
   }
 
+  const readOnlyHint = !canManage ? (
+    <Notice tone="info" title="Mode baca saja">
+      Anda tidak memiliki izin mengubah kalibrasi. Isian terkunci dan tidak dapat disimpan; pratinjau dan cetak uji tetap bisa dipakai.
+    </Notice>
+  ) : null;
+
   return (
-    <div>
+    <Page className="print:block">
       <style>{calibrationTestStyles(preview)}</style>
       <PageHeader
-        eyebrow="Pengaturan"
-        title="Kalibrasi Kertas"
+        title="Kalibrasi kertas"
         description="Ubah ukuran form lalu cetak halaman uji — tanpa deploy ulang."
         actions={
-          <Button variant="secondary" onClick={() => window.print()}>
-            Cetak Halaman Uji
+          <Button onClick={() => window.print()}>
+            <Printer aria-hidden /> Cetak halaman uji
           </Button>
         }
       />
 
       {loading ? (
-        <p className="text-muted py-6 text-sm">Memuat profil dokumen…</p>
+        <div className="no-print grid gap-6 lg:grid-cols-[22rem_minmax(0,1fr)]">
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
       ) : (
-        <div className="no-print space-y-6">
-          {corrupt ? (
-            <Notice tone="warning" title="Profil tersimpan rusak">
-              Nilai {DOCUMENT_PROFILE_KEY} bukan JSON valid — form menampilkan
-              default. Simpan untuk menimpanya.
-            </Notice>
-          ) : null}
-          {error !== null ? <Notice tone="danger" title={error} /> : null}
+        <div className="grid items-start gap-6 lg:grid-cols-[22rem_minmax(0,1fr)] print:block">
+          <div className="no-print flex flex-col gap-6">
+            {readOnlyHint}
+            {corrupt ? (
+              <Notice tone="warning" title="Profil tersimpan rusak">
+                Nilai {DOCUMENT_PROFILE_KEY} bukan JSON valid — form menampilkan default. Simpan untuk menimpanya.
+              </Notice>
+            ) : null}
+            {error !== null ? <Notice tone="danger" title={error} /> : null}
 
-          <SectionCard
-            title="Ukuran Form Kontinu (mm)"
-            description="Ukuran harus identik dengan ukuran kertas custom di driver printer. Margin kanan 37,91 mengkompensasi jangkauan print head, bukan margin visual."
-            actions={
-              canManage ? (
-                <Button onClick={() => void handleSave()} disabled={saving}>
-                  {saving ? "Menyimpan…" : "Simpan Kalibrasi"}
-                </Button>
-              ) : undefined
-            }
-          >
-            <fieldset disabled={!canManage || saving}>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <FormField label="Lebar">
-                  <TextInput
-                    inputMode="decimal"
-                    value={str(widthMm)}
-                    onChange={(e) => setPaperText("widthMm", e.target.value)}
-                  />
-                </FormField>
-                <FormField label="Tinggi">
-                  <TextInput
-                    inputMode="decimal"
-                    value={str(heightMm)}
-                    onChange={(e) => setPaperText("heightMm", e.target.value)}
-                  />
-                </FormField>
-                <FormField label="Margin atas">
-                  <TextInput
-                    inputMode="decimal"
-                    value={str(marginTopMm)}
-                    onChange={(e) => setPaperText("marginTopMm", e.target.value)}
-                  />
-                </FormField>
-                <FormField label="Margin kanan">
-                  <TextInput
-                    inputMode="decimal"
-                    value={str(marginRightMm)}
-                    onChange={(e) => setPaperText("marginRightMm", e.target.value)}
-                  />
-                </FormField>
-                <FormField label="Margin bawah">
-                  <TextInput
-                    inputMode="decimal"
-                    value={str(marginBottomMm)}
-                    onChange={(e) => setPaperText("marginBottomMm", e.target.value)}
-                  />
-                </FormField>
-                <FormField label="Margin kiri">
-                  <TextInput
-                    inputMode="decimal"
-                    value={str(marginLeftMm)}
-                    onChange={(e) => setPaperText("marginLeftMm", e.target.value)}
-                  />
-                </FormField>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-6">
-                <label className="flex items-center gap-2 text-sm text-ink">
-                  <input
-                    type="checkbox"
+            <SectionCard
+              title="Ukuran form kontinu (mm)"
+              description="Ukuran harus identik dengan ukuran kertas custom di driver printer. Margin kanan 37,91 mengkompensasi jangkauan print head, bukan margin visual."
+            >
+              <fieldset disabled={!canManage || saving} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField label="Lebar" htmlFor="calib-width">
+                    <TextInput id="calib-width" inputMode="decimal" value={str(widthMm)} onChange={(e) => setPaperText("widthMm", e.target.value)} />
+                  </FormField>
+                  <FormField label="Tinggi" htmlFor="calib-height">
+                    <TextInput id="calib-height" inputMode="decimal" value={str(heightMm)} onChange={(e) => setPaperText("heightMm", e.target.value)} />
+                  </FormField>
+                  <FormField label="Margin atas" htmlFor="calib-mt">
+                    <TextInput id="calib-mt" inputMode="decimal" value={str(marginTopMm)} onChange={(e) => setPaperText("marginTopMm", e.target.value)} />
+                  </FormField>
+                  <FormField label="Margin kanan" htmlFor="calib-mr">
+                    <TextInput id="calib-mr" inputMode="decimal" value={str(marginRightMm)} onChange={(e) => setPaperText("marginRightMm", e.target.value)} />
+                  </FormField>
+                  <FormField label="Margin bawah" htmlFor="calib-mb">
+                    <TextInput id="calib-mb" inputMode="decimal" value={str(marginBottomMm)} onChange={(e) => setPaperText("marginBottomMm", e.target.value)} />
+                  </FormField>
+                  <FormField label="Margin kiri" htmlFor="calib-ml">
+                    <TextInput id="calib-ml" inputMode="decimal" value={str(marginLeftMm)} onChange={(e) => setPaperText("marginLeftMm", e.target.value)} />
+                  </FormField>
+                </div>
+                <label htmlFor="calib-letterhead" className="flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
+                  <Checkbox
+                    id="calib-letterhead"
                     checked={showLetterhead ?? CONTINUOUS_PAPER_DEFAULTS.showLetterhead}
-                    onChange={(e) => setPaper({ showLetterhead: e.target.checked })}
+                    onCheckedChange={(v) => setPaper({ showLetterhead: v === true })}
                   />
                   Tampilkan kop (matikan untuk form preprinted)
                 </label>
-                <label className="flex items-center gap-2 text-sm text-ink">
-                  <input
-                    type="checkbox"
+                <label htmlFor="calib-default" className="flex cursor-pointer items-center gap-2.5 text-sm text-foreground">
+                  <Checkbox
+                    id="calib-default"
                     checked={isDefault ?? false}
-                    onChange={(e) => setPaper({ isDefault: e.target.checked })}
+                    onCheckedChange={(v) => setPaper({ isDefault: v === true })}
                   />
                   Jadikan mode cetak bawaan
                 </label>
-              </div>
-            </fieldset>
-          </SectionCard>
+              </fieldset>
+              {canManage ? (
+                <div className="mt-5 flex justify-end border-t border-border pt-4">
+                  <Button onClick={() => void handleSave()} loading={saving}>
+                    {saving ? "Menyimpan…" : "Simpan kalibrasi"}
+                  </Button>
+                </div>
+              ) : null}
+            </SectionCard>
 
-          <SectionCard
-            title="Hasil @page"
-            description="Aturan yang akan dipakai halaman cetak mode kontinu."
-          >
-            <code className="text-muted block text-[0.82rem] break-all">
-              {continuousPageRule(preview)}
-            </code>
-            <p className="text-muted mt-2 text-[0.82rem]">
-              Lebar konten: {fmtMm(contentWidthMm(preview))} mm · Tinggi konten:{" "}
-              {fmtMm(contentHeightMm(preview))} mm
-            </p>
-          </SectionCard>
+            <SectionCard title="Hasil @page" description="Aturan yang akan dipakai halaman cetak mode kontinu.">
+              <code className="block text-xs break-all text-muted-foreground">{continuousPageRule(preview)}</code>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Lebar konten: {fmtMm(contentWidthMm(preview))} mm · Tinggi konten: {fmtMm(contentHeightMm(preview))} mm
+              </p>
+            </SectionCard>
+          </div>
+
+          {/* Pratinjau = lembar uji yang sama dengan yang dicetak (kontrol di kiri .no-print). */}
+          <div className="min-w-0 overflow-x-auto rounded-xl border border-border bg-muted p-4 print:overflow-visible print:rounded-none print:border-0 print:bg-transparent print:p-0">
+            <CalibrationSheet preview={preview} />
+          </div>
         </div>
       )}
+    </Page>
+  );
+}
 
-      {/* Lembar uji — satu-satunya yang tercetak (toolbar di atas .no-print). */}
-      <div className="calib-sheet" aria-label="Halaman uji cetak">
-        <div style={{ fontWeight: 800, fontSize: "11pt", marginBottom: "4px" }}>
-          HALAMAN UJI CETAK
-        </div>
-        <div style={{ marginBottom: "6px" }}>
-          {fmtMm(preview.widthMm)} × {fmtMm(preview.heightMm)} mm · margin{" "}
-          {fmtMm(preview.marginTopMm)}/{fmtMm(preview.marginRightMm)}/
-          {fmtMm(preview.marginBottomMm)}/{fmtMm(preview.marginLeftMm)} mm
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: "8%" }}>No</th>
-              <th style={{ width: "52%" }}>Kolom teks</th>
-              <th style={{ width: "20%" }}>Qty</th>
-              <th style={{ width: "20%" }}>Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>1</td><td>ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789</td><td>12</td><td>1.250.000</td></tr>
-            <tr><td>2</td><td>abcdefghijklmnopqrstuvw xyz — uji huruf kecil</td><td>3,5</td><td>175.000</td></tr>
-            <tr><td>3</td><td>Batas kanan tabel ini = batas jangkauan print head</td><td>1</td><td>50.000</td></tr>
-          </tbody>
-        </table>
-        <div style={{ marginTop: "6px" }}>
-          ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
-        </div>
-        <div style={{ marginTop: "4px" }}>
-          Tepi kanan garis di atas harus masih tercetak penuh — bila terpotong,
-          naikkan margin kanan lalu cetak uji lagi.
-        </div>
+function CalibrationSheet({ preview }: { preview: ReturnType<typeof resolvePaperProfile> }) {
+  return (
+    <div className="calib-sheet" aria-label="Halaman uji cetak">
+      <div style={{ fontWeight: 800, fontSize: "11pt", marginBottom: "4px" }}>
+        HALAMAN UJI CETAK
+      </div>
+      <div style={{ marginBottom: "6px" }}>
+        {fmtMm(preview.widthMm)} × {fmtMm(preview.heightMm)} mm · margin{" "}
+        {fmtMm(preview.marginTopMm)}/{fmtMm(preview.marginRightMm)}/
+        {fmtMm(preview.marginBottomMm)}/{fmtMm(preview.marginLeftMm)} mm
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style={{ width: "8%" }}>No</th>
+            <th style={{ width: "52%" }}>Kolom teks</th>
+            <th style={{ width: "20%" }}>Qty</th>
+            <th style={{ width: "20%" }}>Nominal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789</td><td>12</td><td>1.250.000</td></tr>
+          <tr><td>2</td><td>abcdefghijklmnopqrstuvw xyz — uji huruf kecil</td><td>3,5</td><td>175.000</td></tr>
+          <tr><td>3</td><td>Batas kanan tabel ini = batas jangkauan print head</td><td>1</td><td>50.000</td></tr>
+        </tbody>
+      </table>
+      <div style={{ marginTop: "6px" }}>
+        ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+      </div>
+      <div style={{ marginTop: "4px" }}>
+        Tepi kanan garis di atas harus masih tercetak penuh — bila terpotong,
+        naikkan margin kanan lalu cetak uji lagi.
       </div>
     </div>
   );

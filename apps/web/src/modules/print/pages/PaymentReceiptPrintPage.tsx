@@ -1,7 +1,8 @@
 // Kwitansi Pembayaran — A4 + kertas kontinu (Tahap E4).
 //
 // Data: paymentService.get (paymentView + alokasi order). Nominal + terbilang
-// + alokasi per order tercetak; tanda tangan penerima/pembayar.
+// + alokasi per order tercetak. Paritas legacy (BR-30): kwitansi TANPA blok
+// tanda tangan (disengaja); terbilang dipertahankan.
 
 import { useParams, useSearchParams } from "react-router-dom";
 import { formatDate, formatDateTime, formatIDR } from "@/shared/lib/format";
@@ -14,29 +15,34 @@ import {
   withPaperModeParam,
   type PrintPaperMode,
 } from "@/modules/print/paper";
+import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import {
+  fetchAllocationBilling,
   fetchPaymentForPrint,
+  type AllocationBilling,
   type Payment,
 } from "@/modules/print/services/print-fetch";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
-import { directionLabel, methodLabel } from "@/modules/payment/types";
+import { directionLabel, methodLabel, orderTypeLabel } from "@/modules/payment/types";
 import { continuousReceiptStyles, receiptStyles } from "@/modules/print/styles";
 
 export default function PaymentReceiptPrintPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { identity, paper, corrupt, loading: profileLoading } = usePrintProfile();
+  const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
 
   const paymentId = Number(id);
 
-  const { data: payment, loading, error } = useAsyncData(
-    async (): Promise<Payment> => {
+  const { data: bundle, loading, error } = useAsyncData(
+    async (): Promise<{ payment: Payment; billing: Record<string, AllocationBilling> }> => {
       if (!Number.isInteger(paymentId) || paymentId <= 0) {
         throw new Error("ID pembayaran tidak valid.");
       }
       try {
-        return await fetchPaymentForPrint(paymentId);
+        const p = await fetchPaymentForPrint(paymentId);
+        // Ringkasan tagihan per order dialokasi: best-effort, tak menggagalkan cetak.
+        return { payment: p, billing: await fetchAllocationBilling(p.allocations) };
       } catch (err) {
         const msg = toApiError(err).message;
         toast.danger("Gagal memuat kwitansi", msg);
@@ -49,6 +55,8 @@ export default function PaymentReceiptPrintPage() {
   if (loading || profileLoading) {
     return <div style={{ padding: "2rem" }}>Memuat kwitansi…</div>;
   }
+  const payment: Payment | null = bundle?.payment ?? null;
+  const billing = bundle?.billing ?? {};
   if (error !== null || payment === null) {
     return (
       <div style={{ padding: "2rem" }}>{error ?? "Pembayaran tidak ditemukan."}</div>
@@ -75,13 +83,7 @@ export default function PaymentReceiptPrintPage() {
       paperMode={paperMode}
       onPaperModeChange={(m) => setSearchParams(withPaperModeParam(searchParams, m), { replace: true })}
       letterheadToggle={null}
-      notice={
-        corrupt ? (
-          <div className="no-print print-warning">
-            Profil kertas tersimpan rusak — memakai default 241,3 × 139,7 mm. Perbaiki di kalibrasi kertas.
-          </div>
-        ) : undefined
-      }
+      notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
       mainClassName={isContinuous ? "kwitansi-page continuous" : "kwitansi-page"}
     >
       <div className="kwitansi-head">
@@ -116,6 +118,17 @@ export default function PaymentReceiptPrintPage() {
           <div className="kwitansi-kv">
             <span>Metode</span><span>{methodLabel(payment.method)}</span>
             <span>Tanggal</span><span>{formatDateTime(payment.paidAt)}</span>
+            {payment.method === "cash" && payment.amountTendered > 0 ? (
+              <>
+                <span>Tunai diterima</span><span>{formatIDR(payment.amountTendered)}</span>
+                <span>Kembalian</span><span>{formatIDR(payment.change)}</span>
+              </>
+            ) : null}
+            {payment.reference.trim() !== "" ? (
+              <>
+                <span>Referensi</span><span>{payment.reference}</span>
+              </>
+            ) : null}
           </div>
         </div>
       </section>
@@ -127,16 +140,23 @@ export default function PaymentReceiptPrintPage() {
               <th>No. Order</th>
               <th>Jenis</th>
               <th style={{ textAlign: "right" }}>Nominal</th>
+              <th style={{ textAlign: "right" }}>Total Tagihan</th>
+              <th style={{ textAlign: "right" }}>Sisa Tagihan (saat cetak)</th>
             </tr>
           </thead>
           <tbody>
-            {payment.allocations.map((alloc, idx) => (
-              <tr key={`${alloc.orderType}-${alloc.orderId}-${idx}`}>
-                <td>{alloc.orderNumber}</td>
-                <td>{alloc.orderType}</td>
-                <td className="num">{formatIDR(alloc.amount)}</td>
-              </tr>
-            ))}
+            {payment.allocations.map((alloc, idx) => {
+              const b = billing[`${alloc.orderType}:${alloc.orderId}`];
+              return (
+                <tr key={`${alloc.orderType}-${alloc.orderId}-${idx}`}>
+                  <td>{alloc.orderNumber}</td>
+                  <td>{orderTypeLabel(alloc.orderType)}</td>
+                  <td className="num">{formatIDR(alloc.amount)}</td>
+                  <td className="num">{b ? formatIDR(b.total) : "-"}</td>
+                  <td className="num">{b ? formatIDR(b.outstanding) : "-"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       ) : null}
@@ -153,20 +173,6 @@ export default function PaymentReceiptPrintPage() {
           <strong>Catatan:</strong> {payment.notes}
         </div>
       ) : null}
-
-      <div className="kwitansi-sign">
-        <div className="box">
-          <div>{incoming ? "Pembayar" : "Penerima"}</div>
-          <div className="line">{partyName}</div>
-        </div>
-        <div className="box">
-          <div>
-            {identity.cityLine !== "" ? `${identity.cityLine}, ` : ""}
-            {formatDate(payment.paidAt)}
-          </div>
-          <div className="line">( .................... )</div>
-        </div>
-      </div>
     </PrintLayout>
   );
 }

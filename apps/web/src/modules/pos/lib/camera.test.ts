@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cameraFallbackMessage,
   cameraUnavailableReason,
+  pickRearCamera,
 } from "@/modules/pos/lib/camera";
 
 describe("cameraUnavailableReason", () => {
@@ -32,5 +33,18 @@ describe("cameraUnavailableReason", () => {
   it("pesan fallback berbahasa Indonesia", () => {
     expect(cameraFallbackMessage("no_camera")).toContain("ketik manual");
     expect(cameraFallbackMessage("insecure_context")).toContain("HTTPS");
+  });
+});
+
+describe("pickRearCamera", () => {
+  const cam = (deviceId: string, label: string) => ({ deviceId, label });
+  it("memilih label kamera belakang", () => {
+    expect(pickRearCamera([cam("a", "Back Camera"), cam("b", "Front Camera")])?.deviceId).toBe("a");
+  });
+  it("tanpa petunjuk label: yang terakhir", () => {
+    expect(pickRearCamera([cam("a", ""), cam("b", "")])?.deviceId).toBe("b");
+  });
+  it("daftar kosong: undefined", () => {
+    expect(pickRearCamera([])).toBeUndefined();
   });
 });

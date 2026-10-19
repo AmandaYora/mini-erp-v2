@@ -1,6 +1,7 @@
 import {
   apiGet,
   apiPage,
+  apiPost,
   apiPostFull,
   apiPutFull,
   apiUploadFull,
@@ -10,6 +11,8 @@ import type {
   AdjustmentPayload,
   BranchOption,
   DamagedMovePayload,
+  ScanResult,
+  DamagedPage,
   DamagedWriteOffPayload,
   LocationPayload,
   OpeningPreview,
@@ -18,18 +21,35 @@ import type {
   ProductDetail,
   ProductOption,
   StockBalance,
+  StockBalanceRow,
   StockLocation,
   StockMovement,
   StockTransfer,
   TransferPayload,
 } from "@/modules/stock/types";
+import { isStrictAdjust } from "@/modules/stock/schemas/stock.schema";
 
 export interface MovementParams {
   productId?: number | null;
   variantId?: number | null;
   locationId?: number | null;
+  /** "in" | "out" (tipe mutasi, ST-04). */
+  type?: string;
   dateFrom?: string;
   dateTo?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface BalanceListParams {
+  locationId?: number | null;
+  negative?: boolean;
+  /** Cari kode/nama produk (server). */
+  search?: string;
+  /** Hanya produk di/bawah batas minimum. */
+  criticalOnly?: boolean;
+  /** Sertakan lokasi rusak (default server: tidak). */
+  includeDamaged?: boolean;
   page?: number;
   limit?: number;
 }
@@ -52,18 +72,31 @@ function toForm(file: File): FormData {
 }
 
 export const stockService = {
-  // GET /api/v1/stock/locations?status= — array langsung (bukan paginasi).
-  listLocations: (status?: string) =>
-    apiGet<StockLocation[]>(
-      "/api/v1/stock/locations",
-      status ? { status } : undefined,
-    ),
+  // GET /api/v1/stock/locations?status=&branchId= — array langsung (bukan paginasi).
+  // branchId (K-06) meminta lokasi cabang lain (tujuan transfer); backend
+  // menjawab 403 bila user tak punya akses ke cabang itu.
+  listLocations: (status?: string, branchId?: number | null) =>
+    apiGet<StockLocation[]>("/api/v1/stock/locations", {
+      ...(status ? { status } : {}),
+      ...(branchId ? { branchId } : {}),
+    }),
 
   createLocation: (body: LocationPayload) =>
     apiPostFull<StockLocation>("/api/v1/stock/locations", body),
 
-  // Update backend hanya menerima {name, parentId} — kode tidak bisa diubah.
-  updateLocation: (id: number, body: { name: string; parentId: number | null }) =>
+  // Update menerima {code?, name, parentId, forceTransfer?, isPickingArea?, isPrimary?, sortOrder?}.
+  updateLocation: (
+    id: number,
+    body: {
+      code?: string;
+      name: string;
+      parentId: number | null;
+      forceTransfer?: boolean;
+      isPickingArea?: boolean;
+      isPrimary?: boolean;
+      sortOrder?: number;
+    },
+  ) =>
     apiPutFull<StockLocation>(`/api/v1/stock/locations/${id}`, body),
 
   archiveLocation: (id: number) =>
@@ -73,6 +106,22 @@ export const stockService = {
   // Tidak ada param locationId/limit di backend: filter lokasi sisi klien.
   balancesByProduct: (productId: number) =>
     apiGet<StockBalance[]>("/api/v1/stock/balances", { productId }),
+
+  // GET /api/v1/stock/balances TANPA productId — saldo seluruh cabang,
+  // paginasi {page,limit,total,total_pages}; filter locationId, negative=true.
+  listBalances: (params: BalanceListParams) =>
+    apiPage<StockBalanceRow>(
+      "/api/v1/stock/balances",
+      cleanParams({
+        locationId: params.locationId,
+        negative: params.negative ? true : undefined,
+        search: params.search,
+        criticalOnly: params.criticalOnly ? true : undefined,
+        includeDamaged: params.includeDamaged ? true : undefined,
+        page: params.page ?? 1,
+        limit: params.limit ?? 20,
+      }),
+    ),
 
   // GET /api/v1/stock/balances/{productId} (J5) — alias path-style dengan
   // bentuk respons yang sama, untuk halaman detail deep-link.
@@ -88,6 +137,7 @@ export const stockService = {
         productId: params.productId,
         variantId: params.variantId,
         locationId: params.locationId,
+        type: params.type,
         dateFrom: params.dateFrom,
         dateTo: params.dateTo,
         page: params.page ?? 1,
@@ -95,18 +145,33 @@ export const stockService = {
       }),
     ),
 
+  // Kebijakan stock_adjust_always_approve dari GET /company/settings (merge
+  // key-value string). Ketat secara default: hanya "false" eksplisit yang
+  // melonggarkan. Gagal baca (tanpa izin) = ketat; server tetap otoritas.
+  adjustAlwaysApprove: async (): Promise<boolean> => {
+    const s = await apiGet<Record<string, string> | null>(
+      "/api/v1/company/settings",
+    );
+    return isStrictAdjust(s?.stock_adjust_always_approve);
+  },
+
   createAdjustment: (body: AdjustmentPayload) =>
     apiPostFull<unknown>("/api/v1/stock/adjustments", body),
 
-  // GET /api/v1/stock/transfers?status=&page=&limit= — paginasi.
-  listTransfers: (params: { status?: string; page?: number; limit?: number }) =>
+  // GET /api/v1/stock/transfers?status=&direction=out|in|internal&page=&limit= — paginasi.
+  listTransfers: (
+    params: { status?: string; direction?: string; page?: number; limit?: number },
+    signal?: AbortSignal,
+  ) =>
     apiPage<StockTransfer>(
       "/api/v1/stock/transfers",
       cleanParams({
         status: params.status,
+        direction: params.direction,
         page: params.page ?? 1,
         limit: params.limit ?? 20,
       }),
+      signal,
     ),
 
   createTransfer: (body: TransferPayload) =>
@@ -128,7 +193,13 @@ export const stockService = {
     apiPostFull<StockTransfer>(`/api/v1/stock/transfers/${id}/cancel`),
 
   // GET /api/v1/stock/damaged — saldo di lokasi RUSAK (bentuk balanceView).
-  damagedList: () => apiGet<StockBalance[]>("/api/v1/stock/damaged"),
+  // Respons objek {items,total,withStock,empty,totalEstimatedLoss,...}; paginasi server (ST-03).
+  damagedList: (p: { page: number; limit: number; empty?: boolean }) =>
+    apiGet<DamagedPage>("/api/v1/stock/damaged", {
+      page: p.page,
+      limit: p.limit,
+      empty: p.empty ? true : undefined,
+    }),
 
   damagedMoveIn: (body: DamagedMovePayload) =>
     apiPostFull<unknown>("/api/v1/stock/damaged/move-in", body),
@@ -148,6 +219,9 @@ export const stockService = {
       q && q.trim() !== "" ? { q: q.trim() } : undefined,
     ),
 
+  // POST /api/v1/stock/scan-product {barcode} — barcode, kode varian, atau kode produk (ST-06).
+  scan: (barcode: string) => apiPost<ScanResult>("/api/v1/stock/scan-product", { barcode }),
+
   // Detail produk untuk daftar varian (productView backend memuat variants[]).
   getProduct: (id: number) => apiGet<ProductDetail>(`/api/v1/products/${id}`),
 
@@ -159,6 +233,11 @@ export const stockService = {
     });
     return res.items;
   },
+
+  // GET /api/v1/branches/my-access — cabang aktif yang boleh diakses user
+  // (login saja; tujuan transfer hanya cabang yang boleh dijangkau, K-06).
+  listAccessibleBranches: (): Promise<BranchOption[]> =>
+    apiGet<BranchOption[]>("/api/v1/branches/my-access"),
 
   // POST multipart field "file" (httpx.FormFile("file")) →
   // {validRows, errors[{row,column,value,reason}]}. Tanpa commit.

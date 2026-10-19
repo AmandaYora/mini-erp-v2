@@ -1,34 +1,72 @@
-import { useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { Archive, QrCode } from "lucide-react";
 import {
-  ActionRow,
   Badge,
   Button,
   ConfirmDialog,
   DataTable,
+  DetailSkeleton,
   PageHeader,
   SectionCard,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
 } from "@/shared/components/ui";
+import {
+  ActionMenu,
+  DescriptionList,
+  DocNumber,
+  FileDropzone,
+  Money,
+  Page,
+  Qty,
+  useUrlTab,
+} from "@/shared/components/patterns";
+import type { DescriptionItem } from "@/shared/components/patterns";
+import { EmptyState } from "@/shared/components/feedback/empty-state";
+import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
-import { formatIDR, formatNumber, statusLabel, statusTone } from "@/shared/lib/format";
+import { NotFoundState } from "@/shared/components/feedback/not-found-state";
+import { TableSkeleton } from "@/shared/components/feedback/skeleton";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
+import { ROUTE_PATHS, stockItemPath } from "@/app/routes/route-paths";
 import { toast } from "@/shared/stores/toast.store";
 import { productsService } from "@/modules/products/services/products.service";
 import QrModal from "@/modules/products/components/QrModal";
-import type { ProductMedia } from "@/modules/products/types";
+import { classifyServerMessage, guardTitle, productTypeLabel } from "@/modules/products/lib/product-form";
+import {
+  MEDIA_ACCEPT_ATTR,
+  formatDimensions,
+  validatePhotoFile,
+} from "@/modules/products/lib/media-rules";
+import type { ProductMedia, ProductStockBalance, ProductVariant } from "@/modules/products/types";
+
+const TABS = ["ringkasan", "harga", "varian", "foto", "stok"] as const;
+
+interface StockRow {
+  variantId: number;
+  name: string;
+  onHand: number;
+  reserved: number;
+  available: number;
+}
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const productId = Number(id);
   const invalidId = !Number.isInteger(productId) || productId <= 0;
 
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveError, setArchiveError] = useState<{ title: string; message: string } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -37,8 +75,18 @@ export default function ProductDetailPage() {
 
   const canUpdate = can("products.update");
   const canArchive = can("products.archive");
+  const canStock = can("stock.view");
 
-  const { data, loading, error: fetchError, reload } = useAsyncData(
+  const [rawTab, setTab] = useUrlTab(TABS, "ringkasan");
+  const tab = rawTab === "stok" && !canStock ? "ringkasan" : rawTab;
+
+  const {
+    data,
+    loading,
+    error: fetchError,
+    errorStatus,
+    reload,
+  } = useAsyncData(
     () => {
       if (invalidId) return Promise.resolve(null);
       return (async () => {
@@ -56,7 +104,41 @@ export default function ProductDetailPage() {
   );
   const product = data?.product ?? null;
   const media = data?.media ?? [];
-  const error = invalidId ? "ID produk tidak valid." : fetchError;
+  usePageCrumb(product?.name);
+
+  // Saldo stok dimuat saat tab Stok dibuka (dan hanya untuk produk terpantau).
+  const stockWanted = tab === "stok" && canStock && product !== null && product.tracked;
+  const {
+    data: balances,
+    loading: stockLoading,
+    error: stockError,
+    reload: reloadStock,
+  } = useAsyncData(
+    () => (stockWanted ? productsService.stockBalances(productId) : Promise.resolve(null)),
+    [stockWanted, productId],
+  );
+
+  const stockRows: StockRow[] = useMemo(() => {
+    if (!product || !balances) return [];
+    const names = new Map<number, string>(
+      product.variants.map((v: ProductVariant) => [v.id, v.isHidden ? "Varian bawaan" : v.name || v.code]),
+    );
+    const sum = new Map<number, StockRow>();
+    for (const b of balances as ProductStockBalance[]) {
+      const row = sum.get(b.variantId) ?? {
+        variantId: b.variantId,
+        name: names.get(b.variantId) ?? `Varian #${b.variantId}`,
+        onHand: 0,
+        reserved: 0,
+        available: 0,
+      };
+      row.onHand += b.onHand;
+      row.reserved += b.reserved;
+      row.available += b.available;
+      sum.set(b.variantId, row);
+    }
+    return [...sum.values()];
+  }, [product, balances]);
 
   async function handleArchive() {
     setArchiving(true);
@@ -64,26 +146,37 @@ export default function ProductDetailPage() {
       const res = await productsService.archive(productId);
       toast.fromServer(res.message, "Produk diarsipkan");
       setArchiveOpen(false);
+      setArchiveError(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal mengarsipkan", toApiError(err).message);
+      const message = toApiError(err).message;
+      setArchiveOpen(false);
+      setArchiveError({ title: guardTitle(classifyServerMessage(message)), message });
+      toast.danger("Gagal mengarsipkan", message);
     } finally {
       setArchiving(false);
     }
   }
 
-  async function handleUpload(file: File | undefined) {
-    if (!file) return;
+  async function handleUpload(file: File) {
+    const rejected = validatePhotoFile(file);
+    if (rejected) {
+      setUploadError(rejected);
+      toast.warning("Foto ditolak", rejected);
+      return;
+    }
+    setUploadError(null);
     setUploading(true);
     try {
       const res = await productsService.uploadMedia(productId, file);
       toast.fromServer(res.message, "Foto diunggah");
       reload();
     } catch (err) {
-      toast.danger("Gagal mengunggah foto", toApiError(err).message);
+      const message = toApiError(err).message;
+      setUploadError(message);
+      toast.danger("Gagal mengunggah foto", message);
     } finally {
       setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
   }
 
@@ -115,211 +208,321 @@ export default function ProductDetailPage() {
     }
   }
 
-  if (loading) {
-    return <p className="text-muted py-10 text-center text-sm">Memuat…</p>;
+  if (invalidId || errorStatus === 404) {
+    return (
+      <NotFoundState
+        title="Produk tidak ditemukan"
+        message={invalidId ? "ID produk tidak valid." : "Produk ini tidak ada atau sudah dihapus."}
+        backTo={ROUTE_PATHS.products}
+        backLabel="Kembali ke daftar produk"
+      />
+    );
   }
 
-  if (error || !product) {
+  if (loading && !product) return <DetailSkeleton />;
+
+  if (fetchError || !product) {
     return (
-      <div className="space-y-4">
-        <PageHeader title="Detail Produk" description="Rincian produk." />
-        <Notice tone="danger" title="Gagal memuat produk">
-          {error ?? "Produk tidak ditemukan."}
-        </Notice>
-        <Button variant="secondary" onClick={() => navigate("/products")}>
-          Kembali ke daftar
-        </Button>
-      </div>
+      <Page>
+        <ErrorState title="Gagal memuat produk" message={fetchError ?? "Produk tidak ditemukan."} onRetry={reload} />
+      </Page>
     );
   }
 
   const archived = product.status === "archived";
+  const attrEntries = Object.entries(product.attributes ?? {});
+
+  const info: DescriptionItem[] = [
+    { label: "Kode", value: <DocNumber value={product.code} copyable /> },
+    { label: "Kategori", value: product.categoryName },
+    { label: "Status", value: <StatusBadge status={product.status} /> },
+    { label: "Tipe", value: productTypeLabel(product.type) },
+    { label: "Stok dipantau", value: product.tracked ? "Ya" : "Tidak" },
+    { label: "Stok minimum", value: <Qty value={product.minStock} unit={product.baseUom} /> },
+    {
+      label: "Satuan",
+      wide: true,
+      value: (
+        <>
+          Dasar: {product.baseUom} · Beli: {product.purchaseUom} (<Qty value={product.purchaseFactor} />) · Jual:{" "}
+          {product.salesUom} (<Qty value={product.salesFactor} />)
+        </>
+      ),
+    },
+    ...(product.summary
+      ? [{ label: "Ringkasan", wide: true, value: <span className="whitespace-pre-line">{product.summary}</span> }]
+      : []),
+  ];
 
   return (
-    <div className="space-y-4">
+    <Page>
       <PageHeader
-        eyebrow={product.code}
         title={product.name}
-        description={`${product.type === "jasa" ? "Jasa" : "Barang"}${product.categoryName ? ` • ${product.categoryName}` : ""}`}
+        meta={<StatusBadge status={product.status} />}
+        subtitle={
+          <>
+            <DocNumber value={product.code} /> · {productTypeLabel(product.type)}
+            {product.categoryName ? ` · ${product.categoryName}` : ""}
+          </>
+        }
         actions={
           <>
-            <Button variant="secondary" onClick={() => navigate("/products")}>
-              Kembali
-            </Button>
             <Button variant="secondary" onClick={() => setQrOpen(true)}>
-              Label QR
+              <QrCode aria-hidden /> Label QR
             </Button>
-            {canUpdate && !archived && (
-              <Button onClick={() => navigate(`/products/${product.id}/edit`)}>Ubah</Button>
-            )}
             {canArchive && !archived && (
-              <Button variant="danger" onClick={() => setArchiveOpen(true)}>
-                Arsipkan
+              <ActionMenu
+                items={[
+                  {
+                    key: "archive",
+                    label: "Arsipkan",
+                    icon: <Archive aria-hidden />,
+                    destructive: true,
+                    onSelect: () => setArchiveOpen(true),
+                  },
+                ]}
+              />
+            )}
+            {canUpdate && !archived && (
+              <Button asChild>
+                <Link to={`${ROUTE_PATHS.products}/${product.id}/edit`}>Ubah</Link>
               </Button>
             )}
           </>
         }
       />
 
+      {archiveError && (
+        <Notice tone="warning" title={archiveError.title}>
+          {archiveError.message}
+        </Notice>
+      )}
+
       {archived && (
-        <Notice tone="danger" title="Produk diarsipkan">
+        <Notice tone="muted" title="Produk diarsipkan">
           Produk ini sudah diarsipkan — data dan foto dikunci, riwayat tidak berubah.
         </Notice>
       )}
 
-      <SectionCard title="Informasi">
-        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Kode</dt>
-            <dd className="mt-1 text-sm font-medium text-ink">{product.code}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Kategori</dt>
-            <dd className="mt-1 text-sm text-ink">{product.categoryName || "-"}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Status</dt>
-            <dd className="mt-1">
-              <Badge tone={statusTone(product.status)}>{statusLabel(product.status)}</Badge>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Tipe</dt>
-            <dd className="mt-1 text-sm text-ink">{product.type === "jasa" ? "Jasa" : "Barang"}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Terpantau</dt>
-            <dd className="mt-1 text-sm text-ink">{product.tracked ? "Ya" : "Tidak"}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Stok Minimum</dt>
-            <dd className="mt-1 text-sm text-ink">{formatNumber(product.minStock)}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Satuan</dt>
-            <dd className="mt-1 text-sm text-ink">
-              Dasar: {product.baseUom} • Beli: {product.purchaseUom} ({formatNumber(product.purchaseFactor)}) •
-              Jual: {product.salesUom} ({formatNumber(product.salesFactor)})
-            </dd>
-          </div>
-        </dl>
-      </SectionCard>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as (typeof TABS)[number])} className="gap-5">
+        <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b border-border">
+          <TabsTrigger value="ringkasan" className="flex-none px-3">
+            Ringkasan
+          </TabsTrigger>
+          <TabsTrigger value="harga" className="flex-none px-3">
+            Harga
+          </TabsTrigger>
+          <TabsTrigger value="varian" className="flex-none px-3">
+            Varian
+          </TabsTrigger>
+          <TabsTrigger value="foto" className="flex-none px-3">
+            Foto
+          </TabsTrigger>
+          {canStock && (
+            <TabsTrigger value="stok" className="flex-none px-3">
+              Stok
+            </TabsTrigger>
+          )}
+        </TabsList>
 
-      <SectionCard title="Harga" description="Rupiah penuh, tanpa desimal.">
-        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Harga Beli</dt>
-            <dd className="mt-1 text-sm font-medium text-ink">{formatIDR(product.purchasePrice)}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Harga Jual</dt>
-            <dd className="mt-1 text-sm font-medium text-ink">{formatIDR(product.sellingPrice)}</dd>
-          </div>
-          <div>
-            <dt className="text-muted text-xs font-semibold uppercase">Harga Jual Minimal</dt>
-            <dd className="mt-1 text-sm font-medium text-ink">{formatIDR(product.minSellingPrice)}</dd>
-          </div>
-        </dl>
-      </SectionCard>
+        <TabsContent value="ringkasan" className="flex flex-col gap-6">
+          <SectionCard title="Informasi">
+            <DescriptionList items={info} />
+          </SectionCard>
+          {attrEntries.length > 0 && (
+            <SectionCard title="Info tambahan">
+              <DescriptionList items={attrEntries.map(([k, v]) => ({ label: k, value: v }))} />
+            </SectionCard>
+          )}
+        </TabsContent>
 
-      <SectionCard title="Varian" description="Setiap produk memiliki minimal satu varian.">
-        <DataTable
-          columns={[
-            { header: "Kode", render: (r) => <span className="font-medium">{r.code}</span> },
-            { header: "Nama", render: (r) => r.name || "-" },
-            { header: "Barcode", render: (r) => r.barcode || "-" },
-            {
-              header: "Utama",
-              render: (r) =>
-                r.isDefault ? <Badge tone="info">Utama</Badge> : <span className="text-muted">-</span>,
-            },
-            {
-              header: "Status",
-              render: (r) => <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>,
-            },
-          ]}
-          rows={product.variants}
-          rowKey={(r) => r.id}
-          emptyTitle="Belum ada varian"
-        />
-      </SectionCard>
+        <TabsContent value="harga">
+          <SectionCard title="Harga" description="Rupiah penuh, tanpa desimal.">
+            <DescriptionList
+              items={[
+                { label: "Harga beli", value: <Money value={product.purchasePrice} className="font-medium" /> },
+                { label: "Harga jual", value: <Money value={product.sellingPrice} className="font-medium" /> },
+                {
+                  label: "Harga jual minimal",
+                  value: <Money value={product.minSellingPrice} className="font-medium" />,
+                },
+              ]}
+            />
+          </SectionCard>
+        </TabsContent>
 
-      <SectionCard
-        title="Foto"
-        description="Foto pertama yang diunggah menjadi foto utama. Maksimal 5MB per berkas."
-      >
-        {media.length === 0 ? (
-          <p className="text-muted text-sm">Belum ada foto untuk produk ini.</p>
-        ) : (
-          <ul className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {media.map((m) => (
-              <li key={m.id} className="overflow-hidden rounded-lg border border-hairline bg-surface-subtle">
-                <img src={m.url} alt={m.originalName} className="h-36 w-full object-cover" loading="lazy" />
-                <div className="space-y-2 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-xs text-muted" title={m.originalName}>
-                      {m.originalName}
-                    </p>
-                    {m.isPrimary && <Badge tone="success">Utama</Badge>}
-                  </div>
-                  {canUpdate && !archived && (
-                    <div className="flex gap-2">
-                      {!m.isPrimary && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={mediaBusyId === m.id}
-                          onClick={() => handleSetPrimary(m.id)}
-                        >
-                          Jadikan utama
-                        </Button>
-                      )}
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        disabled={mediaBusyId === m.id}
-                        onClick={() => setDeleteTarget(m)}
-                      >
-                        Hapus
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <TabsContent value="varian">
+          <SectionCard
+            title="Varian"
+            description="Varian bawaan (tersembunyi) dipakai produk tanpa varian pilihan dan ikut kode produk."
+            flush
+          >
+            <DataTable<ProductVariant>
+              caption="Varian produk"
+              columns={[
+                { header: "Kode", render: (r) => <DocNumber value={r.code} /> },
+                { header: "Nama", render: (r) => r.name || "–" },
+                { header: "Barcode", render: (r) => (r.barcode ? <span className="font-mono">{r.barcode}</span> : "–") },
+                {
+                  header: "Utama",
+                  render: (r) =>
+                    r.isHidden ? (
+                      <Badge tone="neutral">Bawaan</Badge>
+                    ) : r.isDefault ? (
+                      <Badge tone="info">Utama</Badge>
+                    ) : (
+                      <span className="text-muted-foreground">–</span>
+                    ),
+                },
+                {
+                  header: "Info",
+                  render: (r) =>
+                    Object.keys(r.attributes ?? {}).length > 0
+                      ? Object.entries(r.attributes)
+                          .map(([k, v]) => `${k}: ${v}`)
+                          .join(", ")
+                      : "–",
+                },
+                { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
+              ]}
+              rows={product.variants}
+              rowKey={(r) => r.id}
+              emptyTitle="Belum ada varian"
+            />
+          </SectionCard>
+        </TabsContent>
 
-        {canUpdate && !archived && (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <div>
-              <span className="text-heading mb-1.5 block text-[0.85rem] font-medium">Unggah foto (gambar saja)</span>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                disabled={uploading}
-                onChange={(e) => handleUpload(e.target.files?.[0])}
-                className="text-sm text-ink"
+        <TabsContent value="foto" className="flex flex-col gap-6">
+          <SectionCard
+            title="Foto"
+            description="Foto pertama yang diunggah menjadi foto utama; bila foto utama dihapus, foto lain otomatis menjadi utama. Format JPEG, PNG, atau WebP, maksimal 5 MB per berkas."
+          >
+            {media.length === 0 ? (
+              <EmptyState
+                title="Belum ada foto"
+                description={
+                  canUpdate && !archived
+                    ? "Unggah foto pertama lewat kotak di bawah."
+                    : "Produk ini belum punya foto."
+                }
               />
-            </div>
-            {uploading && <p className="text-muted text-sm">Mengunggah…</p>}
-          </div>
-        )}
-      </SectionCard>
+            ) : (
+              <ul className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                {media.map((m) => (
+                  <li key={m.id} className="overflow-hidden rounded-lg border border-border bg-background">
+                    <img src={m.url} alt={m.originalName} className="h-36 w-full object-cover" loading="lazy" />
+                    <div className="space-y-2 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-xs text-muted-foreground" title={m.originalName}>
+                          {m.originalName}
+                        </p>
+                        {m.isPrimary && <Badge tone="success">Utama</Badge>}
+                      </div>
+                      {formatDimensions(m.width, m.height) && (
+                        <p className="text-xs text-muted-foreground">
+                          {formatDimensions(m.width, m.height)}
+                          {m.originalSizeBytes ? ` · asli ${(m.originalSizeBytes / 1024).toFixed(0)} KB` : ""}
+                        </p>
+                      )}
+                      {canUpdate && !archived && (
+                        <div className="flex flex-wrap gap-2">
+                          {!m.isPrimary && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={mediaBusyId === m.id}
+                              onClick={() => void handleSetPrimary(m.id)}
+                            >
+                              Jadikan utama
+                            </Button>
+                          )}
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            disabled={mediaBusyId === m.id}
+                            onClick={() => setDeleteTarget(m)}
+                          >
+                            Hapus
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SectionCard>
 
-      <ActionRow>
-        <Button variant="secondary" onClick={() => navigate("/products")}>
-          Kembali ke daftar
-        </Button>
-      </ActionRow>
+          {canUpdate && !archived && (
+            <div className="space-y-2">
+              <FileDropzone
+                accept={MEDIA_ACCEPT_ATTR}
+                busy={uploading}
+                label="Seret foto ke sini atau pilih berkas"
+                hint="JPEG, PNG, atau WebP, maksimal 5 MB"
+                onFile={(f) => void handleUpload(f)}
+              />
+              {uploadError && (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {uploadError}
+                </p>
+              )}
+            </div>
+          )}
+        </TabsContent>
+
+        {canStock && (
+          <TabsContent value="stok">
+            <SectionCard
+              title="Stok"
+              description="Saldo gabungan seluruh lokasi di cabang aktif."
+              actions={
+                product.tracked ? (
+                  <Button variant="secondary" size="sm" asChild>
+                    <Link to={stockItemPath(product.id)}>Rincian per lokasi</Link>
+                  </Button>
+                ) : undefined
+              }
+              flush
+            >
+              {!product.tracked ? (
+                <EmptyState
+                  title="Stok tidak dipantau"
+                  description="Produk ini tidak dipantau stoknya, jadi tidak punya saldo."
+                />
+              ) : stockError ? (
+                <ErrorState message={stockError} onRetry={reloadStock} className="m-4" />
+              ) : stockLoading && balances === null ? (
+                <TableSkeleton rows={3} cols={4} />
+              ) : (
+                <DataTable<StockRow>
+                  caption="Saldo stok per varian"
+                  rows={stockRows}
+                  rowKey={(r) => r.variantId}
+                  loading={stockLoading}
+                  emptyTitle="Belum ada saldo stok"
+                  emptyDescription="Saldo muncul setelah ada penerimaan, saldo awal, atau penyesuaian stok."
+                  columns={[
+                    { header: "Varian", render: (r) => r.name },
+                    { header: "Di tangan", align: "right", render: (r) => <Qty value={r.onHand} unit={product.baseUom} /> },
+                    { header: "Dipesan", align: "right", render: (r) => <Qty value={r.reserved} unit={product.baseUom} /> },
+                    { header: "Tersedia", align: "right", render: (r) => <Qty value={r.available} unit={product.baseUom} /> },
+                  ]}
+                />
+              )}
+            </SectionCard>
+          </TabsContent>
+        )}
+      </Tabs>
 
       <ConfirmDialog
         open={archiveOpen}
         title="Arsipkan produk?"
         message={`Produk ${product.code} — ${product.name} akan diarsipkan dan tidak bisa diubah lagi.`}
         confirmLabel={archiving ? "Mengarsipkan…" : "Arsipkan"}
-        onConfirm={handleArchive}
+        onConfirm={() => {
+          if (!archiving) void handleArchive();
+        }}
         onCancel={() => setArchiveOpen(false)}
       />
 
@@ -328,15 +531,11 @@ export default function ProductDetailPage() {
         title="Hapus foto?"
         message={`Foto ${deleteTarget?.originalName ?? ""} akan dihapus permanen.`}
         confirmLabel="Hapus"
-        onConfirm={handleDeleteMedia}
+        onConfirm={() => void handleDeleteMedia()}
         onCancel={() => setDeleteTarget(null)}
       />
 
-      <QrModal
-        productId={qrOpen ? product.id : null}
-        open={qrOpen}
-        onClose={() => setQrOpen(false)}
-      />
-    </div>
+      <QrModal productId={qrOpen ? product.id : null} open={qrOpen} onClose={() => setQrOpen(false)} />
+    </Page>
   );
 }

@@ -9,8 +9,8 @@ export default function PlaceholderPage({ title }: { title?: string }) {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold text-ink">{heading}</h1>
-      <div className="mt-4 rounded-[10px] border border-hairline bg-surface p-4 text-sm text-muted">
+      <h1 className="text-xl font-semibold text-foreground">{heading}</h1>
+      <div className="mt-4 rounded-[10px] border border-border bg-card p-4 text-sm text-muted-foreground">
         Modul segera hadir.
       </div>
     </div>

@@ -10,6 +10,23 @@ const emailOrEmpty = z
   .optional()
   .default("");
 
+export const USER_PHONE_MAX = 30;
+export const USER_TITLE_MAX = 100;
+
+const phoneField = z
+  .string()
+  .trim()
+  .max(USER_PHONE_MAX, "Telepon maksimal 30 karakter")
+  .optional()
+  .default("");
+
+const titleField = z
+  .string()
+  .trim()
+  .max(USER_TITLE_MAX, "Jabatan maksimal 100 karakter")
+  .optional()
+  .default("");
+
 export const createUserSchema = z.object({
   username: z
     .string()
@@ -17,6 +34,8 @@ export const createUserSchema = z.object({
     .min(1, "Username wajib diisi")
     .max(64, "Username maksimal 64 karakter"),
   email: emailOrEmpty,
+  phone: phoneField,
+  displayTitle: titleField,
   fullName: z
     .string()
     .trim()
@@ -34,6 +53,8 @@ export const editUserSchema = z.object({
     .min(1, "Username wajib diisi")
     .max(64, "Username maksimal 64 karakter"),
   email: emailOrEmpty,
+  phone: phoneField,
+  displayTitle: titleField,
   fullName: z
     .string()
     .trim()

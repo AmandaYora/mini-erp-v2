@@ -1,10 +1,9 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import {
-  ActionRow,
   Button,
   FormField,
-  Modal,
+  FormSheet,
   SearchSelect,
   SelectInput,
   TextArea,
@@ -12,9 +11,15 @@ import {
 } from "@/shared/components/ui";
 import type { SearchSelectOption } from "@/shared/components/ui";
 import { Notice } from "@/shared/components/feedback/notice";
+import { KeyValueEditor } from "@/shared/components/ui/key-value-editor";
+import { PARTY_ATTR_LIMITS, attrsToRows } from "@/shared/lib/key-value";
+import type { KeyValueRow } from "@/shared/lib/key-value";
 import { partyFormSchema } from "@/modules/party/schemas/party.schema";
 import type { PartyFormValues } from "@/modules/party/schemas/party.schema";
+import type { PartyListFilter } from "@/modules/party/schemas/party-list-filter.schema";
 import type { Party } from "@/modules/party/types";
+
+const ATTR_SUGGESTIONS = ["NPWP", "NIK", "Bank", "No. Rekening", "Nama PIC", "Termin"] as const;
 
 interface PartyFormModalProps {
   open: boolean;
@@ -58,6 +63,7 @@ export function PartyFormModal({
   const [address, setAddress] = useState(initial?.address ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [memberTypeId, setMemberTypeId] = useState<number | null>(initial?.member?.id ?? null);
+  const [attrs, setAttrs] = useState<KeyValueRow[]>(() => attrsToRows(initial?.attributes));
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   // Member lama yang tak ada di opsi (mis. sudah diarsipkan) tetap
@@ -78,6 +84,7 @@ export function PartyFormModal({
       address,
       notes,
       memberTypeId: showMember ? memberTypeId : undefined,
+      attrs,
     });
     if (!parsed.success) {
       const errs: Record<string, string> = {};
@@ -93,14 +100,38 @@ export function PartyFormModal({
   }
 
   return (
-    <Modal open={open} title={title} description={description} size="lg" onClose={onClose}>
-      <form onSubmit={handleSubmit}>
+    <FormSheet
+      open={open}
+      title={title}
+      description={description}
+      size="lg"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button type="submit" form="party-form" loading={submitting}>
+            Simpan
+          </Button>
+        </>
+      }
+    >
+      <form id="party-form" onSubmit={handleSubmit}>
         <div className="space-y-4">
-          {serverError && <Notice tone="danger" title={serverError} />}
+          {serverError && (
+            <Notice tone="danger" title="Gagal menyimpan">
+              {serverError}
+            </Notice>
+          )}
           <FormField
             label="Kode"
             htmlFor="party-code"
-            helperText={isEdit ? "Kode tidak dapat diubah." : "Opsional — kosongkan untuk kode otomatis."}
+            helperText={
+              isEdit
+                ? "Kode tidak dapat diubah."
+                : `Opsional — kosongkan untuk kode otomatis (${withMember ? "CUS-001" : "SUP-001"}, berurutan).`
+            }
             errorText={errors.code}
           >
             <TextInput
@@ -162,6 +193,20 @@ export function PartyFormModal({
               maxLength={500}
             />
           </FormField>
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-foreground">Informasi tambahan</span>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Data bebas seperti NPWP, bank, atau nama PIC (maksimal {PARTY_ATTR_LIMITS.maxRows}).
+            </p>
+            <KeyValueEditor
+              idPrefix="party-attrs"
+              rows={attrs}
+              onChange={setAttrs}
+              limits={PARTY_ATTR_LIMITS}
+              suggestions={ATTR_SUGGESTIONS}
+              serverError={errors.attrs}
+            />
+          </div>
           {showMember && (
             <FormField
               label="Tipe member"
@@ -177,17 +222,9 @@ export function PartyFormModal({
               />
             </FormField>
           )}
-          <ActionRow>
-            <Button variant="secondary" onClick={onClose} disabled={submitting}>
-              Batal
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Menyimpan…" : "Simpan"}
-            </Button>
-          </ActionRow>
         </div>
       </form>
-    </Modal>
+    </FormSheet>
   );
 }
 
@@ -196,15 +233,19 @@ export function PartyStatusFilter({
   value,
   onChange,
 }: {
-  value: string;
-  onChange: (v: string) => void;
+  value: PartyListFilter["status"];
+  onChange: (v: PartyListFilter["status"]) => void;
 }) {
   return (
-    <FormField label="Status">
-      <SelectInput value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Semua status</option>
+    <FormField label="Status" htmlFor="party-status-filter">
+      <SelectInput
+        id="party-status-filter"
+        value={value}
+        onChange={(e) => onChange(e.target.value as PartyListFilter["status"])}
+      >
         <option value="active">Aktif</option>
         <option value="archived">Diarsipkan</option>
+        <option value="all">Semua status</option>
       </SelectInput>
     </FormField>
   );

@@ -4,31 +4,37 @@ import {
   type AsyncSearchLoadResult,
   type AsyncSearchOption,
 } from "@/shared/components/ui";
-import { productsService } from "@/modules/products/services/products.service";
-import type { Product } from "@/modules/products/types";
+import { clampSearchLimit, productsService } from "@/modules/products/services/products.service";
+import type { ProductOptionRow } from "@/modules/products/types";
 
-type ProductOption = AsyncSearchOption & { product: Product };
+type ProductOption = AsyncSearchOption & { product: ProductOptionRow };
 
 export interface ProductSearchSelectProps {
   id?: string;
   name?: string;
   value?: number | null;
   defaultValue?: number | null;
-  onChange?: (value: number | null, product?: Product) => void;
-  onResolve?: (product?: Product) => void;
+  onChange?: (value: number | null, product?: ProductOptionRow) => void;
+  onResolve?: (product?: ProductOptionRow) => void;
   status?: string;
   trackedOnly?: boolean;
+  /** Stok tersedia di cabang aktif naik ke atas (dropdown transaksi); relevansi tetap menang. */
+  preferStock?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
   disabled?: boolean;
   limit?: number;
 }
 
-function formatProductOption(product: Product): ProductOption {
+function formatProductOption(product: ProductOptionRow): ProductOption {
+  const parts = [`Satuan: ${product.baseUom}`];
+  const visible = product.variants.filter((v) => !v.isHidden && v.status === "active").length;
+  if (visible > 1) parts.push(`${visible} varian`);
+  if (!product.tracked) parts.push("tak dipantau");
   return {
     value: product.id,
     label: `${product.code} — ${product.name}`,
-    description: `Satuan: ${product.baseUom}`,
+    description: parts.join(" · "),
     product,
   };
 }
@@ -37,7 +43,8 @@ function formatProductOption(product: Product): ProductOption {
  * ProductSearchSelect — pemilih produk dengan pencarian SERVER-SIDE.
  *
  * Dibangun DI ATAS AsyncSearchSelect di dalam modul products (shared tetap
- * domain-agnostik), memakai productsService milik modul sendiri. Effect
+ * domain-agnostik). Opsi dari GET /products/search-options (satu panggilan:
+ * satuan, faktor, harga, tipe, varian — tanpa detail per pilihan). Effect
  * resolve hanya berisi callback async sehingga bebas peringatan
  * set-state-in-effect.
  */
@@ -50,6 +57,7 @@ export function ProductSearchSelect({
   onResolve,
   status = "active",
   trackedOnly,
+  preferStock,
   placeholder = "Cari kode atau nama produk…",
   searchPlaceholder = "Ketik kode atau nama produk…",
   disabled,
@@ -70,19 +78,20 @@ export function ProductSearchSelect({
 
   const loadOptions = useCallback(
     async (search: string): Promise<AsyncSearchLoadResult> => {
-      const res = await productsService.list({
-        search: search || undefined,
+      const size = clampSearchLimit(limit);
+      const items = await productsService.searchOptions({
+        q: search || undefined,
         status,
-        page: 1,
-        limit,
+        tracked: trackedOnly ? true : undefined,
+        preferStock,
+        limit: size,
       });
-      const items = trackedOnly ? res.items.filter((p) => p.tracked) : res.items;
       return {
         options: items.map(formatProductOption),
-        hasMore: res.meta.total > res.items.length,
+        hasMore: items.length >= size,
       };
     },
-    [status, limit, trackedOnly],
+    [status, limit, trackedOnly, preferStock],
   );
 
   useEffect(() => {
@@ -92,10 +101,17 @@ export function ProductSearchSelect({
     }
     if (selected?.value === selectedValue) return;
     let active = true;
+    // Satu panggilan ringkas dengan productId — tanpa pencarian ulang atau detail penuh.
     productsService
-      .detail(selectedValue)
-      .then((product) => {
+      .searchOptions({ productId: selectedValue, limit: 1 })
+      .then((rows) => {
         if (!active) return;
+        const product = rows[0];
+        if (!product) {
+          setSelected(null);
+          onResolve?.(undefined);
+          return;
+        }
         const option = formatProductOption(product);
         setSelected(option);
         onResolve?.(option.product);

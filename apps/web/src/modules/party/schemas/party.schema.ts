@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PARTY_ATTR_LIMITS, validateRows } from "@/shared/lib/key-value";
 
 // Validasi telepon menyalin backend validPhone (service.go):
 // digit 7–20, karakter selain itu hanya + spasi - ( ).
@@ -37,7 +38,7 @@ const emailField = z
 // Dipakai bersama customer & supplier. Backend menolak memberTypeId untuk
 // supplier — form supplier tidak merender/melempar field member.
 export const partyFormSchema = z.object({
-  // Opsional saat buat (kosong = kode otomatis PLG-/SUP-). Terkunci saat ubah.
+  // Opsional saat buat (kosong = kode otomatis CUS-001 / SUP-001). Terkunci saat ubah.
   code: z.string().trim().max(50, "Kode maksimal 50 karakter").default(""),
   name: z.string().trim().min(1, "Nama wajib diisi").max(200, "Nama maksimal 200 karakter"),
   phone: phoneField,
@@ -45,6 +46,17 @@ export const partyFormSchema = z.object({
   address: z.string().trim().max(500, "Alamat maksimal 500 karakter").default(""),
   notes: z.string().trim().max(500, "Catatan maksimal 500 karakter").default(""),
   memberTypeId: z.number().int().positive().nullable().optional(),
+  // Informasi Tambahan: baris editor; dikirim sebagai peta (maks 20, nama 1-60, isi 1-255).
+  attrs: z
+    .array(z.object({ key: z.string(), value: z.string() }))
+    .default([])
+    .superRefine((rows, ctx) => {
+      const r = validateRows(rows, PARTY_ATTR_LIMITS);
+      if (r.general) ctx.addIssue({ code: z.ZodIssueCode.custom, message: r.general });
+      for (const msg of Object.values(r.byRow)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: msg });
+      }
+    }),
 });
 
 export type PartyFormValues = z.infer<typeof partyFormSchema>;

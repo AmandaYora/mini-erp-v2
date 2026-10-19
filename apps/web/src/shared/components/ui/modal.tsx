@@ -1,15 +1,22 @@
-import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/components/primitives/dialog";
+import { cn } from "@/shared/lib/cn";
 
 export type ModalSize = "sm" | "md" | "lg" | "xl";
 
 const MAX_WIDTH: Record<ModalSize, string> = {
-  sm: "max-w-[440px]",
-  md: "max-w-[560px]",
-  lg: "max-w-[760px]",
-  xl: "max-w-[960px]",
+  sm: "sm:max-w-[440px]",
+  md: "sm:max-w-[560px]",
+  lg: "sm:max-w-[760px]",
+  xl: "sm:max-w-[960px]",
 };
 
 export interface ModalProps {
@@ -23,68 +30,44 @@ export interface ModalProps {
   children: ReactNode;
 }
 
-export function Modal({
-  open,
-  title,
-  description,
-  badge,
-  actions,
-  size = "md",
-  onClose,
-  children,
-}: ModalProps) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [open, onClose]);
-
-  if (!open || typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[999] flex items-center justify-center bg-ink/50 p-4"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className={`max-h-[90vh] w-full overflow-y-auto rounded-[10px] bg-surface p-6 ${MAX_WIDTH[size]}`}
+/**
+ * Dialog (Radix): fokus terkunci + dipulihkan, Esc, klik overlay, `aria-labelledby`.
+ * Dropdown di dalamnya memakai Popover Radix (select-popover), jadi bisa dibuka di sini.
+ */
+export function Modal({ open, title, description, badge, actions, size = "md", onClose, children }: ModalProps) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        className={cn(
+          "block max-h-[90vh] w-full gap-0 overflow-y-auto rounded-xl border-border bg-card p-6 shadow-[var(--shadow-pop)]",
+          MAX_WIDTH[size],
+        )}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold text-ink">{title}</h2>
+        <DialogHeader className="flex-row items-start justify-between gap-4 text-left">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <DialogTitle className="text-xl font-semibold text-foreground">{title}</DialogTitle>
             {badge}
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Tutup"
-            className="text-muted cursor-pointer rounded p-1 hover:text-ink"
+            className="-mt-1 -mr-1 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <X size={18} />
           </button>
-        </div>
-        {description && (
-          <p className="text-muted mt-1 text-sm">{description}</p>
-        )}
+        </DialogHeader>
+        <DialogDescription className={description ? "mt-1 text-sm text-muted-foreground" : "sr-only"}>
+          {description ?? title}
+        </DialogDescription>
         <div className="mt-4">{children}</div>
         {actions && (
-          <div className="mt-6 flex justify-end gap-3">{actions}</div>
+          <DialogFooter className="mt-6 flex-row justify-end gap-2 border-t border-border pt-4">
+            {actions}
+          </DialogFooter>
         )}
-      </div>
-    </div>,
-    document.body,
+      </DialogContent>
+    </Dialog>
   );
 }

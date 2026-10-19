@@ -1,36 +1,52 @@
 import { useState } from "react";
-import type { ChangeEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import {
   Badge,
   Button,
   ConfirmDialog,
   DataTable,
+  DateInput,
+  DetailSkeleton,
+  ErrorState,
   FormField,
   Modal,
   PageHeader,
   SectionCard,
   SelectInput,
+  StatusBadge,
   TextArea,
   TextInput,
 } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
 import {
-  formatDate,
-  formatDateTime,
-  formatNumber,
-  statusLabel,
-  statusTone,
-} from "@/shared/lib/format";
+  ActionMenu,
+  DescriptionList,
+  DocNumber,
+  DocumentRail,
+  FileDropzone,
+  Page,
+  PageColumns,
+  Qty,
+} from "@/shared/components/patterns";
+import { Notice } from "@/shared/components/feedback/notice";
+import { NotFoundState } from "@/shared/components/feedback/not-found-state";
+import { formatDate, formatDateTime, formatIDR, todayWIB } from "@/shared/lib/format";
+import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
+import { deliveryRail } from "@/modules/delivery/lib/delivery-rail";
+import { evidenceChecklist, evidenceRequired, missingEvidence } from "@/modules/delivery/lib/evidence";
 import { deliveryService } from "@/modules/delivery/services/delivery.service";
+import {
+  deliveryConfirmSchema,
+  toConfirmPayload,
+} from "@/modules/delivery/schemas/delivery-confirm.schema";
 import type {
   DeliveryItem,
   DeliveryNote,
   DeliveryProof,
+  DeliveryProofPurpose,
   SalesOrderOption,
 } from "@/modules/delivery/types";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
@@ -58,10 +74,6 @@ function signatureLabel(status: string | null | undefined): string {
   return "-";
 }
 
-function textOrDash(v: string | null | undefined): string {
-  return v && v.trim() !== "" ? v : "-";
-}
-
 // Hasil verifikasi Tahap D (JANGAN ditebak ulang): noteView membawa
 // documentKind ("order"|"replacement") + salesReturnId (delivery/
 // presentation/handler.go: noteView). Surat jalan pengganti dibuat dari
@@ -74,13 +86,14 @@ interface ReplacementInfo {
 
 export default function DeliveryDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
 
   const noteId = Number(id);
   const canConfirm = can("delivery.create");
   const canCancel = can("delivery.archive");
   const canUpload = can("delivery.create");
+  const canPay = can("payment.create");
+  const canSwitchNet = can("sales.approve");
 
   const [acting, setActing] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -90,8 +103,17 @@ export default function DeliveryDetailPage() {
   const [sigStatus, setSigStatus] = useState<"" | "signed" | "missing">("");
   const [sigReason, setSigReason] = useState("");
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmFields, setConfirmFields] = useState<Record<string, string>>({});
+  // Pelunasan hanya untuk order COD (server menolaknya untuk net/prepaid).
+  // "" = tanpa pelunasan (SJ parsial / order sudah lunas — server mengabaikan).
+  const [settleMode, setSettleMode] = useState<"" | "pay_now" | "switch_to_net">("");
+  const [payMethod, setPayMethod] = useState<"cash" | "transfer" | "check">("cash");
+  const [payDate, setPayDate] = useState(todayWIB());
+  const [payRef, setPayRef] = useState("");
+  const [payTendered, setPayTendered] = useState("");
+  const [dueDate, setDueDate] = useState("");
 
-  const { data, loading, error, reload } = useAsyncData(
+  const { data, loading, error, errorStatus, reload } = useAsyncData(
     async () => {
       if (!Number.isInteger(noteId) || noteId <= 0) {
         throw new Error("ID surat jalan tidak valid.");
@@ -115,52 +137,87 @@ export default function DeliveryDetailPage() {
   );
   const note: DeliveryNote | null = data?.note ?? null;
   const proofs: DeliveryProof[] = data?.proofs ?? [];
+  const signedDocs = proofs.filter((p) => p.purpose === "delivery_signed_document");
+  const photos = proofs.filter((p) => p.purpose !== "delivery_signed_document");
+  // Peringatan lunak dari pembuatan draf (DL-04): dibawa lewat state navigasi.
+  const createWarnings = ((useLocation().state as { warnings?: string[] } | null)?.warnings ?? []).filter(Boolean);
   const so: SalesOrderOption | null = data?.so ?? null;
+  usePageCrumb(note?.number);
 
   function openConfirm() {
     setRecipientName("");
     setSigStatus("");
     setSigReason("");
     setConfirmError(null);
+    setConfirmFields({});
+    // COD yang bisa dibayar di tempat: usulkan pay_now (server mengabaikannya
+    // bila SJ ini bukan pengiriman penuntas atau order sudah lunas).
+    const cod = so?.paymentTerms === "cod";
+    setSettleMode(cod ? (canPay ? "pay_now" : canSwitchNet ? "switch_to_net" : "") : "");
+    setPayMethod("cash");
+    setPayDate(todayWIB());
+    setPayRef("");
+    setPayTendered("");
+    setDueDate("");
     setConfirmOpen(true);
   }
 
   async function handleConfirm() {
-    // Cermin validateRecipient backend: status hanya signed|missing, bila
-    // status diisi maka nama wajib, bila missing maka alasan wajib. Semua
-    // kosong = konfirmasi polos (body kosong tetap valid).
-    if (sigStatus !== "" && recipientName.trim() === "") {
-      setConfirmError("Nama penerima wajib diisi bila ada status tanda terima.");
+    // Validasi klien = cermin validateRecipient + planSettlement backend.
+    const parsed = deliveryConfirmSchema.safeParse({
+      recipientName,
+      recipientSignatureStatus: sigStatus,
+      recipientSignatureMissingReason: sigReason,
+      settlement:
+        settleMode === ""
+          ? null
+          : {
+              mode: settleMode,
+              method: payMethod,
+              paymentDate: payDate,
+              reference: payRef,
+              amountTendered: payTendered,
+              dueDate,
+            },
+    });
+    if (!parsed.success) {
+      const mapped: Record<string, string> = {};
+      for (const issue of parsed.error.issues) {
+        const key = issue.path.filter((p) => typeof p !== "number").join(".");
+        mapped[key || "_"] ??= issue.message;
+      }
+      setConfirmFields(mapped);
+      setConfirmError("Periksa kembali isian konfirmasi.");
       return;
     }
-    if (sigStatus === "missing" && sigReason.trim() === "") {
-      setConfirmError("Alasan wajib diisi bila tanda tangan tidak ada.");
+    if (needsEvidence && (recipientName.trim() === "" || sigStatus === "")) {
+      setConfirmFields({
+        recipientName: "Nama penerima dan status tanda tangan wajib diisi untuk pengiriman reguler.",
+        ...(sigStatus === "" ? { recipientSignatureStatus: "Pilih status tanda tangan" } : {}),
+      });
+      setConfirmError("Lengkapi bukti serah terima dulu.");
       return;
     }
     setConfirmError(null);
-    setConfirmOpen(false);
+    setConfirmFields({});
     setActing(true);
     try {
-      const bare =
-        recipientName.trim() === "" &&
-        sigStatus === "" &&
-        sigReason.trim() === "";
-      const res = await deliveryService.confirm(
-        noteId,
-        bare
-          ? undefined
-          : {
-              recipientName:
-                recipientName.trim() === "" ? undefined : recipientName.trim(),
-              recipientSignatureStatus: sigStatus === "" ? undefined : sigStatus,
-              recipientSignatureMissingReason:
-                sigReason.trim() === "" ? undefined : sigReason.trim(),
-            },
-      );
+      // Konfirmasi ulang (replay) dijawab 200 oleh server — diperlakukan sebagai sukses.
+      const res = await deliveryService.confirm(noteId, toConfirmPayload(parsed.data));
+      setConfirmOpen(false);
       toast.fromServer(res.message, "Surat jalan dikonfirmasi", res.data.number);
       reload();
     } catch (err) {
-      toast.danger("Gagal mengonfirmasi", toApiError(err).message);
+      // Dialog tetap terbuka: pesan server (mis. "order tunai belum lunas",
+      // 403 izin pelunasan) ditampilkan di dalamnya agar bisa diperbaiki.
+      const apiErr = toApiError(err);
+      setConfirmError(apiErr.message);
+      const mapped: Record<string, string> = {};
+      for (const fe of apiErr.errors ?? []) {
+        mapped[fe.field.replace(/^settlement\./, "")] ??= fe.message;
+      }
+      setConfirmFields(mapped);
+      toast.danger("Gagal mengonfirmasi", apiErr.message);
     } finally {
       setActing(false);
     }
@@ -180,13 +237,11 @@ export default function DeliveryDetailPage() {
     }
   }
 
-  async function handleFile(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !note) return;
+  async function uploadFile(file: File, purpose: DeliveryProofPurpose) {
+    if (!note) return;
     setUploading(true);
     try {
-      const res = await deliveryService.uploadProof(note.id, file);
+      const res = await deliveryService.uploadProof(note.id, file, purpose);
       toast.fromServer(res.message, "Bukti kirim diunggah");
       reload();
     } catch (err) {
@@ -196,34 +251,39 @@ export default function DeliveryDetailPage() {
     }
   }
 
-  if (loading && !note) {
+  if (!Number.isInteger(noteId) || noteId <= 0 || (!loading && errorStatus === 404)) {
     return (
-      <div>
-        <PageHeader eyebrow="Operasional" title="Detail Surat Jalan" />
-        <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-      </div>
+      <NotFoundState
+        title="Surat jalan tidak ditemukan"
+        message="Surat jalan ini tidak ada atau bukan milik cabang aktif."
+        backTo={ROUTE_PATHS.deliveries}
+        backLabel="Kembali ke daftar surat jalan"
+      />
     );
   }
 
+  if (loading && !note) return <DetailSkeleton />;
+
   if (error || !note) {
     return (
-      <div>
-        <PageHeader eyebrow="Operasional" title="Detail Surat Jalan" />
-        <Notice tone="danger" title={error ?? "Surat jalan tidak ditemukan"} />
-        <div className="mt-4 flex gap-3">
-          <Button
-            variant="secondary"
-            onClick={() => void navigate(ROUTE_PATHS.deliveries)}
-          >
-            Kembali ke Daftar
-          </Button>
-          {error && <Button onClick={() => reload()}>Coba lagi</Button>}
-        </div>
-      </div>
+      <Page>
+        <PageHeader title="Detail Surat Jalan" />
+        <ErrorState message={error ?? "Surat jalan tidak ditemukan"} onRetry={error ? reload : undefined} />
+      </Page>
     );
   }
 
   const isDraft = note.status === "draft";
+  // Dokumen reguler: sopir, petugas, penerima+tanda tangan, dan foto wajib (kecuali dimatikan perusahaan).
+  const needsEvidence = evidenceRequired(so?.channel, (note as DeliveryNote & { documentKind?: string }).documentKind);
+  const evidence = evidenceChecklist({
+    driverName: note.driverName,
+    warehouseStaffName: note.warehouseStaffName,
+    recipientName,
+    signatureStatus: sigStatus,
+    signedDocumentCount: signedDocs.length,
+  });
+  const evidenceMissing = needsEvidence ? missingEvidence(evidence) : [];
   const replInfo = note as DeliveryNote & ReplacementInfo;
   const isReplacement = replInfo.documentKind === "replacement";
   const replacementReturnId =
@@ -235,288 +295,220 @@ export default function DeliveryDetailPage() {
       (l) => l.productId === it.productId && l.variantId === it.variantId,
     ) ?? null;
 
+  const rail = deliveryRail({
+    status: note.status,
+    dispatchedAt: note.dispatchedAt,
+    salesOrderId: note.salesOrderId,
+    orderNumber: note.orderNumber,
+    orderStatus: so?.status ?? null,
+    salesReturnId: replacementReturnId,
+  });
+  const driverMissing = evidenceMissing.some((m) => m.key === "driverName" || m.key === "warehouseStaffName");
+  const showConfirm = isDraft && canConfirm;
+  const showCancel = isDraft && canCancel;
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Operasional"
         title={note.number}
-        description={`${note.orderNumber || "-"} · ${formatDate(note.deliveryDate)}`}
+        meta={
+          <>
+            <StatusBadge status={note.status} />
+            {isReplacement && <Badge tone="info">Pengganti</Badge>}
+          </>
+        }
+        subtitle={`${so?.partyName || "Walk-in"} · ${formatDate(note.deliveryDate)}`}
         actions={
           <>
-            <Link
-              to={`/print/deliveries/${note.id}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Button variant="secondary">Cetak</Button>
-            </Link>
-            <Button
-              variant="secondary"
-              onClick={() => void navigate(ROUTE_PATHS.deliveries)}
-            >
-              Daftar
+            <Button variant="secondary" asChild>
+              <Link to={`/print/deliveries/${note.id}`} target="_blank" rel="noreferrer">
+                Cetak
+              </Link>
             </Button>
+            <ActionMenu
+              items={
+                showCancel
+                  ? [
+                      {
+                        key: "cancel",
+                        label: "Batalkan surat jalan",
+                        destructive: true,
+                        disabled: acting,
+                        onSelect: () => setCancelOpen(true),
+                      },
+                    ]
+                  : []
+              }
+            />
+            {showConfirm && (
+              <Button onClick={openConfirm} disabled={acting}>
+                Konfirmasi
+              </Button>
+            )}
+          </>
+        }
+      >
+        <DocumentRail steps={rail.steps} current={rail.current} stopped={rail.stopped} related={rail.related} />
+      </PageHeader>
+
+      {isReplacement && (
+        <Notice tone="info" title="Surat jalan pengganti retur tukar">
+          Barang pengganti dari {replacementReturnId !== null ? `Retur #${replacementReturnId}` : "retur terkait"} —
+          pendapatan tidak dijurnal otomatis untuk pengiriman ini.
+        </Notice>
+      )}
+      {isDraft && driverMissing && (
+        <Notice tone="warning" title="Dokumen belum lengkap">
+          Sopir dan/atau petugas gudang belum terisi pada surat jalan ini. Pengiriman reguler tidak bisa
+          dikonfirmasi tanpa keduanya; surat jalan draf tidak bisa diubah, jadi batalkan lalu buat ulang.
+        </Notice>
+      )}
+
+      {isDraft && so?.channel !== "pos" && (
+        <Notice tone="warning" title="Stok belum ditahan oleh surat jalan draf">
+          Stok baru dikurangi saat surat jalan dikonfirmasi. Penjualan lain bisa memakainya lebih dulu; bila stok
+          tidak cukup saat konfirmasi, surat jalan tetap draf dan Anda bisa menambah stok, mengganti lokasi, lalu
+          mengonfirmasi ulang, atau membatalkannya.
+          {createWarnings.length > 1 && (
+            <ul className="mt-2 list-disc pl-5">
+              {createWarnings.slice(1).map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          )}
+        </Notice>
+      )}
+
+      <PageColumns
+        main={
+          <>
+            <SectionCard title={`Barang (${note.items.length})`} flush>
+              <DataTable<DeliveryItem>
+                rows={note.items}
+                rowKey={(r) => r.id}
+                emptyTitle="Tidak ada baris barang"
+                columns={[
+                  {
+                    header: "Produk",
+                    render: (r) => {
+                      const match = soLineOf(r);
+                      return match ? (
+                        <div>
+                          <p className="font-medium">{match.productName}</p>
+                          <p className="text-xs text-muted-foreground">{match.productCode}</p>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          #{r.productId}/{r.variantId}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    header: "Dipesan (SO)",
+                    align: "right",
+                    render: (r) => {
+                      const match = soLineOf(r);
+                      return match ? <Qty value={match.qty} unit={match.uom} /> : "–";
+                    },
+                  },
+                  {
+                    header: "Dikirim",
+                    align: "right",
+                    render: (r) => <Qty value={r.qty} unit={r.uom} className="font-medium" />,
+                  },
+                  { header: "Lokasi", render: (r) => `#${r.locationId}` },
+                ]}
+              />
+            </SectionCard>
+          </>
+        }
+        aside={
+          <>
+            <SectionCard title="Dokumen & serah terima">
+              <DescriptionList
+                columns={1}
+                items={[
+                  { label: "Supir", value: note.driverName },
+                  { label: "Plat kendaraan", value: note.vehiclePlate },
+                  { label: "Petugas gudang", value: note.warehouseStaffName },
+                  { label: "Penerima", value: note.recipientName },
+                  { label: "Status tanda tangan", value: signatureLabel(note.recipientSignatureStatus) },
+                  ...(note.recipientSignatureStatus === "missing"
+                    ? [{ label: "Alasan tanda tangan hilang", value: note.recipientSignatureMissingReason }]
+                    : []),
+                  {
+                    label: "Diberangkatkan",
+                    value: note.dispatchedAt
+                      ? `${formatDateTime(note.dispatchedAt)}${note.dispatchedBy ? ` · #${note.dispatchedBy}` : ""}`
+                      : null,
+                  },
+                  {
+                    label: "Dikonfirmasi",
+                    value: note.confirmedAt
+                      ? `${formatDateTime(note.confirmedAt)}${note.confirmedBy ? ` · #${note.confirmedBy}` : ""}`
+                      : null,
+                  },
+                  { label: "Catatan turun barang", value: note.dropLocationNote, wide: true },
+                ]}
+              />
+              <ProofSection
+                title="Surat jalan fisik bertanda tangan"
+                required
+                empty="Belum ada scan/foto surat jalan fisik."
+                files={signedDocs}
+                canUpload={canUpload}
+                uploading={uploading}
+                dropLabel="Unggah scan/foto surat jalan"
+                dropHint="Wajib sebelum konfirmasi. Hanya gambar, maksimal 6 MB."
+                onFile={(f) => void uploadFile(f, "delivery_signed_document")}
+              />
+              <ProofSection
+                title="Foto lokasi pengiriman"
+                empty="Belum ada foto lokasi (opsional)."
+                files={photos}
+                canUpload={canUpload}
+                uploading={uploading}
+                dropLabel="Unggah foto lokasi (opsional)"
+                dropHint="Hanya gambar, maksimal 6 MB."
+                onFile={(f) => void uploadFile(f, "delivery_location_photo")}
+              />
+            </SectionCard>
+
+            <SectionCard title="Info dokumen">
+              <DescriptionList
+                columns={1}
+                items={[
+                  { label: "Nomor", value: <DocNumber value={note.number} copyable /> },
+                  {
+                    label: "Order jual",
+                    value: (
+                      <Link to={`${ROUTE_PATHS.salesOrders}/${note.salesOrderId}`} className="text-primary hover:underline">
+                        <DocNumber value={note.orderNumber || `#${note.salesOrderId}`} />
+                      </Link>
+                    ),
+                  },
+                  { label: "Pelanggan", value: so?.partyName },
+                  { label: "Tanggal kirim", value: formatDate(note.deliveryDate) },
+                  ...(isReplacement
+                    ? [{ label: "Retur terkait", value: replacementReturnId !== null ? `Retur #${replacementReturnId}` : null }]
+                    : []),
+                  { label: "Catatan", value: note.notes, wide: true },
+                ]}
+              />
+            </SectionCard>
           </>
         }
       />
 
-      <div className="space-y-4">
-        {isReplacement && (
-          <Notice tone="info" title="Surat jalan pengganti retur tukar">
-            Barang pengganti dari {replacementReturnId !== null ? `Retur #${replacementReturnId}` : "retur terkait"} —
-            pendapatan tidak dijurnal otomatis untuk pengiriman ini.
-          </Notice>
-        )}
-        <SectionCard
-          title="Ringkasan"
-          actions={
-            <>
-              {isReplacement && <Badge tone="info">Pengganti</Badge>}
-              <Badge tone={statusTone(note.status)}>
-                {statusLabel(note.status)}
-              </Badge>
-            </>
-          }
-        >
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
-            <div>
-              <dt className="text-muted">Nomor</dt>
-              <dd className="font-semibold text-ink">{note.number}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">No. SO</dt>
-              <dd className="font-semibold text-ink">
-                <Link
-                  to={`${ROUTE_PATHS.salesOrders}/${note.salesOrderId}`}
-                  className="text-brand hover:underline"
-                >
-                  {note.orderNumber || `#${note.salesOrderId}`}
-                </Link>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted">Tanggal Kirim</dt>
-              <dd className="text-ink">{formatDate(note.deliveryDate)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Customer</dt>
-              <dd className="text-ink">{so?.partyName || "-"}</dd>
-            </div>
-            {isReplacement && (
-              <div>
-                <dt className="text-muted">Retur Terkait</dt>
-                <dd className="font-semibold text-ink">
-                  {replacementReturnId !== null ? `Retur #${replacementReturnId}` : "-"}
-                </dd>
-              </div>
-            )}
-            {note.notes.trim() !== "" && (
-              <div className="col-span-2 md:col-span-4">
-                <dt className="text-muted">Catatan</dt>
-                <dd className="text-ink">{note.notes}</dd>
-              </div>
-            )}
-          </dl>
-        </SectionCard>
-
-        <SectionCard
-          title="Dokumen & Serah Terima"
-          description="Supir, kendaraan, petugas, dan bukti terima dari backend."
-        >
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
-            <div>
-              <dt className="text-muted">Supir</dt>
-              <dd className="text-ink">{textOrDash(note.driverName)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Plat Kendaraan</dt>
-              <dd className="text-ink">{textOrDash(note.vehiclePlate)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Petugas Gudang</dt>
-              <dd className="text-ink">{textOrDash(note.warehouseStaffName)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Penerima</dt>
-              <dd className="text-ink">{textOrDash(note.recipientName)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Status Tanda Tangan</dt>
-              <dd className="text-ink">
-                {signatureLabel(note.recipientSignatureStatus)}
-              </dd>
-            </div>
-            {note.recipientSignatureStatus === "missing" && (
-              <div>
-                <dt className="text-muted">Alasan Tanda Tangan Hilang</dt>
-                <dd className="text-ink">
-                  {textOrDash(note.recipientSignatureMissingReason)}
-                </dd>
-              </div>
-            )}
-            <div>
-              <dt className="text-muted">Diberangkatkan</dt>
-              <dd className="text-ink">
-                {note.dispatchedAt
-                  ? `${formatDateTime(note.dispatchedAt)}${note.dispatchedBy ? ` · #${note.dispatchedBy}` : ""}`
-                  : "-"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted">Dikonfirmasi</dt>
-              <dd className="text-ink">
-                {note.confirmedAt
-                  ? `${formatDateTime(note.confirmedAt)}${note.confirmedBy ? ` · #${note.confirmedBy}` : ""}`
-                  : "-"}
-              </dd>
-            </div>
-            {note.dropLocationNote.trim() !== "" && (
-              <div className="col-span-2 md:col-span-4">
-                <dt className="text-muted">Catatan Turun Barang</dt>
-                <dd className="text-ink">{note.dropLocationNote}</dd>
-              </div>
-            )}
-          </dl>
-        </SectionCard>
-
-        <SectionCard
-          title={`Barang (${note.items.length})`}
-          description="Qty dipesan dari SO (best-effort) vs qty surat jalan ini."
-        >
-          <DataTable<DeliveryItem>
-            rows={note.items}
-            rowKey={(r) => r.id}
-            emptyTitle="Tidak ada baris barang"
-            columns={[
-              {
-                header: "Produk",
-                render: (r) => {
-                  const match = soLineOf(r);
-                  return match ? (
-                    <span>
-                      <span className="font-medium">{match.productName}</span>{" "}
-                      <span className="text-muted text-xs">
-                        {match.productCode}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-muted">
-                      #{r.productId}/{r.variantId}
-                    </span>
-                  );
-                },
-              },
-              { header: "Satuan", render: (r) => r.uom },
-              {
-                header: "Qty Dipesan (SO)",
-                align: "right",
-                render: (r) => {
-                  const match = soLineOf(r);
-                  return match ? formatNumber(match.qty) : "-";
-                },
-              },
-              {
-                header: "Qty Kirim",
-                align: "right",
-                render: (r) => (
-                  <span className="font-medium">{formatNumber(r.qty)}</span>
-                ),
-              },
-              {
-                header: "Lokasi",
-                render: (r) => `#${r.locationId}`,
-              },
-            ]}
-          />
-        </SectionCard>
-
-        <SectionCard
-          title={`Bukti Kirim (${proofs.length})`}
-          description="Foto bukti pengiriman (hanya gambar)."
-          actions={
-            canUpload ? (
-              <label
-                className={`inline-flex cursor-pointer items-center justify-center rounded-md bg-brand px-4 py-2 text-[0.95rem] font-medium text-white transition-colors hover:bg-brand-hover ${uploading ? "pointer-events-none opacity-50" : ""}`}
-              >
-                {uploading ? "Mengunggah…" : "Unggah Foto"}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  disabled={uploading}
-                  onChange={(e) => void handleFile(e)}
-                />
-              </label>
-            ) : undefined
-          }
-        >
-          {proofs.length === 0 ? (
-            <p className="text-muted py-4 text-center text-sm">
-              Belum ada bukti kirim.
-            </p>
-          ) : (
-            <ul className="divide-y divide-hairline">
-              {proofs.map((p) => (
-                <li
-                  key={p.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
-                >
-                  <div>
-                    <a
-                      href={p.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-brand hover:underline"
-                    >
-                      {p.originalName || `Bukti #${p.id}`}
-                    </a>
-                    <p className="text-muted text-xs">
-                      {p.mime || "-"} · {formatBytes(p.sizeBytes)}
-                    </p>
-                  </div>
-                  <a
-                    href={p.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-brand hover:underline"
-                  >
-                    Lihat
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </SectionCard>
-
-        {isDraft && (canConfirm || canCancel) && (
-          <SectionCard
-            title="Aksi"
-            description="Konfirmasi menggerakkan stok keluar; pembatalan hanya untuk draf."
-          >
-            <div className="flex flex-wrap gap-3">
-              {canConfirm && (
-                <Button onClick={openConfirm} disabled={acting}>
-                  Konfirmasi
-                </Button>
-              )}
-              {canCancel && (
-                <Button
-                  variant="danger"
-                  onClick={() => setCancelOpen(true)}
-                  disabled={acting}
-                >
-                  Batalkan
-                </Button>
-              )}
-            </div>
-          </SectionCard>
-        )}
-      </div>
-
       <Modal
         open={confirmOpen}
         title="Konfirmasi Surat Jalan"
-        description={`Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Isian penerima opsional — kosongkan semua untuk konfirmasi polos.`}
+        description={
+          needsEvidence
+            ? `Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Pengiriman reguler wajib dilengkapi bukti serah terima di bawah.`
+            : `Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Isian penerima opsional — kosongkan semua untuk konfirmasi polos.`
+        }
         onClose={() => {
           if (!acting) setConfirmOpen(false);
         }}
@@ -529,8 +521,8 @@ export default function DeliveryDetailPage() {
             >
               Batal
             </Button>
-            <Button onClick={() => void handleConfirm()} disabled={acting}>
-              {acting ? "Mengonfirmasi…" : "Konfirmasi"}
+            <Button onClick={() => void handleConfirm()} loading={acting}>
+              Konfirmasi
             </Button>
           </>
         }
@@ -540,23 +532,57 @@ export default function DeliveryDetailPage() {
             <Notice tone="danger" title={confirmError} />
           </div>
         )}
+        {needsEvidence && (
+          <div className="mb-4 rounded-md border border-border p-4">
+            <p className="text-sm font-semibold text-foreground">Kelengkapan dokumen pengiriman</p>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Server menolak konfirmasi bila ada yang kurang (kecuali perusahaan menonaktifkan aturan ini).
+            </p>
+            <ul className="mt-3 space-y-2">
+              {evidence.map((c) => {
+                const serverMsg =
+                  c.key === "recipientName"
+                    ? confirmFields.recipientName
+                    : confirmFields[c.key];
+                return (
+                  <li key={c.key} className="text-sm">
+                    <span className={c.ok ? "text-success" : "text-destructive"}>{c.ok ? "Terpenuhi" : "Belum"}</span>
+                    <span className="text-foreground"> — {c.label}</span>
+                    {!c.ok && <p className="text-muted-foreground text-xs">{c.hint}</p>}
+                    {serverMsg && <p className="text-destructive text-xs">Server: {serverMsg}</p>}
+                  </li>
+                );
+              })}
+            </ul>
+            {canUpload && (
+              <FileDropzone
+                className="mt-3"
+                accept="image/*"
+                busy={uploading}
+                label={`Unggah scan/foto surat jalan bertanda tangan (${signedDocs.length})`}
+                hint="Wajib. Hanya gambar, maksimal 6 MB."
+                onFile={(f) => void uploadFile(f, "delivery_signed_document")}
+              />
+            )}
+          </div>
+        )}
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Nama Penerima">
+          <FormField label="Nama Penerima" required={needsEvidence} errorText={confirmFields.recipientName}>
             <TextInput
               value={recipientName}
               maxLength={150}
               onChange={(e) => setRecipientName(e.target.value)}
-              placeholder="Nama penerima (opsional)"
+              placeholder={needsEvidence ? "Nama penerima" : "Nama penerima (opsional)"}
             />
           </FormField>
-          <FormField label="Status Tanda Tangan">
+          <FormField label="Status Tanda Tangan" required={needsEvidence} errorText={confirmFields.recipientSignatureStatus}>
             <SelectInput
               value={sigStatus}
               onChange={(e) =>
                 setSigStatus(e.target.value as "" | "signed" | "missing")
               }
             >
-              <option value="">Tanpa status</option>
+              <option value="">{needsEvidence ? "Pilih status…" : "Tanpa status"}</option>
               <option value="signed">Ditandatangani</option>
               <option value="missing">Tidak ada</option>
             </SelectInput>
@@ -564,7 +590,11 @@ export default function DeliveryDetailPage() {
         </div>
         {sigStatus === "missing" && (
           <div className="mt-4">
-            <FormField label="Alasan Tanda Tangan Hilang" required>
+            <FormField
+              label="Alasan Tanda Tangan Hilang"
+              required
+              errorText={confirmFields.recipientSignatureMissingReason}
+            >
               <TextArea
                 rows={2}
                 value={sigReason}
@@ -572,6 +602,80 @@ export default function DeliveryDetailPage() {
                 placeholder="Alasan tidak ada tanda tangan"
               />
             </FormField>
+          </div>
+        )}
+        {so?.paymentTerms === "cod" && (
+          <div className="mt-5 rounded-md border border-border p-4">
+            <p className="text-sm font-semibold text-foreground">Pelunasan order COD</p>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Wajib bila surat jalan ini menuntaskan order COD yang masih ada sisa tagihan
+              {so.grandTotal ? ` (total ${formatIDR(so.grandTotal)})` : ""}. Pada pengiriman
+              parsial atau order yang sudah lunas, server mengabaikan pilihan ini.
+            </p>
+            <div className="mt-3 grid gap-4 md:grid-cols-2">
+              <FormField label="Cara Pelunasan" errorText={confirmFields.settlement ?? confirmFields.mode}>
+                <SelectInput
+                  value={settleMode}
+                  onChange={(e) =>
+                    setSettleMode(e.target.value as "" | "pay_now" | "switch_to_net")
+                  }
+                >
+                  <option value="">Tanpa pelunasan</option>
+                  <option value="pay_now" disabled={!canPay}>
+                    Bayar sekarang{canPay ? "" : " (butuh izin pembayaran)"}
+                  </option>
+                  <option value="switch_to_net" disabled={!canSwitchNet}>
+                    Jadikan tempo (net){canSwitchNet ? "" : " (butuh izin persetujuan kredit)"}
+                  </option>
+                </SelectInput>
+              </FormField>
+              {settleMode === "switch_to_net" && (
+                <FormField label="Jatuh Tempo" required errorText={confirmFields.dueDate}>
+                  <DateInput value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </FormField>
+              )}
+              {settleMode === "pay_now" && (
+                <>
+                  <FormField label="Metode" errorText={confirmFields.method}>
+                    <SelectInput
+                      value={payMethod}
+                      onChange={(e) => setPayMethod(e.target.value as "cash" | "transfer" | "check")}
+                    >
+                      <option value="cash">Tunai</option>
+                      <option value="transfer">Transfer</option>
+                      <option value="check">Cek</option>
+                    </SelectInput>
+                  </FormField>
+                  <FormField label="Tanggal Bayar" errorText={confirmFields.paymentDate}>
+                    <DateInput value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+                  </FormField>
+                  {payMethod !== "cash" && (
+                    <FormField
+                      label={payMethod === "check" ? "Nomor Cek" : "Referensi Transfer"}
+                      required
+                      errorText={confirmFields.reference}
+                    >
+                      <TextInput value={payRef} onChange={(e) => setPayRef(e.target.value)} />
+                    </FormField>
+                  )}
+                  {payMethod === "cash" && (
+                    <FormField
+                      label="Uang Diterima (Rp)"
+                      helperText="Opsional, untuk catatan kembalian."
+                      errorText={confirmFields.amountTendered}
+                    >
+                      <TextInput
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={payTendered}
+                        onChange={(e) => setPayTendered(e.target.value)}
+                      />
+                    </FormField>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
       </Modal>
@@ -584,6 +688,67 @@ export default function DeliveryDetailPage() {
         onConfirm={() => void handleCancel()}
         onCancel={() => setCancelOpen(false)}
       />
+    </Page>
+  );
+}
+
+/** Satu zona bukti kirim (DL-01): daftar berkas + zona unggah per tujuan. */
+function ProofSection({
+  title,
+  required,
+  empty,
+  files,
+  canUpload,
+  uploading,
+  dropLabel,
+  dropHint,
+  onFile,
+}: {
+  title: string;
+  required?: boolean;
+  empty: string;
+  files: DeliveryProof[];
+  canUpload: boolean;
+  uploading: boolean;
+  dropLabel: string;
+  dropHint: string;
+  onFile: (f: File) => void;
+}) {
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <h3 className="text-sm font-semibold text-foreground">
+        {title} ({files.length})
+        {required ? <span className="ml-2 text-xs font-normal text-muted-foreground">wajib untuk konfirmasi</span> : null}
+      </h3>
+      {files.length === 0 ? (
+        <p className="mt-1 text-xs text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="mt-3 grid grid-cols-2 gap-3">
+          {files.map((p) => (
+            <li key={p.id} className="min-w-0">
+              <a href={p.url} target="_blank" rel="noreferrer" className="block hover:no-underline">
+                {p.mime.startsWith("image/") && (
+                  <img
+                    src={p.url}
+                    alt={p.originalName || `Bukti #${p.id}`}
+                    loading="lazy"
+                    className="aspect-video w-full rounded-md border border-border object-cover"
+                  />
+                )}
+                <span className="mt-1 block truncate text-xs font-medium text-primary hover:underline">
+                  {p.originalName || `Bukti #${p.id}`}
+                </span>
+                <span className="block text-2xs text-muted-foreground">
+                  {p.mime || "-"} · {formatBytes(p.sizeBytes)}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canUpload && (
+        <FileDropzone className="mt-3" accept="image/*" busy={uploading} label={dropLabel} hint={dropHint} onFile={onFile} />
+      )}
     </div>
   );
 }

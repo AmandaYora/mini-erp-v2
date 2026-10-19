@@ -12,7 +12,11 @@ function loc(partial: Partial<StockLocation> & { id: number }): StockLocation {
     name: `Lokasi ${partial.id}`,
     parentId: null,
     isSystem: false,
+    kind: "normal",
     status: "active",
+    isPickingArea: false,
+    isPrimary: false,
+    sortOrder: 0,
     ...partial,
   };
 }

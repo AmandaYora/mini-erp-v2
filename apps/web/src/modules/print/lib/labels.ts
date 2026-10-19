@@ -1,8 +1,10 @@
 // Target label QR cetak (J2). Cerminan aturan server
 // (product/application/qr.go: assembleQRTargets) untuk layout cetak:
-// produk bervarian → satu label per varian aktif, else satu label produk.
+// produk bervarian → satu label per varian aktif TAK tersembunyi, else satu
+// label produk berisi kode produk (varian bawaan tersembunyi tidak dicetak).
 // Isi = barcode bila ada, else kode mentah.
 
+import { labelVariants } from "@/modules/products/lib/product-option";
 import type { Product } from "@/modules/products/types";
 
 export interface LabelTarget {
@@ -14,7 +16,7 @@ export interface LabelTarget {
 }
 
 export function expandLabelTargets(p: Product): LabelTarget[] {
-  const variants = (p.variants ?? []).filter((v) => v.status === "active");
+  const variants = labelVariants(p.variants);
   if (variants.length > 0) {
     return variants.map((v) => ({
       productId: p.id,

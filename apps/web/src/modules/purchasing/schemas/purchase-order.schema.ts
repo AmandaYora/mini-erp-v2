@@ -1,6 +1,8 @@
 // Validasi form order beli. Cermin aturan backend
 // (purchasing/application/service.go):
-// - paymentTerms hanya "net" | "cod"; termin net WAJIB dueDate.
+// - paymentTerms "net" | "cod" | "prepaid"; termin net WAJIB dueDate, atau
+//   paymentTermDays > 0 + supplierInvoiceDate (jatuh tempo dihitung server).
+// - paymentTermDays 0..3650; discountReason/note baris maks 255.
 // - taxType hanya "none" | "include" | "exclude"; taxType none → taxRate 0,
 //   selain itu taxRate > 0.
 // - qty > 0, uom wajib (backend me-resolve UOM ke master produk).
@@ -16,16 +18,28 @@ export const purchaseOrderLineSchema = z.object({
   unitPrice: z.number().nonnegative("Harga tidak boleh negatif"),
   discountPct: z.number().min(0, "Diskon % minimal 0").max(100, "Diskon % maksimal 100"),
   discountNominal: z.number().nonnegative("Diskon nominal tidak boleh negatif"),
+  discountReason: z.string().trim().max(255, "Alasan diskon maksimal 255 karakter").default(""),
+  note: z.string().trim().max(255, "Catatan baris maksimal 255 karakter").default(""),
+  taxable: z.boolean().default(true),
+  // Tarif pajak baris (PO-03): kosong = tarif order.
+  taxRate: z.number().min(0, "Tarif pajak baris minimal 0").max(100, "Tarif pajak baris maksimal 100").optional(),
 });
 
 export const purchaseOrderSchema = z
   .object({
     partyId: z.number().int().positive("Pilih supplier"),
     orderDate: z.string().optional().default(""),
-    paymentTerms: z.enum(["net", "cod"], {
-      errorMap: () => ({ message: "Termin harus net atau cod" }),
+    paymentTerms: z.enum(["net", "cod", "prepaid"], {
+      errorMap: () => ({ message: "Termin harus net, cod, atau prepaid" }),
     }),
     dueDate: z.string().optional().default(""),
+    paymentTermDays: z
+      .number()
+      .int("Masa tempo harus bilangan bulat")
+      .min(0, "Masa tempo minimal 0")
+      .max(3650, "Masa tempo maksimal 3650 hari")
+      .default(0),
+    supplierInvoiceDate: z.string().optional().default(""),
     taxType: z.enum(["none", "include", "exclude"], {
       errorMap: () => ({ message: "Tipe pajak harus none, include, atau exclude" }),
     }),
@@ -34,11 +48,15 @@ export const purchaseOrderSchema = z
     lines: purchaseOrderLineSchema.array().min(1, "Minimal 1 baris barang"),
   })
   .superRefine((v, ctx) => {
-    if (v.paymentTerms === "net" && v.dueDate.trim() === "") {
+    if (
+      v.paymentTerms === "net" &&
+      v.dueDate.trim() === "" &&
+      !(v.paymentTermDays > 0 && v.supplierInvoiceDate.trim() !== "")
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["dueDate"],
-        message: "Jatuh tempo wajib diisi untuk termin net",
+        message: "Jatuh tempo wajib diisi (atau isi masa tempo + tanggal faktur supplier)",
       });
     }
     if (v.taxType === "none" && v.taxRate !== 0) {

@@ -1,517 +1,288 @@
 import { useState } from "react";
+import { Info } from "lucide-react";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
-  Badge,
-  DataTable,
+  CardSkeleton,
+  ErrorState,
   PageHeader,
   SectionCard,
-  Segmented,
   SummaryCard,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+  ToggleGroup,
+  ToggleGroupItem,
 } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
-import {
-  formatDate,
-  formatIDR,
-  formatNumber,
-  statusLabel,
-  todayWIB,
-} from "@/shared/lib/format";
-import { colors } from "@/theme/colors";
+import { Page } from "@/shared/components/patterns";
+import { EmptyState } from "@/shared/components/feedback/empty-state";
+import { formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { dashboardService } from "@/modules/dashboard/services/dashboard.service";
-import type {
-  CriticalStockItem,
-  PriorityOrder,
-  TopMarginProduct,
-  TopSeller,
-  TrendRangeKey,
-} from "@/modules/dashboard/types";
+import { ActionCard } from "@/modules/dashboard/components/ActionCard";
+import { OrderStatusCard } from "@/modules/dashboard/components/OrderStatusCard";
+import { TopProductsCard } from "@/modules/dashboard/components/TopProductsCard";
+import { TrendBarChart } from "@/modules/dashboard/components/TrendBarChart";
+import { addDays, greetingTitle, longDateWIB, overdueDays } from "@/modules/dashboard/lib/dashboard";
+import { WHATSAPP_LABEL, whatsappState } from "@/modules/dashboard/lib/whatsapp";
+import type { DashboardSummary, TrendRangeKey } from "@/modules/dashboard/types";
 import { TREND_RANGES } from "@/modules/dashboard/types";
 
-/** YYYY-MM-DD digeser N hari (kalender UTC agar stabil di sekitar tengah malam). */
-function addDays(ymd: string, delta: number): string {
-  const d = new Date(`${ymd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
-}
+type Source = "ledger" | "order";
 
-/** Sumbu Y padat: 1500000 → "2 jt", 250000 → "250 rb". */
-function compactIDR(v: number): string {
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `${Math.round(v / 1_000_000)} jt`;
-  if (abs >= 1_000) return `${Math.round(v / 1_000)} rb`;
-  return String(Math.round(v));
-}
+// Perbedaan semantik pembukuan vs order adalah keputusan domain — tetap dijelaskan di UI.
+const SOURCE_NOTE: Record<Source, string> = {
+  ledger: "Pembukuan: dari jurnal yang sudah diposting (omzet, laba, kas, dan piutang buku).",
+  order:
+    "Order: dihitung dari dokumen order, bukan jurnal. Penjualan = order selesai bersih retur; piutang dan hutang dihitung per order, tidak pernah di bawah nol.",
+};
 
-/** Selisih hari WIB antara hari ini dan tanggal tempo (negatif = belum tempo). */
-function overdueDays(dueDate: string): number {
-  const due = dueDate.slice(0, 10);
-  const ms =
-    new Date(`${todayWIB()}T00:00:00Z`).getTime() -
-    new Date(`${due}T00:00:00Z`).getTime();
-  return Math.round(ms / 86_400_000);
-}
-
-function WidgetError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function KpiRow({ summary, source, overdueOrders }: { summary: DashboardSummary; source: Source; overdueOrders: number | null }) {
+  const overdueHint =
+    overdueOrders === null ? undefined : overdueOrders > 0 ? `${formatNumber(overdueOrders)} order lewat tempo` : "Tidak ada yang lewat tempo";
+  const ops = summary.operations;
+  if (source === "ledger") {
+    return (
+      <>
+        <SummaryCard
+          label="Omzet hari ini"
+          value={formatIDR(summary.today.revenue)}
+          hint={`Bulan ini ${formatIDR(summary.monthToDate.revenue)}`}
+        />
+        <SummaryCard
+          label="Laba hari ini"
+          value={formatIDR(summary.today.profit)}
+          tone={summary.today.profit < 0 ? "danger" : "success"}
+          hint={`Beban ${formatIDR(summary.today.expense)} · Bulan ini ${formatIDR(summary.monthToDate.profit)}`}
+        />
+        <SummaryCard label="Kas" value={formatIDR(summary.balances.cash)} hint={`Hutang ${formatIDR(summary.balances.payable)}`} />
+        <SummaryCard
+          label="Piutang"
+          value={formatIDR(summary.balances.receivable)}
+          tone={overdueOrders ? "warning" : "brand"}
+          hint={overdueHint}
+        />
+      </>
+    );
+  }
   return (
-    <Notice tone="danger" title="Gagal memuat">
-      {message}{" "}
-      <button
-        type="button"
-        onClick={onRetry}
-        className="cursor-pointer font-semibold text-brand hover:underline"
-      >
-        Coba lagi
-      </button>
-    </Notice>
+    <>
+      <SummaryCard
+        label="Penjualan hari ini"
+        value={formatIDR(ops.salesToday)}
+        hint={`${formatNumber(ops.salesOrdersToday)} order selesai · Bulan ini ${formatIDR(ops.salesMonth)}`}
+      />
+      <SummaryCard
+        label="Pembelian hari ini"
+        value={formatIDR(ops.purchasesToday)}
+        hint={`${formatNumber(ops.ordersToday)} order · Bulan ini ${formatIDR(ops.purchasesMonth)}`}
+      />
+      <SummaryCard label="Hutang berjalan" value={formatIDR(ops.outstandingPayable)} tone="warning" />
+      <SummaryCard
+        label="Piutang berjalan"
+        value={formatIDR(ops.outstandingReceivable)}
+        tone={overdueOrders ? "warning" : "brand"}
+        hint={overdueHint}
+      />
+    </>
   );
 }
 
 export default function DashboardPage() {
+  const [source, setSource] = useState<Source>("ledger");
   const [trendRange, setTrendRange] = useState<TrendRangeKey>("30d");
-  const { data: summary, loading, error, reload: reloadSummary } = useAsyncData(
-    () => dashboardService.summary(),
-    [],
-  );
-  const {
-    data: trendData,
-    loading: trendLoading,
-    error: trendError,
-    reload: reloadTrend,
-  } = useAsyncData(
-    () => {
-      const days =
-        TREND_RANGES.find((r) => r.value === trendRange)?.days ?? 30;
-      const to = todayWIB();
-      const from = addDays(to, -(days - 1));
-      return dashboardService.salesTrend(from, to);
-    },
-    [trendRange],
-  );
-  const trend = trendData ?? [];
+  const user = useAuthStore((s) => s.user);
+  const branch = useAuthStore((s) => s.branch);
+  // Tren memakai /reporting/sales-trend (izin reporting.view), bukan dashboard.view:
+  // peran tanpa izin itu (mis. kasir) tidak boleh melihat widget rusak.
+  const canTrend = useAuthStore((s) => s.permissions.includes("reporting.view"));
+  const today = todayWIB();
 
+  const summary = useAsyncData(() => dashboardService.summary(), []);
+  const trend = useAsyncData(
+    () => {
+      if (!canTrend) return Promise.resolve([]);
+      const days = TREND_RANGES.find((r) => r.value === trendRange)?.days ?? 30;
+      const to = todayWIB();
+      return dashboardService.salesTrend(addDays(to, -(days - 1)), to);
+    },
+    [trendRange, canTrend],
+  );
+  // Kartu status WhatsApp hanya untuk peran yang boleh melihat asisten (DB-01).
+  const canAssistant = useAuthStore((s) => s.permissions.includes("assistant.view"));
+  const whatsapp = useAsyncData(() => (canAssistant ? dashboardService.whatsappChannel() : Promise.resolve(null)), [canAssistant]);
   const critical = useAsyncData(() => dashboardService.criticalStock(), []);
   const priority = useAsyncData(() => dashboardService.priorityOrders(), []);
   const sellers = useAsyncData(() => dashboardService.topSellers(), []);
   const margin = useAsyncData(() => dashboardService.topMargin(), []);
+  const orderStatus = useAsyncData(() => dashboardService.orderStatus(), []);
 
-  const {
-    data: orderStatus,
-    error: orderStatusError,
-    reload: reloadOrderStatus,
-  } = useAsyncData(() => dashboardService.orderStatus(), []);
-
-  const trendLabel =
-    TREND_RANGES.find((r) => r.value === trendRange)?.label ?? "30 hari";
+  const trendPoints = trend.data ?? [];
+  const trendTotal = trendPoints.reduce((n, p) => n + p.revenue, 0);
+  const trendLabel = TREND_RANGES.find((r) => r.value === trendRange)?.label ?? "30 hari";
+  const overdueOrders =
+    priority.data && !priority.error ? priority.data.filter((o) => overdueDays(o.dueDate, today) > 0).length : null;
+  const data = summary.data;
 
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Utama"
-        title="Dashboard"
-        description="Ringkasan operasional cabang: omzet, laba, dan saldo buku."
+        title={greetingTitle(user?.fullName)}
+        subtitle={[branch?.name, longDateWIB(today)].filter(Boolean).join(" · ")}
       />
 
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title="Gagal memuat dashboard">
-            {error}{" "}
-            <button
-              type="button"
-              onClick={() => reloadSummary()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-2">
+            <span id="source-label" className="text-sm font-medium text-foreground">
+              Sumber angka
+            </span>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              value={source}
+              onValueChange={(v) => v && setSource(v as Source)}
+              aria-labelledby="source-label"
             >
-              Coba lagi
-            </button>
-          </Notice>
+              <ToggleGroupItem value="ledger">Pembukuan</ToggleGroupItem>
+              <ToggleGroupItem value="order">Order</ToggleGroupItem>
+            </ToggleGroup>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Penjelasan sumber angka"
+                    className="rounded-full p-1 text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+                  >
+                    <Info size={16} aria-hidden />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p>{SOURCE_NOTE.ledger}</p>
+                  <p className="mt-1.5">{SOURCE_NOTE.order}</p>
+                  <p className="mt-1.5">Angka keduanya dapat berbeda karena dasar hitungnya berbeda.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          {data && (
+            <p className="tabular text-sm text-muted-foreground sm:ml-auto">
+              {`Nilai persediaan ${formatIDR(data.inventoryValue)} (moving average)`}
+            </p>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">{SOURCE_NOTE[source]}</p>
+      </div>
+
+      {data && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-testid="dashboard-status-cards">
+          <SummaryCard
+            label="Produk dipantau"
+            value={formatNumber(data.operations.trackedCount)}
+            tone="brand"
+            hint={`${formatNumber(data.operations.criticalCount)} di bawah stok minimum`}
+          />
+          <SummaryCard
+            label="Basis biaya margin"
+            value={data.operations.costBasis === "estimated" ? "Estimasi" : "Lengkap"}
+            tone={data.operations.costBasis === "estimated" ? "warning" : "success"}
+            hint={
+              (data.operations.missingCostCount ?? 0) > 0
+                ? `${formatNumber(data.operations.missingCostCount ?? 0)} produk memakai HPP estimasi — margin indikatif`
+                : "Semua HPP berdasar biaya riil"
+            }
+          />
+          {canAssistant && (
+            <SummaryCard
+              label="WhatsApp asisten"
+              value={whatsapp.error ? "Tidak diketahui" : WHATSAPP_LABEL[whatsappState(whatsapp.data)]}
+              tone={whatsappState(whatsapp.data) === "connected" ? "success" : whatsappState(whatsapp.data) === "connecting" ? "warning" : "danger"}
+              hint={whatsapp.data?.phone ? whatsapp.data.phone : whatsapp.error ?? "Hubungkan di halaman Asisten"}
+            />
+          )}
         </div>
       )}
 
-      {loading ? (
-        <p className="text-muted px-1 py-6 text-sm">Memuat dashboard…</p>
-      ) : summary ? (
-        <div className="flex flex-col gap-6">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <SummaryCard
-              label="Omzet Hari Ini"
-              value={formatIDR(summary.today.revenue)}
-              hint={`Beban ${formatIDR(summary.today.expense)}`}
-            />
-            <SummaryCard
-              label="Laba Hari Ini"
-              value={formatIDR(summary.today.profit)}
-              tone="success"
-              hint={formatDate(summary.today.from)}
-            />
-            <SummaryCard
-              label="Omzet Bulan Ini"
-              value={formatIDR(summary.monthToDate.revenue)}
-              hint={`Sejak ${formatDate(summary.monthToDate.from)}`}
-            />
-            <SummaryCard
-              label="Laba Bulan Ini"
-              value={formatIDR(summary.monthToDate.profit)}
-              tone="success"
-              hint={`Beban ${formatIDR(summary.monthToDate.expense)}`}
-            />
-          </div>
+      {summary.error ? (
+        <ErrorState title="Gagal memuat dashboard" message={summary.error} onRetry={summary.reload} />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {data ? (
+            <KpiRow summary={data} source={source} overdueOrders={overdueOrders} />
+          ) : (
+            Array.from({ length: 4 }, (_, i) => <CardSkeleton key={i} />)
+          )}
+        </div>
+      )}
 
-          <SectionCard
-            title="Saldo Buku"
-            description="Posisi kas, piutang, hutang, dan persediaan cabang aktif."
-          >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <SummaryCard
-                label="Kas"
-                value={formatIDR(summary.balances.cash)}
-              />
-              <SummaryCard
-                label="Piutang"
-                value={formatIDR(summary.balances.receivable)}
-              />
-              <SummaryCard
-                label="Hutang"
-                value={formatIDR(summary.balances.payable)}
-                tone="warning"
-              />
-              <SummaryCard
-                label="Persediaan"
-                value={formatIDR(summary.balances.inventory)}
+      <div className="grid items-stretch gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <SectionCard
+          title="Tren penjualan"
+          description={`Omzet harian cabang aktif, ${trendLabel} terakhir.`}
+          actions={
+            canTrend ? (
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={trendRange}
+                onValueChange={(v) => v && setTrendRange(v as TrendRangeKey)}
+                aria-label="Rentang tren"
+              >
+                {TREND_RANGES.map((r) => (
+                  <ToggleGroupItem key={r.value} value={r.value}>
+                    {r.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            ) : undefined
+          }
+        >
+          {!canTrend ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              Grafik tren penjualan hanya untuk peran dengan izin Laporan.
+            </p>
+          ) : trend.error ? (
+            <ErrorState message={trend.error} onRetry={trend.reload} />
+          ) : trend.loading && !trend.data ? (
+            <CardSkeleton className="h-64 border-0 p-0" />
+          ) : trendPoints.length === 0 || trendTotal === 0 ? (
+            <EmptyState title="Belum ada penjualan" description={`Tidak ada omzet dalam ${trendLabel} terakhir.`} />
+          ) : (
+            <div className={trend.loading ? "opacity-60 transition-opacity" : undefined}>
+              <p className="tabular mb-2 text-sm text-muted-foreground">
+                {`Total ${trendLabel}: `}
+                <span className="font-semibold text-foreground">{formatIDR(trendTotal)}</span>
+              </p>
+              <TrendBarChart
+                data={trendPoints}
+                range={trendRange}
+                summary={`Grafik area omzet harian ${trendLabel} terakhir, total ${formatIDR(trendTotal)}.`}
               />
             </div>
-          </SectionCard>
+          )}
+        </SectionCard>
 
-          <SectionCard
-            title="Status Order"
-            description="Hitungan order per status turunan — tanpa tabel konfigurasi status."
-          >
-            {orderStatusError ? (
-              <WidgetError
-                message={orderStatusError}
-                onRetry={() => reloadOrderStatus()}
-              />
-            ) : orderStatus ? (
-              <div className="flex flex-col gap-4">
-                <div>
-                  <p className="text-muted mb-2 text-xs font-semibold uppercase">
-                    Penjualan
-                  </p>
-                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                    {["draft", "confirmed", "completed", "cancelled"].map(
-                      (s) => (
-                        <SummaryCard
-                          key={s}
-                          label={statusLabel(s)}
-                          value={formatNumber(orderStatus.sales[s] ?? 0)}
-                          tone={
-                            s === "cancelled"
-                              ? "danger"
-                              : s === "confirmed"
-                                ? "warning"
-                                : "brand"
-                          }
-                        />
-                      ),
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <p className="text-muted mb-2 text-xs font-semibold uppercase">
-                    Pembelian
-                  </p>
-                  <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                    {["draft", "confirmed", "completed", "cancelled"].map(
-                      (s) => (
-                        <SummaryCard
-                          key={s}
-                          label={statusLabel(s)}
-                          value={formatNumber(orderStatus.purchasing[s] ?? 0)}
-                          tone={
-                            s === "cancelled"
-                              ? "danger"
-                              : s === "confirmed"
-                                ? "warning"
-                                : "brand"
-                          }
-                        />
-                      ),
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-muted px-1 py-6 text-sm">Memuat status…</p>
-            )}
-          </SectionCard>
+        <ActionCard
+          orders={priority}
+          critical={critical}
+          criticalCount={data ? data.operations.criticalCount : null}
+          today={today}
+          canReporting={canTrend}
+        />
+      </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <SectionCard
-              title="Stok Kritis"
-              description="Produk di/lewat batas minimum, paling tipis dulu."
-            >
-              {critical.error ? (
-                <WidgetError
-                  message={critical.error}
-                  onRetry={() => critical.reload()}
-                />
-              ) : critical.loading ? (
-                <p className="text-muted px-1 py-6 text-sm">Memuat stok…</p>
-              ) : (
-                <DataTable<CriticalStockItem>
-                  rows={critical.data ?? []}
-                  rowKey={(r) => r.productId}
-                  emptyTitle="Stok aman"
-                  emptyDescription="Tidak ada produk di bawah minimum."
-                  columns={[
-                    {
-                      header: "Produk",
-                      render: (r) => (
-                        <span>
-                          <span className="font-semibold">{r.productCode}</span>{" "}
-                          <span className="text-muted">{r.productName}</span>
-                        </span>
-                      ),
-                    },
-                    {
-                      header: "Tersedia",
-                      align: "right",
-                      render: (r) => formatNumber(r.available),
-                    },
-                    {
-                      header: "Minimum",
-                      align: "right",
-                      render: (r) => formatNumber(r.minStock),
-                    },
-                    {
-                      header: "Status",
-                      render: (r) => (
-                        <Badge tone={r.available <= 0 ? "danger" : "warning"}>
-                          {r.available <= 0 ? "Habis" : "Kritis"}
-                        </Badge>
-                      ),
-                    },
-                  ]}
-                />
-              )}
-            </SectionCard>
-
-            <SectionCard
-              title="Pesanan Prioritas"
-              description="SO terkonfirmasi yang lewat/jelang tempo (7 hari)."
-            >
-              {priority.error ? (
-                <WidgetError
-                  message={priority.error}
-                  onRetry={() => priority.reload()}
-                />
-              ) : priority.loading ? (
-                <p className="text-muted px-1 py-6 text-sm">Memuat pesanan…</p>
-              ) : (
-                <DataTable<PriorityOrder>
-                  rows={priority.data ?? []}
-                  rowKey={(r) => r.id}
-                  emptyTitle="Tidak ada yang mendesak"
-                  emptyDescription="Semua SO terkonfirmasi masih jauh dari tempo."
-                  columns={[
-                    {
-                      header: "Nomor",
-                      render: (r) => (
-                        <span>
-                          <span className="font-semibold">{r.number}</span>{" "}
-                          <span className="text-muted">
-                            {r.partyName || "Tunai"}
-                          </span>
-                        </span>
-                      ),
-                    },
-                    {
-                      header: "Tempo",
-                      render: (r) => {
-                        const late = overdueDays(r.dueDate);
-                        return (
-                          <span className="inline-flex items-center gap-2">
-                            {formatDate(r.dueDate.slice(0, 10))}
-                            {late > 0 ? (
-                              <Badge tone="danger">
-                                {`Terlambat ${late} hari`}
-                              </Badge>
-                            ) : (
-                              <Badge tone="warning">Jatuh tempo</Badge>
-                            )}
-                          </span>
-                        );
-                      },
-                    },
-                    {
-                      header: "Total",
-                      align: "right",
-                      render: (r) => formatIDR(r.grandTotal),
-                    },
-                  ]}
-                />
-              )}
-            </SectionCard>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <SectionCard
-              title="Terlaris Bulan Ini"
-              description="5 produk dengan qty basis terbesar, order batal dikecualikan."
-            >
-              {sellers.error ? (
-                <WidgetError
-                  message={sellers.error}
-                  onRetry={() => sellers.reload()}
-                />
-              ) : sellers.loading ? (
-                <p className="text-muted px-1 py-6 text-sm">Memuat…</p>
-              ) : (
-                <DataTable<TopSeller>
-                  rows={sellers.data ?? []}
-                  rowKey={(r) => `${r.productId}/${r.variantId}`}
-                  emptyTitle="Belum ada penjualan"
-                  emptyDescription="Belum ada order bulan berjalan."
-                  columns={[
-                    {
-                      header: "Produk",
-                      render: (r) => (
-                        <span>
-                          <span className="font-semibold">{r.productCode}</span>{" "}
-                          <span className="text-muted">{r.productName}</span>
-                        </span>
-                      ),
-                    },
-                    {
-                      header: "Terjual",
-                      align: "right",
-                      render: (r) => formatNumber(r.qtyBase),
-                    },
-                    {
-                      header: "Omzet",
-                      align: "right",
-                      render: (r) => formatIDR(r.revenue),
-                    },
-                  ]}
-                />
-              )}
-            </SectionCard>
-
-            <SectionCard
-              title="Margin Tertinggi"
-              description="5 produk dengan laba kotor terbesar menurut buku."
-            >
-              {margin.error ? (
-                <WidgetError
-                  message={margin.error}
-                  onRetry={() => margin.reload()}
-                />
-              ) : margin.loading ? (
-                <p className="text-muted px-1 py-6 text-sm">Memuat…</p>
-              ) : (
-                <DataTable<TopMarginProduct>
-                  rows={margin.data ?? []}
-                  rowKey={(r) => `${r.productId}/${r.variantId}`}
-                  emptyTitle="Belum ada margin"
-                  emptyDescription="Belum ada penjualan terposting bulan berjalan."
-                  columns={[
-                    {
-                      header: "Produk",
-                      render: (r) => (
-                        <span>
-                          <span className="font-semibold">{r.productCode}</span>{" "}
-                          <span className="text-muted">{r.productName}</span>
-                        </span>
-                      ),
-                    },
-                    {
-                      header: "Laba",
-                      align: "right",
-                      render: (r) => (
-                        <span className="inline-flex items-center gap-2">
-                          {formatIDR(r.gross)}
-                          <Badge tone={r.gross > 0 ? "success" : "neutral"}>
-                            {`${formatNumber(Math.round(r.percent * 10) / 10)}%`}
-                          </Badge>
-                        </span>
-                      ),
-                    },
-                    {
-                      header: "Omzet",
-                      align: "right",
-                      render: (r) => formatIDR(r.revenue),
-                    },
-                  ]}
-                />
-              )}
-            </SectionCard>
-          </div>
-
-          <SectionCard
-            title={`Tren Penjualan ${trendLabel}`}
-            description="Omzet harian cabang aktif."
-            actions={
-              <Segmented
-                options={TREND_RANGES.map((r) => ({
-                  value: r.value,
-                  label: r.label,
-                }))}
-                value={trendRange}
-                onChange={(v) => setTrendRange(v as TrendRangeKey)}
-              />
-            }
-          >
-            {trendError ? (
-              <WidgetError
-                message={trendError}
-                onRetry={() => reloadTrend()}
-              />
-            ) : trendLoading ? (
-              <p className="text-muted px-1 py-6 text-sm">Memuat tren…</p>
-            ) : (
-              <>
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={trend}>
-                    <CartesianGrid stroke={colors.hairline} />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(v: string) =>
-                        trendRange === "12m"
-                          ? `${v.slice(5, 7)}/${v.slice(2, 4)}`
-                          : `${v.slice(8, 10)}/${v.slice(5, 7)}`
-                      }
-                      minTickGap={trendRange === "12m" ? 60 : 24}
-                      tick={{ fontSize: 12 }}
-                    />
-                    <YAxis
-                      tickFormatter={compactIDR}
-                      width={64}
-                      tick={{ fontSize: 12 }}
-                    />
-                    <Tooltip
-                      formatter={(value) => formatIDR(Number(value))}
-                      labelFormatter={(label) => formatDate(String(label))}
-                    />
-                    <Bar dataKey="revenue" name="Omzet" fill={colors.brand} />
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="mt-4">
-                  <Notice tone="info" title="Nilai persediaan">
-                    {`Total ${formatIDR(summary.inventoryValue)} dinilai dengan moving average.`}
-                  </Notice>
-                </div>
-              </>
-            )}
-          </SectionCard>
-        </div>
-      ) : null}
-    </div>
+      <div className="grid items-stretch gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <TopProductsCard sellers={sellers} margin={margin} />
+        <OrderStatusCard
+          data={orderStatus.data}
+          loading={orderStatus.loading}
+          error={orderStatus.error}
+          onRetry={orderStatus.reload}
+        />
+      </div>
+    </Page>
   );
 }

@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 // Batasan tervalidasi dari backend (payment/application/service.go):
-// - method create hanya "cash" | "transfer" ("offset" hanya kaki settle-credit).
+// - method create hanya "cash" | "transfer" | "check" ("offset" hanya kaki settle-credit).
+// - amountTendered hanya untuk cash dan harus >= amount; reference maks 100.
 // - allocations[] opsional; bila diisi, jumlahnya HARUS sama dengan amount.
 // - settle-credit hanya pasangan retur jual↔order jual (customer) atau
 //   retur beli↔order beli (supplier).
@@ -20,23 +21,47 @@ export const paymentAllocationSchema = z.object({
   amount: amountField,
 });
 
-export const paymentFormSchema = z.object({
-  partyId: z
-    .number({ invalid_type_error: "Pilih pihak dulu" })
-    .int()
-    .positive("Pilih pihak dulu"),
-  method: z.enum(["cash", "transfer"], {
-    required_error: "Pilih metode",
-    invalid_type_error: "Pilih metode",
-  }),
-  amount: amountField,
-  paidAt: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal harus YYYY-MM-DD")
-    .optional(),
-  notes: z.string().max(500, "Catatan maksimal 500 karakter").optional(),
-  allocations: z.array(paymentAllocationSchema).default([]),
-});
+export const paymentFormSchema = z
+  .object({
+    partyId: z
+      .number({ invalid_type_error: "Pilih pihak dulu" })
+      .int()
+      .positive("Pilih pihak dulu"),
+    method: z.enum(["cash", "transfer", "check"], {
+      required_error: "Pilih metode",
+      invalid_type_error: "Pilih metode",
+    }),
+    amount: amountField,
+    paidAt: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal harus YYYY-MM-DD")
+      .optional(),
+    notes: z.string().max(500, "Catatan maksimal 500 karakter").optional(),
+    reference: z.string().max(100, "Referensi maksimal 100 karakter").optional(),
+    amountTendered: z.coerce
+      .number({ invalid_type_error: "Uang diterima harus angka" })
+      .int("Uang diterima harus bilangan bulat")
+      .positive("Uang diterima harus lebih dari 0")
+      .optional(),
+    clientRef: z.string().max(100).optional(),
+    allocations: z.array(paymentAllocationSchema).default([]),
+  })
+  .superRefine((v, ctx) => {
+    if (v.amountTendered === undefined) return;
+    if (v.method !== "cash") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountTendered"],
+        message: "Uang diterima hanya untuk pembayaran tunai",
+      });
+    } else if (v.amountTendered < v.amount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountTendered"],
+        message: "Uang diterima kurang dari nominal pembayaran",
+      });
+    }
+  });
 
 export type PaymentFormValues = z.infer<typeof paymentFormSchema>;
 

@@ -1,25 +1,34 @@
-// Cermin JS dari token DS v1 (src/theme/theme.css) — hanya untuk tempat yang
-// butuh string warna nyata: recharts, kanvas, cetak. UI biasa pakai class
-// Tailwind (bg-brand, text-muted, ...) — JANGAN hardcode hex di komponen.
+// Cermin hex dari token DS v2 (src/theme/theme.css, OKLCH) — hanya untuk tempat yang
+// butuh string warna nyata di luar CSS: kanvas, cetak, dan pustaka yang tidak membaca
+// var(--token). Recharts boleh memakai "var(--chart-1)" langsung. UI biasa memakai kelas
+// semantik (bg-card, text-muted-foreground, ...) — JANGAN hardcode hex di komponen.
+// Nilai dihitung dari OKLCH di PLAN Lampiran C; ubah keduanya bersamaan.
 export const colors = {
-  ink: "#0f172a",
-  heading: "#334155",
-  muted: "#64748b",
-  hairline: "#cbd5e1",
+  ink: "#121824",
+  heading: "#121824",
+  muted: "#5c6470",
+  hairline: "#e0e3e8",
+  lineStrong: "#8c939c",
   surface: "#ffffff",
-  surfaceSubtle: "#f8fafc",
-  surfaceSunken: "#f1f5f9",
+  surfaceSubtle: "#f9fafc",
+  surfaceSunken: "#f1f4f7",
   brand: "#1e3a5f",
-  brandHover: "#16314f",
-  accent: "#c2603a",
-  accentSoft: "#fceae0",
-  ok: "#15803d",
-  okSoft: "#dcfce7",
-  warn: "#b45309",
-  warnSoft: "#fef3c7",
-  bad: "#b91c1c",
-  badSoft: "#fee2e2",
-  sidebar: "#0f172a",
-  sidebarFg: "#94a3b8",
-  sidebarStrong: "#f8fafc",
+  brandHover: "#162e4e",
+  brandSoft: "#e8f1fc",
+  accent: "#9d580c",
+  accentSoft: "#fff2d2",
+  ok: "#0b7643",
+  okSoft: "#e0f9e8",
+  warn: "#9d580c",
+  warnSoft: "#fff2d2",
+  bad: "#be2323",
+  badSoft: "#ffece9",
+  sidebar: "#101e33",
+  sidebarFg: "#b4bfce",
+  sidebarStrong: "#f2f5f9",
+  chart1: "#355e95",
+  chart2: "#1aa598",
+  chart3: "#e1a035",
+  chart4: "#a059b1",
+  chart5: "#8693a5",
 } as const;

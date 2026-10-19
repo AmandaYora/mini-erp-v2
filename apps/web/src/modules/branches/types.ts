@@ -11,6 +11,8 @@ export interface BranchItem {
   phone: string;
   status: string; // active | inactive
   isHead: boolean;
+  /** Nama lokasi stok bawaan cabang. */
+  defaultLocationLabel?: string;
 }
 
 export interface CreateBranchInput {
@@ -20,6 +22,7 @@ export interface CreateBranchInput {
   city: string;
   phone: string;
   isHead: boolean;
+  defaultLocationLabel?: string;
 }
 
 export interface UpdateBranchInput {
@@ -30,4 +33,5 @@ export interface UpdateBranchInput {
   phone: string;
   status: string;
   isHead: boolean;
+  defaultLocationLabel?: string;
 }

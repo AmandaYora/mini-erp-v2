@@ -47,7 +47,12 @@ export function monthStartWIB(): string {
   return todayWIB().slice(0, 8) + "01";
 }
 
-export type Tone = "success" | "warning" | "danger" | "info" | "neutral";
+/**
+ * Arti nada (PLAN §4.2), satu peta untuk seluruh aplikasi:
+ * neutral = belum berjalan · info = berjalan · warning = perlu perhatian ·
+ * success = selesai · muted = berhenti (batal/arsip) · danger = masalah.
+ */
+export type Tone = "success" | "warning" | "danger" | "info" | "neutral" | "muted";
 
 /** Status dokumen → tone badge (konsisten di semua modul). */
 export function statusTone(status: string | null | undefined): Tone {
@@ -57,19 +62,27 @@ export function statusTone(status: string | null | undefined): Tone {
     case "paid":
     case "received":
     case "closed":
+    case "posted":
       return "success";
     case "confirmed":
     case "dispatched":
-      return "info";
-    case "draft":
     case "pending":
     case "open":
+    case "partial":
+      return "info";
+    case "pending_approval":
+    case "partially_paid":
       return "warning";
+    case "draft":
+      return "neutral";
     case "cancelled":
     case "archived":
     case "inactive":
     case "reversed":
+    case "void":
+      return "muted";
     case "expired":
+    case "overdue":
       return "danger";
     default:
       return "neutral";
@@ -92,7 +105,14 @@ export function statusLabel(status: string | null | undefined): string {
     case "pending": return "Menunggu";
     case "open": return "Terbuka";
     case "closed": return "Ditutup";
+    case "posted": return "Terposting";
+    case "void": return "Dibatalkan";
     case "reversed": return "Dibalik";
+    case "partial": return "Sebagian";
+    case "partially_paid": return "Dibayar sebagian";
+    case "pending_approval": return "Menunggu persetujuan";
+    case "overdue": return "Jatuh tempo";
+    case "expired": return "Kedaluwarsa";
     default: return status ?? "-";
   }
 }

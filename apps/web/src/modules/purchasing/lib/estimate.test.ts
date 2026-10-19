@@ -25,6 +25,11 @@ describe("calcLineEstimate", () => {
     expect(r.total).toBe(11100);
     expect(r.tax).toBe(1100);
   });
+  it("baris bebas pajak tidak kena pajak (exclude/include)", () => {
+    expect(calcLineEstimate(1, 10000, 0, 0, "exclude", 11, false)).toMatchObject({ tax: 0, total: 10000 });
+    expect(calcLineEstimate(1, 11100, 0, 0, "include", 11, false)).toMatchObject({ tax: 0, total: 11100 });
+    expect(calcLineEstimate(1, 10000, 0, 0, "exclude", 11, true).tax).toBe(1100);
+  });
   it("rounds fractional rupiah", () => {
     // 3 × 3333 = 9999; 10% = 999.9 → 1000
     const r = calcLineEstimate(3, 3333, 10, 0, "none", 0);

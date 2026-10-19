@@ -54,8 +54,12 @@ describe("statusTone / statusLabel", () => {
   it("maps lifecycle states to tones", () => {
     expect(statusTone("completed")).toBe("success");
     expect(statusTone("confirmed")).toBe("info");
-    expect(statusTone("draft")).toBe("warning");
-    expect(statusTone("cancelled")).toBe("danger");
+    expect(statusTone("draft")).toBe("neutral");
+    expect(statusTone("pending")).toBe("info");
+    expect(statusTone("cancelled")).toBe("muted");
+    expect(statusTone("void")).toBe("muted");
+    expect(statusTone("overdue")).toBe("danger");
+    expect(statusTone("partially_paid")).toBe("warning");
     expect(statusTone("whatever")).toBe("neutral");
   });
   it("labels in Indonesian", () => {

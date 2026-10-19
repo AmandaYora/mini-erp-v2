@@ -5,66 +5,66 @@ import {
   Button,
   ConfirmDialog,
   DataTable,
+  DetailSkeleton,
+  ErrorState,
   PageHeader,
   SectionCard,
+  StatusBadge,
 } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
 import {
-  formatDate,
-  formatIDR,
-  formatNumber,
-  statusLabel,
-  statusTone,
-} from "@/shared/lib/format";
+  ActionMenu,
+  DescriptionList,
+  DocNumber,
+  DocumentRail,
+  Money,
+  Page,
+  PageColumns,
+  Qty,
+  type ActionMenuItem,
+} from "@/shared/components/patterns";
+import { Notice } from "@/shared/components/feedback/notice";
+import { NotFoundState } from "@/shared/components/feedback/not-found-state";
+import { formatDate, formatIDR } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { purchaseOrderService } from "@/modules/purchasing/services/purchase-order.service";
-import type {
-  PurchaseOrder,
-  PurchaseOrderItem,
-} from "@/modules/purchasing/types";
+import { purchaseOrderRail } from "@/modules/purchasing/lib/purchase-order-rail";
+import { purchaseTermsLabel } from "@/modules/purchasing/types";
+import type { PurchaseOrder, PurchaseOrderItem } from "@/modules/purchasing/types";
+import { OrderBillingCard } from "@/modules/payment/components/OrderBillingCard";
+import { OrderHistoryCard } from "@/modules/payment/components/OrderHistoryCard";
+import { OrderPaymentModal } from "@/modules/payment/components/OrderPaymentModal";
+import { useOrderHistory } from "@/modules/payment/hooks/useOrderHistory";
+import {
+  billingBadge,
+  billingView,
+  canCreateReceipt,
+  canCreateReturn,
+  canRecordPayment,
+  isPrepaidBlocked,
+} from "@/modules/payment/lib/order-billing";
+import { hasFulfilledDocument, lineKey } from "@/modules/payment/lib/order-history";
 
-// Alur status: draft → confirmed → completed (via penerimaan) / cancelled.
-// Tahap "completed" terjadi di modul penerimaan, bukan di sini — backend
-// orderView TIDAK memiliki receivedQty, jadi progres dihitung dari status.
-const FLOW = ["draft", "confirmed", "completed"] as const;
-
-function FlowSteps({ status }: { status: string }) {
-  if (status === "cancelled") {
-    return (
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <Badge tone="danger">{statusLabel("cancelled")}</Badge>
-        <span className="text-muted">— order dibatalkan, alur berhenti.</span>
-      </div>
-    );
-  }
-  const current = FLOW.indexOf(status as (typeof FLOW)[number]);
-  return (
-    <ol className="flex flex-wrap items-center gap-2 text-sm">
-      {FLOW.map((s, i) => {
-        const done = current < 0 ? false : i <= current;
-        return (
-          <li key={s} className="flex items-center gap-2">
-            {i > 0 && <span className="text-muted">→</span>}
-            <Badge tone={done ? statusTone(s) : "neutral"}>{statusLabel(s)}</Badge>
-          </li>
-        );
-      })}
-      {status === "completed" && (
-        <span className="text-muted">(selesai via penerimaan barang)</span>
-      )}
-    </ol>
-  );
-}
-
-function discountText(it: PurchaseOrderItem): string {
+/** Info turunan baris barang (diskon, pajak, catatan) untuk baris kedua redup. */
+function lineSubText(it: PurchaseOrderItem): string[] {
   const parts: string[] = [];
-  if (it.discountPct > 0) parts.push(`${it.discountPct}%`);
-  if (it.discountNominal > 0) parts.push(formatIDR(it.discountNominal));
-  return parts.length > 0 ? parts.join(" + ") : "-";
+  const disc: string[] = [];
+  if (it.discountPct > 0) disc.push(`${it.discountPct}%`);
+  if (it.discountNominal > 0) disc.push(formatIDR(it.discountNominal));
+  if (disc.length > 0) {
+    parts.push(`Diskon ${disc.join(" + ")}${it.discountReason ? ` (${it.discountReason})` : ""}`);
+  }
+  parts.push(
+    it.taxable
+      ? `Pajak${it.taxRate > 0 ? ` ${it.taxRate}%` : ""} ${formatIDR(it.taxAmount)} · DPP ${formatIDR(it.taxBase)}`
+      : "Tanpa pajak",
+  );
+  if (it.note) parts.push(`Catatan: ${it.note}`);
+  return parts;
 }
 
 export default function PurchaseOrderDetailPage() {
@@ -75,259 +75,362 @@ export default function PurchaseOrderDetailPage() {
   const orderId = Number(id);
   const canUpdate = can("purchasing.update");
   const canCancel = can("purchasing.archive");
+  const canReceive = can("goodsreceipt.create");
+  const canPay = can("payment.create");
+  const canReturn = can("purchasereturn.create");
 
-  const [order, setOrder] = useState<PurchaseOrder | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Naik tiap dokumen terkait berubah → riwayat dimuat ulang.
+  const [historyVersion, setHistoryVersion] = useState(0);
 
   const validId = Number.isInteger(orderId) && orderId > 0;
-  const { data: fetchedOrder, loading, error: fetchError, reload } = useAsyncData(
-    async () => {
-      if (!validId) return null;
-      try {
-        return await purchaseOrderService.get(orderId);
-      } catch (err) {
-        const apiErr = toApiError(err);
-        toast.danger("Gagal memuat order beli", apiErr.message);
-        throw err;
-      }
-    },
+  const {
+    data: order,
+    loading,
+    error,
+    errorStatus,
+    reload,
+  } = useAsyncData(
+    async () => (validId ? purchaseOrderService.get(orderId) : null),
     [orderId],
   );
-  const error = !validId ? "ID order beli tidak valid." : fetchError;
+  usePageCrumb(order?.number);
 
-  // Hasil fetch disalin ke state tampilan; aksi konfirmasi/batal menimpa
-  // state yang sama tanpa fetch ulang.
-  const [appliedFetch, setAppliedFetch] = useState<PurchaseOrder | null>(null);
-  if (fetchedOrder !== appliedFetch) {
-    setAppliedFetch(fetchedOrder);
-    setOrder(fetchedOrder);
+  const history = useOrderHistory("purchase", orderId, {
+    partyId: order?.partyId ?? 0,
+    paidAmount: order?.paidAmount ?? 0,
+    enabled: order !== null && order.status !== "draft",
+    version: historyVersion,
+  });
+
+  function refresh() {
+    reload();
+    setHistoryVersion((v) => v + 1);
   }
 
-  async function handleConfirm() {
+  // Respons konfirmasi/batal tidak membawa ringkasan pembayaran: muat ulang dari GET.
+  async function runAction(
+    fn: () => Promise<{ data: PurchaseOrder; message: string }>,
+    fallback: string,
+    fail: string,
+  ) {
+    setActing(true);
+    setActionError(null);
+    try {
+      const res = await fn();
+      toast.fromServer(res.message, fallback, res.data.number);
+      refresh();
+    } catch (err) {
+      const msg = toApiError(err).message;
+      // Pesan penjaga server (penerimaan/pembayaran/retur aktif) tampil menetap.
+      setActionError(`${fail}: ${msg}`);
+      toast.danger(fail, msg);
+    } finally {
+      setActing(false);
+    }
+  }
+
+  function handleConfirm() {
     setConfirmOpen(false);
-    setActing(true);
-    try {
-      const res = await purchaseOrderService.confirm(orderId);
-      setOrder(res.data);
-      toast.fromServer(res.message, "Purchase order dikonfirmasi", res.data.number);
-    } catch (err) {
-      toast.danger("Gagal mengonfirmasi", toApiError(err).message);
-    } finally {
-      setActing(false);
-    }
+    void runAction(
+      () => purchaseOrderService.confirm(orderId),
+      "Order dikonfirmasi",
+      "Gagal mengonfirmasi",
+    );
   }
 
-  async function handleCancel() {
+  function handleCancel() {
     setCancelOpen(false);
-    setActing(true);
-    try {
-      const res = await purchaseOrderService.cancel(orderId);
-      setOrder(res.data);
-      toast.fromServer(res.message, "Purchase order dibatalkan", res.data.number);
-    } catch (err) {
-      toast.danger("Gagal membatalkan", toApiError(err).message);
-    } finally {
-      setActing(false);
-    }
+    void runAction(
+      () => purchaseOrderService.cancel(orderId),
+      "Order dibatalkan",
+      "Gagal membatalkan",
+    );
+  }
+
+  if (!validId || (!loading && errorStatus === 404)) {
+    return (
+      <NotFoundState
+        title="Order beli tidak ditemukan"
+        message="Order ini tidak ada atau bukan milik cabang aktif."
+        backTo={ROUTE_PATHS.purchaseOrders}
+        backLabel="Kembali ke daftar order beli"
+      />
+    );
   }
 
   if (loading && !order) {
     return (
-      <div>
-        <PageHeader eyebrow="Pembelian" title="Detail Order Beli" />
-        <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-      </div>
+      <Page>
+        <DetailSkeleton />
+      </Page>
     );
   }
 
   if (error || !order) {
     return (
-      <div>
-        <PageHeader eyebrow="Pembelian" title="Detail Order Beli" />
-        <Notice tone="danger" title={error ?? "Order tidak ditemukan"} />
-        <div className="mt-4 flex gap-3">
-          <Button variant="secondary" onClick={() => void navigate(ROUTE_PATHS.purchaseOrders)}>
-            Kembali ke Daftar
-          </Button>
-          {error && <Button onClick={() => reload()}>Coba lagi</Button>}
-        </div>
-      </div>
+      <Page>
+        <PageHeader title="Order beli" />
+        <ErrorState message={error ?? "Order tidak ditemukan"} onRetry={error ? reload : undefined} />
+      </Page>
     );
   }
 
+  const billing = billingView(order);
+  const badge = billingBadge(billing);
   const isDraft = order.status === "draft";
   const isConfirmed = order.status === "confirmed";
   const canEdit = isDraft && canUpdate;
+  const fulfilled = hasFulfilledDocument(history.data?.events ?? []);
+  const showReceive = canReceive && canCreateReceipt(order);
+  const showPay = canPay && canRecordPayment(order);
+  const showReturn = canReturn && canCreateReturn(order, fulfilled);
+  const prepaidBlocked = isConfirmed && isPrepaidBlocked(order);
+  const progress = history.data?.progress ?? null;
+  const hiddenNotes: string[] = [];
+  if (history.data?.hidden.docs) hiddenNotes.push("Penerimaan disembunyikan (tanpa izin Penerimaan Barang)");
+  if (history.data?.hidden.payments) hiddenNotes.push("Pembayaran disembunyikan (tanpa izin Pembayaran)");
+  if (history.data?.hidden.returns) hiddenNotes.push("Retur disembunyikan (tanpa izin Retur Beli)");
+
+  const rail = purchaseOrderRail(order.status, history.data?.events ?? []);
+
+  const goReceive = () => void navigate(`${ROUTE_PATHS.goodsReceiptsNew}?from=${order.id}`);
+  const goReturn = () => void navigate(`${ROUTE_PATHS.purchaseReturns}/new?from=${order.id}`);
+
+  // Satu aksi utama menurut status; maksimal dua sekunder; sisanya di menu.
+  const menuItems: ActionMenuItem[] = [];
+  if (showReturn) menuItems.push({ key: "return", label: "Retur ke pemasok", onSelect: goReturn, disabled: acting });
+  if ((isDraft || isConfirmed) && canCancel) {
+    menuItems.push({
+      key: "cancel",
+      label: "Batalkan order",
+      onSelect: () => setCancelOpen(true),
+      destructive: true,
+      disabled: acting,
+    });
+  }
+
+  const payButton = showPay ? (
+    <Button
+      key="pay"
+      variant={showReceive && isConfirmed ? "secondary" : "primary"}
+      onClick={() => setPaymentOpen(true)}
+      disabled={acting}
+    >
+      Bayar ke pemasok
+    </Button>
+  ) : null;
+
+  const actions = (
+    <>
+      {canEdit && (
+        <Button variant="secondary" onClick={() => void navigate(`${ROUTE_PATHS.purchaseOrders}/${order.id}/edit`)}>
+          Ubah
+        </Button>
+      )}
+      {isConfirmed && showReceive && payButton}
+      <ActionMenu items={menuItems} />
+      {isDraft && canUpdate && (
+        <Button onClick={() => setConfirmOpen(true)} disabled={acting}>
+          Konfirmasi order
+        </Button>
+      )}
+      {isConfirmed && showReceive && (
+        <Button onClick={goReceive} disabled={acting}>
+          Terima barang
+        </Button>
+      )}
+      {!(isConfirmed && showReceive) && payButton}
+    </>
+  );
 
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Pembelian"
         title={order.number}
-        description={`${formatDate(order.orderDate)} · ${order.partyName}`}
-        actions={
+        meta={
           <>
-            <Button variant="secondary" onClick={() => void navigate(ROUTE_PATHS.purchaseOrders)}>
-              Daftar
-            </Button>
-            {canEdit && (
-              <Button
-                onClick={() =>
-                  void navigate(`${ROUTE_PATHS.purchaseOrders}/${order.id}/edit`)
-                }
-              >
-                Ubah
-              </Button>
+            <StatusBadge status={order.status} />
+            {billing.available && !isDraft && order.status !== "cancelled" && (
+              <Badge tone={badge.tone}>{badge.label}</Badge>
             )}
+          </>
+        }
+        subtitle={`${order.partyName || "-"} · ${formatDate(order.orderDate)}`}
+        actions={actions}
+      >
+        <DocumentRail steps={rail.steps} current={rail.current} stopped={rail.stopped} related={rail.related} />
+      </PageHeader>
+
+      {actionError && (
+        <Notice tone="danger" title="Aksi ditolak">
+          {actionError}
+        </Notice>
+      )}
+      {prepaidBlocked && (
+        <Notice tone="info" title="Order prabayar">
+          Penerimaan barang baru bisa dicatat setelah tagihan lunas.
+        </Notice>
+      )}
+
+      <PageColumns
+        main={
+          <>
+            <SectionCard title={`Barang (${order.items.length})`} flush>
+              <DataTable<PurchaseOrderItem>
+                rows={order.items}
+                rowKey={(r) => r.id}
+                emptyTitle="Tidak ada baris barang"
+                stickyHeader={false}
+                columns={[
+                  {
+                    header: "Produk",
+                    render: (r) => (
+                      <div>
+                        <p>
+                          <span className="font-medium">{r.productName}</span>{" "}
+                          <span className="text-xs text-muted-foreground">
+                            {r.productCode}
+                            {r.variantName ? ` · ${r.variantName}` : ""}
+                            {!r.stockTracked ? " · tanpa stok" : ""}
+                          </span>
+                        </p>
+                        {lineSubText(r).map((t) => (
+                          <p key={t} className="text-xs text-muted-foreground">
+                            {t}
+                          </p>
+                        ))}
+                      </div>
+                    ),
+                  },
+                  {
+                    header: "Qty",
+                    align: "right",
+                    render: (r) => (
+                      <div>
+                        <Qty value={r.qty} unit={r.uom} />
+                        {r.uomFactor !== 1 && (
+                          <p className="text-xs text-muted-foreground">
+                            = <Qty value={r.qtyBase} unit={r.baseUom} />
+                          </p>
+                        )}
+                      </div>
+                    ),
+                  },
+                  ...(progress !== null
+                    ? [
+                        {
+                          header: "Diterima",
+                          align: "right" as const,
+                          render: (r: PurchaseOrderItem) => {
+                            const p = progress.get(lineKey(r));
+                            return (
+                              <div>
+                                <p>
+                                  <Qty value={p?.done ?? 0} /> / <Qty value={r.qty} />
+                                </p>
+                                {(p?.pending ?? 0) > 0 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    +<Qty value={p?.pending ?? 0} /> menunggu
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          },
+                        },
+                      ]
+                    : []),
+                  { header: "Harga", align: "right", render: (r) => <Money value={r.unitPrice} /> },
+                  {
+                    header: "Subtotal",
+                    align: "right",
+                    render: (r) => <Money value={r.lineTotal} className="font-medium" />,
+                  },
+                ]}
+              />
+            </SectionCard>
+
+            {!isDraft && (
+              <OrderHistoryCard
+                events={history.data?.events ?? []}
+                loading={history.loading}
+                warnings={history.data?.warnings ?? (history.error ? [history.error] : [])}
+                hiddenNotes={hiddenNotes}
+              />
+            )}
+          </>
+        }
+        aside={
+          <>
+            <OrderBillingCard
+              title="Ringkasan tagihan"
+              billing={billing}
+              subtotal={order.subtotal}
+              discountTotal={order.discountTotal}
+              taxTotal={order.taxTotal}
+              grandTotal={order.grandTotal}
+            />
+            <SectionCard title="Info dokumen">
+              <DescriptionList
+                columns={1}
+                items={[
+                  { label: "Nomor", value: <DocNumber value={order.number} copyable /> },
+                  { label: "Pemasok", value: order.partyName || "-" },
+                  { label: "Tanggal order", value: formatDate(order.orderDate) },
+                  {
+                    label: "Jatuh tempo",
+                    value: (
+                      <span className={billing.overdue ? "font-semibold text-destructive" : undefined}>
+                        {formatDate(billing.dueDate !== "" ? billing.dueDate : order.dueDate)}
+                        {billing.overdue ? " (terlewat)" : ""}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: "Termin",
+                    value: `${purchaseTermsLabel(order.paymentTerms)}${
+                      order.paymentTermDays > 0 ? ` · ${order.paymentTermDays} hari` : ""
+                    }`,
+                  },
+                  {
+                    label: "Faktur pemasok",
+                    value:
+                      order.supplierInvoiceNumber.trim() !== ""
+                        ? `${order.supplierInvoiceNumber}${
+                            order.supplierInvoiceDate ? ` · ${formatDate(order.supplierInvoiceDate)}` : ""
+                          }`
+                        : "",
+                  },
+                  {
+                    label: "Faktur pajak",
+                    value:
+                      order.taxInvoiceNumber.trim() !== ""
+                        ? `${order.taxInvoiceNumber}${
+                            order.taxInvoiceDate ? ` · ${formatDate(order.taxInvoiceDate)}` : ""
+                          }`
+                        : "",
+                  },
+                  { label: "Penanggung jawab", value: order.assignedUserName },
+                  { label: "Dibuat oleh", value: order.createdByName },
+                  {
+                    label: "Pajak",
+                    value: `${order.taxType}${order.taxType !== "none" ? ` (${order.taxRate}%)` : ""}`,
+                  },
+                  { label: "Catatan", value: order.notes.trim(), wide: true },
+                ]}
+              />
+            </SectionCard>
           </>
         }
       />
 
-      <div className="space-y-4">
-        <SectionCard title="Ringkasan" description="Header order dan alur status.">
-          <div className="mb-4">
-            <FlowSteps status={order.status} />
-          </div>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4">
-            <div>
-              <dt className="text-muted">Nomor</dt>
-              <dd className="font-semibold text-ink">{order.number}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Status</dt>
-              <dd>
-                <Badge tone={statusTone(order.status)}>{statusLabel(order.status)}</Badge>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted">Tanggal Order</dt>
-              <dd className="text-ink">{formatDate(order.orderDate)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Jatuh Tempo</dt>
-              <dd className="text-ink">{formatDate(order.dueDate)}</dd>
-            </div>
-            <div className="col-span-2">
-              <dt className="text-muted">Supplier</dt>
-              <dd className="text-ink">{order.partyName || "-"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Termin</dt>
-              <dd className="text-ink">{order.paymentTerms === "cod" ? "COD" : "Net"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Pajak</dt>
-              <dd className="text-ink">
-                {order.taxType}
-                {order.taxType !== "none" ? ` (${order.taxRate}%)` : ""}
-              </dd>
-            </div>
-            {order.notes.trim() !== "" && (
-              <div className="col-span-2 md:col-span-4">
-                <dt className="text-muted">Catatan</dt>
-                <dd className="text-ink">{order.notes}</dd>
-              </div>
-            )}
-          </dl>
-          <dl className="mt-4 max-w-md space-y-2 border-t border-hairline pt-4 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted">Subtotal</dt>
-              <dd className="text-ink">{formatIDR(order.subtotal)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted">Total Diskon</dt>
-              <dd className="text-ink">− {formatIDR(order.discountTotal)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted">Total Pajak</dt>
-              <dd className="text-ink">{formatIDR(order.taxTotal)}</dd>
-            </div>
-            <div className="flex justify-between text-base">
-              <dt className="font-semibold text-ink">Grand Total</dt>
-              <dd className="font-bold text-ink">{formatIDR(order.grandTotal)}</dd>
-            </div>
-          </dl>
-        </SectionCard>
-
-        <SectionCard
-          title={`Barang (${order.items.length})`}
-          description="Harga snapshot server — perubahan master produk tidak mengubah riwayat."
-        >
-          <DataTable<PurchaseOrderItem>
-            rows={order.items}
-            rowKey={(r) => r.id}
-            emptyTitle="Tidak ada baris barang"
-            columns={[
-              {
-                header: "Produk",
-                render: (r) => (
-                  <span>
-                    <span className="font-medium">{r.productName}</span>{" "}
-                    <span className="text-muted text-xs">{r.productCode}</span>
-                  </span>
-                ),
-              },
-              { header: "Satuan", render: (r) => r.uom },
-              {
-                header: "Qty",
-                align: "right",
-                render: (r) => formatNumber(r.qty),
-              },
-              {
-                header: "Qty Dasar",
-                align: "right",
-                render: (r) => formatNumber(r.qtyBase),
-              },
-              {
-                header: "Harga",
-                align: "right",
-                render: (r) => formatIDR(r.unitPrice),
-              },
-              { header: "Diskon", render: (r) => discountText(r) },
-              {
-                header: "Subtotal",
-                align: "right",
-                render: (r) => (
-                  <span className="font-medium">{formatIDR(r.lineTotal)}</span>
-                ),
-              },
-            ]}
-          />
-        </SectionCard>
-
-        {(isDraft || isConfirmed) && (canUpdate || canCancel) && (
-          <SectionCard title="Aksi" description="Transisi status order.">
-            <div className="flex flex-wrap gap-3">
-              {isDraft && canUpdate && (
-                <Button onClick={() => setConfirmOpen(true)} disabled={acting}>
-                  Konfirmasi
-                </Button>
-              )}
-              {(isDraft || isConfirmed) && canCancel && (
-                <Button
-                  variant="danger"
-                  onClick={() => setCancelOpen(true)}
-                  disabled={acting}
-                >
-                  Batalkan
-                </Button>
-              )}
-            </div>
-            {!isDraft && (
-              <p className="text-muted mt-3 text-sm">
-                Order {statusLabel(order.status).toLowerCase()} — ubah & konfirmasi hanya untuk
-                draf.
-              </p>
-            )}
-          </SectionCard>
-        )}
-      </div>
-
       <ConfirmDialog
         open={confirmOpen}
-        title="Konfirmasi Order"
+        title="Konfirmasi order"
         message={`Konfirmasi order ${order.number}? Order terkonfirmasi tidak bisa diubah lagi.`}
         confirmLabel="Konfirmasi"
         tone="primary"
@@ -336,13 +439,27 @@ export default function PurchaseOrderDetailPage() {
       />
       <ConfirmDialog
         open={cancelOpen}
-        title="Batalkan Order"
-        message={`Batalkan order ${order.number}? Tindakan ini tidak bisa dibatalkan.`}
-        confirmLabel="Batalkan Order"
+        title="Batalkan order"
+        message={`Batalkan order ${order.number}? Server menolak bila masih ada penerimaan, pembayaran, atau retur aktif — batalkan dokumen itu dulu.`}
+        confirmLabel="Batalkan order"
         tone="danger"
         onConfirm={() => void handleCancel()}
         onCancel={() => setCancelOpen(false)}
       />
-    </div>
+
+      <OrderPaymentModal
+        open={paymentOpen}
+        onClose={() => setPaymentOpen(false)}
+        onPaid={() => {
+          setPaymentOpen(false);
+          refresh();
+        }}
+        orderType="purchase"
+        orderId={order.id}
+        orderNumber={order.number}
+        partyId={order.partyId > 0 ? order.partyId : 0}
+        outstanding={billing.outstanding}
+      />
+    </Page>
   );
 }

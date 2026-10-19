@@ -1,8 +1,8 @@
 // Service retur jual — HANYA via helper http-client (apiGet/apiPage/
 // apiPost). Bentuk respons terverifikasi dari backend:
-// - GET /api/v1/sales-returns?salesOrderId&status&page&limit → paginasi
-//   returnView[] (salesreturn/presentation/handler.go: List). TIDAK ada
-//   param search — pencarian nomor difilter sisi klien.
+// - GET /api/v1/sales-returns?search&status(CSV)&salesOrderId&from&to&page&
+//   limit → paginasi returnView[] (salesreturn/presentation/handler.go: List;
+//   search = nomor retur/catatan, semua filter di server).
 // - GET /api/v1/sales-returns/:id → returnView (Get).
 // - POST /api/v1/sales-returns {salesOrderId, returnDate?, notes?,
 //   returnMode?, items[], replacementItems?[]} → 201 returnView (Create).
@@ -36,6 +36,7 @@
 //   mandiri (tanpa impor service modul lain).
 
 import { apiGet, apiPage, apiPostFull } from "@/shared/services/http-client";
+import { compactParams, positiveId } from "@/shared/lib/list-query";
 import type {
   LocationOption,
   ReplacementConfirmPayload,
@@ -53,23 +54,38 @@ import type {
   SourceSalesOrder,
 } from "@/modules/salesreturn/types";
 
-export interface SalesReturnListParams {
+export interface SalesReturnFilterParams {
+  /** Nomor retur atau catatan. */
+  search?: string;
+  /** CSV: "draft,confirmed". */
   status?: string;
+  /** Filter dokumen sumber (salesOrderId backend). */
+  salesOrderId?: number;
+  /** YYYY-MM-DD (WIB), inklusif. */
+  from?: string;
+  to?: string;
+}
+
+export interface SalesReturnListParams extends SalesReturnFilterParams {
   page: number;
   limit: number;
 }
 
-function cleanParams(p: SalesReturnListParams): Record<string, unknown> {
-  return {
-    status: p.status ? p.status : undefined,
+export function buildSalesReturnListQuery(p: SalesReturnListParams): Record<string, unknown> {
+  return compactParams({
+    search: p.search,
+    status: p.status,
+    salesOrderId: positiveId(p.salesOrderId),
+    from: p.from,
+    to: p.to,
     page: p.page,
     limit: p.limit,
-  };
+  });
 }
 
 export const salesReturnService = {
-  list: (p: SalesReturnListParams) =>
-    apiPage<SalesReturn>("/api/v1/sales-returns", cleanParams(p)),
+  list: (p: SalesReturnListParams, signal?: AbortSignal) =>
+    apiPage<SalesReturn>("/api/v1/sales-returns", buildSalesReturnListQuery(p), signal),
 
   get: (id: number) => apiGet<SalesReturn>(`/api/v1/sales-returns/${id}`),
 
@@ -139,23 +155,6 @@ export const salesReturnService = {
 };
 
 export const salesReturnLookupService = {
-  /** SO terkonfirmasi + selesai untuk dropdown sumber (maks 50 per status). */
-  sourceOrders: async (): Promise<SourceSalesOrder[]> => {
-    const [confirmed, completed] = await Promise.all([
-      apiPage<SourceSalesOrder>("/api/v1/sales-orders", {
-        status: "confirmed",
-        page: 1,
-        limit: 50,
-      }),
-      apiPage<SourceSalesOrder>("/api/v1/sales-orders", {
-        status: "completed",
-        page: 1,
-        limit: 50,
-      }),
-    ]);
-    return [...confirmed.items, ...completed.items];
-  },
-
   /** Detail SO untuk inisialisasi baris retur (qty di-clamp ke qty order). */
   sourceOrderDetail: (id: number) =>
     apiGet<SourceSalesOrder>(`/api/v1/sales-orders/${id}`),

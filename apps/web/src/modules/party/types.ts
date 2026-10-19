@@ -17,6 +17,10 @@ export interface Party {
   notes: string | null;
   member: PartyMemberRef | null;
   status: string;
+  /** Waktu diarsipkan (null bila aktif/dipulihkan). */
+  archivedAt?: string | null;
+  /** "Informasi Tambahan" bebas (maks 20 kunci). Selalu objek dari server. */
+  attributes: Record<string, string>;
 }
 
 export type Customer = Party;
@@ -41,6 +45,12 @@ export interface Address {
   status: string;
 }
 
+/** GET /member-types/{id}/customer-count. */
+export interface MemberTypeCustomerCount {
+  memberTypeId: number;
+  activeCustomers: number;
+}
+
 export interface MemberType {
   id: number;
   code: string;
@@ -50,6 +60,7 @@ export interface MemberType {
   direction: string;
   type: string;
   value: number;
+  /** none | nearest | up | down (nama lama sudah dilipat backend). */
   roundingMode: string;
   roundingStep: number;
   status: string;
@@ -65,6 +76,8 @@ export interface PartyCreatePayload {
   address?: string;
   notes?: string;
   memberTypeId?: number | null;
+  /** Tidak dikirim = kosong; {} = kosong. */
+  attributes?: Record<string, string>;
 }
 
 export interface PartyUpdatePayload {
@@ -75,6 +88,8 @@ export interface PartyUpdatePayload {
   notes?: string;
   memberTypeId?: number | null;
   clearMember?: boolean;
+  /** Tidak dikirim = tak berubah; {} = dikosongkan; selain itu menggantikan seluruh blok. */
+  attributes?: Record<string, string>;
 }
 
 export interface AddressPayload {
@@ -100,3 +115,33 @@ export interface MemberTypeCreatePayload {
 }
 
 export type MemberTypeUpdatePayload = Omit<MemberTypeCreatePayload, "code">;
+
+/** Ringkasan order di tab Transaksi (GET /sales-orders | /purchase-orders?partyId=). */
+export interface PartyOrderRow {
+  id: number;
+  number: string;
+  orderDate: string;
+  grandTotal: number;
+  status: string;
+}
+
+export interface PartyOrderBalance {
+  orderType: string;
+  orderId: number;
+  number: string;
+  grandTotal: number;
+  paid: number;
+  outstanding: number;
+}
+
+/** GET /payments/party-balances?partyId= — saldo tagihan/pembayaran satu pihak. */
+export interface PartyBalanceView {
+  partyId: number;
+  partyName: string;
+  totalBilled: number;
+  totalPaid: number;
+  totalReturned: number;
+  totalRefunded: number;
+  outstanding: number;
+  orders: PartyOrderBalance[];
+}

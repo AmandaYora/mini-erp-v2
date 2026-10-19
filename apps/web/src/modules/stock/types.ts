@@ -20,7 +20,13 @@ export interface StockLocation {
   name: string;
   parentId: number | null;
   isSystem: boolean;
+  /** "normal" | "damaged" — ditentukan server, tidak dapat diubah dari form. */
+  kind: string;
   status: string;
+  /** Atribut alokasi (ST-01): area picking dan lokasi utama diprioritaskan; sortOrder = urutan. */
+  isPickingArea: boolean;
+  isPrimary: boolean;
+  sortOrder: number;
 }
 
 export interface StockBalance {
@@ -31,6 +37,12 @@ export interface StockBalance {
   onHand: number;
   reserved: number;
   available: number;
+}
+
+/** Baris GET /stock/balances (tanpa productId): membawa kode+nama produk. */
+export interface StockBalanceRow extends StockBalance {
+  productCode: string;
+  productName: string;
 }
 
 export interface StockMovement {
@@ -46,6 +58,10 @@ export interface StockMovement {
   notes: string;
   createdBy: number;
   createdAt: string;
+  /** Saldo posisi sebelum/sesudah mutasi (ST-04); null untuk baris lama tanpa snapshot. */
+  balanceBefore: number | null;
+  balanceAfter: number | null;
+  movedAt: string;
 }
 
 export interface TransferItem {
@@ -53,6 +69,8 @@ export interface TransferItem {
   variantId: number;
   qty: number;
   notes: string;
+  /** Tujuan per baris; 0 = pakai tujuan dokumen. */
+  toLocationId?: number;
 }
 
 export interface StockTransfer {
@@ -64,6 +82,12 @@ export interface StockTransfer {
   toLocationId: number;
   status: string;
   items: TransferItem[];
+  /** Muka dokumen transfer (ST-02); kosong pada transfer lama. */
+  notes?: string;
+  driverName?: string;
+  vehiclePlate?: string;
+  /** YYYY-MM-DD (WIB). */
+  transferDate?: string;
 }
 
 export interface ProductOption {
@@ -88,6 +112,21 @@ export interface ProductDetail {
   name: string;
   status: string;
   variants: ProductVariantOption[];
+  /** Satuan dasar/beli/jual + faktornya ke satuan dasar (label dual-satuan, ST-06). */
+  baseUom?: string;
+  purchaseUom?: string;
+  salesUom?: string;
+  purchaseFactor?: number;
+  salesFactor?: number;
+}
+
+/** Hasil POST /stock/scan-product (status ok | inactive | variant_required). */
+export interface ScanResult {
+  status: string;
+  via?: string;
+  product: { id: number; code: string; name: string };
+  variant: { id: number; code: string; name: string } | null;
+  variants?: { id: number; code: string; name: string; barcode?: string }[];
 }
 
 export interface BranchOption {
@@ -106,7 +145,29 @@ export interface OpeningRowError {
 
 export interface OpeningPreview {
   validRows: number;
+  /** Baris yang dilewati (posisi sudah punya mutasi) — tidak diposting ulang. */
+  skipped: number;
   errors: OpeningRowError[];
+  /** Rincian per baris (maks 500 pertama), total, dan peringatan (ST-05). */
+  rows?: OpeningPreviewRow[];
+  rowsTruncated?: boolean;
+  totalQty?: number;
+  totalValue?: number;
+  warnings?: string[];
+}
+
+export interface OpeningPreviewRow {
+  row: number;
+  productCode: string;
+  productName: string;
+  variantCode: string;
+  locationCode: string;
+  qty: number;
+  unitCost: number;
+  value: number;
+  /** "post" = akan dibukukan, "skip" = dilewati. */
+  status: "post" | "skip";
+  note: string;
 }
 
 export interface OpeningResult {
@@ -119,6 +180,10 @@ export interface LocationPayload {
   code: string;
   name: string;
   parentId: number | null;
+  forceTransfer?: boolean;
+  isPickingArea?: boolean;
+  isPrimary?: boolean;
+  sortOrder?: number;
 }
 
 export interface AdjustmentPayload {
@@ -138,7 +203,19 @@ export interface TransferPayload {
   fromLocationId: number;
   toLocationId: number;
   notes: string;
-  items: { productId: number; variantId: number; qty: number; notes: string }[];
+  driverName?: string;
+  vehiclePlate?: string;
+  transferDate?: string;
+  items: TransferItemPayload[];
+}
+
+export interface TransferItemPayload {
+  productId: number;
+  variantId: number;
+  qty: number;
+  notes: string;
+  /** Opsional: tujuan khusus baris ini (cabang yang sama dengan tujuan dokumen). */
+  toLocationId?: number;
 }
 
 /** Pindah lokasi satu langkah (J4) — tanpa cabang tujuan, selalu cabang aktif. */
@@ -146,7 +223,27 @@ export interface MoveLocationPayload {
   fromLocationId: number;
   toLocationId: number;
   notes: string;
-  items: { productId: number; variantId: number; qty: number; notes: string }[];
+  items: TransferItemPayload[];
+}
+
+/** Satu posisi stok rusak dengan estimasi kerugian (ST-03). */
+export interface DamagedBalance extends StockBalance {
+  /** Harga modal rata-rata per satuan dasar (rupiah). */
+  estimatedUnitCost: number;
+  estimatedLoss: number;
+}
+
+export interface DamagedPage {
+  items: DamagedBalance[];
+  /** Jumlah baris himpunan terpilih (ada stok / sudah nol). */
+  total: number;
+  withStock: number;
+  empty: number;
+  /** Potensi kerugian seluruh stok rusak, bukan hanya halaman ini. */
+  totalEstimatedLoss: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface DamagedMovePayload {  productId: number;

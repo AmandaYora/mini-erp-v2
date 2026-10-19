@@ -24,6 +24,11 @@ export interface JournalLine {
   accountName: string;
   debit: number;
   credit: number;
+  // Dimensi baris (F2b): produk/varian/pihak + keterangan; 0/"" bila tidak ada.
+  productId?: number;
+  variantId?: number;
+  partyId?: number;
+  description?: string;
 }
 
 export interface JournalEntry {
@@ -50,6 +55,11 @@ export interface Expense {
   notes: string;
   journalEntryId: number;
   status: string;
+  // Alasan pembatalan (wajib saat batal); kosong bila belum dibatalkan.
+  cancelReason?: string;
+  /** Pihak lawan opsional (FN-10). */
+  partyId?: number;
+  partyName?: string;
 }
 
 export interface FiscalPeriod {
@@ -89,7 +99,7 @@ export function accountTypeLabel(t: string): string {
   }
 }
 
-// Kunci pemetaan valid (application/service.go: mappingKeys).
+// Kunci pemetaan valid (application/service.go: mappingKeys) — 18 kunci.
 export const MAPPING_KEYS = [
   "cash",
   "bank",
@@ -98,45 +108,73 @@ export const MAPPING_KEYS = [
   "ppn_in",
   "payable",
   "ppn_out",
+  "customer_advance",
+  "supplier_advance",
+  "opening_equity",
   "revenue",
   "sales_return",
   "cogs",
   "expense",
   "writeoff",
   "adjustment",
+  "rounding_difference",
+  "purchase_return_difference",
 ] as const;
 
+const MAPPING_LABELS: Record<string, string> = {
+  cash: "Kas Tunai",
+  bank: "Bank",
+  receivable: "Piutang Usaha",
+  inventory: "Persediaan",
+  ppn_in: "PPN Masukan",
+  payable: "Hutang Usaha",
+  ppn_out: "PPN Keluaran",
+  customer_advance: "Uang Muka Pelanggan",
+  supplier_advance: "Uang Muka Supplier",
+  opening_equity: "Modal Awal / Saldo Awal",
+  revenue: "Penjualan",
+  sales_return: "Retur Penjualan",
+  cogs: "HPP",
+  expense: "Beban Operasional",
+  writeoff: "Beban Hapus Stok",
+  adjustment: "Penyesuaian Persediaan",
+  rounding_difference: "Pembulatan / Selisih Posting",
+  purchase_return_difference: "Selisih Retur Pembelian",
+};
+
 export function mappingKeyLabel(key: string): string {
-  switch (key) {
-    case "cash":
-      return "Kas Tunai";
-    case "bank":
-      return "Bank";
-    case "receivable":
-      return "Piutang Usaha";
-    case "inventory":
-      return "Persediaan";
-    case "ppn_in":
-      return "PPN Masukan";
-    case "payable":
-      return "Hutang Usaha";
-    case "ppn_out":
-      return "PPN Keluaran";
-    case "revenue":
-      return "Penjualan";
-    case "sales_return":
-      return "Retur Penjualan";
-    case "cogs":
-      return "HPP";
-    case "expense":
-      return "Beban Operasional";
-    case "writeoff":
-      return "Beban Hapus Stok";
-    case "adjustment":
-      return "Penyesuaian Persediaan";
-    default:
-      return key;
-  }
+  return MAPPING_LABELS[key] ?? key;
+}
+
+// Tipe akun yang diizinkan per kunci (service.go: mappingTypes) — dipakai
+// untuk menyaring pilihan akun di MappingModal; backend tetap memvalidasi.
+export const MAPPING_ACCOUNT_TYPES: Record<string, readonly AccountType[]> = {
+  cash: ["aset"],
+  bank: ["aset"],
+  receivable: ["aset"],
+  inventory: ["aset"],
+  ppn_in: ["aset"],
+  payable: ["kewajiban"],
+  ppn_out: ["kewajiban"],
+  revenue: ["pendapatan"],
+  sales_return: ["pendapatan"],
+  cogs: ["beban"],
+  expense: ["beban"],
+  writeoff: ["beban"],
+  adjustment: ["beban"],
+  customer_advance: ["kewajiban"],
+  supplier_advance: ["aset"],
+  opening_equity: ["modal"],
+  rounding_difference: ["beban"],
+  purchase_return_difference: ["beban"],
+};
+
+/** Kunci pemetaan yang belum menunjuk akun aktif. */
+export function missingMappingKeys(maps: AccountMappings): string[] {
+  return MAPPING_KEYS.filter((k) => {
+    const a = maps[k];
+    return !a || a.status !== "active";
+  });
 }
 
 // docType yang diterima buildLines (application/builders.go). business_expense,
@@ -147,6 +185,9 @@ export const POSTING_DOC_TYPES = [
   "payment",
   "sales_return",
   "purchase_return",
+  "sales_return_settlement",
+  "purchase_return_settlement",
+  "stock_movement",
 ] as const;
 
 export function docTypeLabel(t: string): string {
@@ -161,8 +202,18 @@ export function docTypeLabel(t: string): string {
       return "Retur Jual";
     case "purchase_return":
       return "Retur Beli";
+    case "sales_return_settlement":
+      return "Saldo Customer (Retur Jual)";
+    case "purchase_return_settlement":
+      return "Saldo Supplier (Retur Beli)";
+    case "stock_movement":
+      return "Koreksi/Hapus Stok";
     case "business_expense":
       return "Biaya";
+    case "opening":
+      return "Saldo Awal";
+    case "tax_adjustment":
+      return "Koreksi Fiskal";
     case "manual":
       return "Manual";
     case "reversal":
@@ -222,7 +273,8 @@ export interface TrialRow {
   credit: number;
 }
 
-/** GET reports/trial-balance?year=&month= → {rows,totalDebit,totalCredit,balanced}. */
+/** GET reports/trial-balance?year=&month= atau ?asOf=YYYY-MM-DD (kumulatif) →
+ * {rows,totalDebit,totalCredit,balanced}. */
 export interface TrialBalanceReport {
   rows: TrialRow[];
   totalDebit: number;
@@ -231,12 +283,22 @@ export interface TrialBalanceReport {
 }
 
 /** GET reports/profit-loss?from=&to= (YYYY-MM-DD). */
+/** Satu akun pada rincian laba rugi (FN-03); jumlah satu golongan = angka ringkasannya. */
+export interface PLLine {
+  code: string;
+  name: string;
+  amount: number;
+}
+
 export interface ProfitLossReport {
   revenue: number;
   cogs: number;
   gross: number;
   expense: number;
   profit: number;
+  revenueLines?: PLLine[];
+  cogsLines?: PLLine[];
+  expenseLines?: PLLine[];
   from: string;
   to: string;
 }
@@ -252,7 +314,8 @@ export interface BalanceSheetReport {
   date: string;
 }
 
-/** GET reports/general-ledger?account=&from=&to= → array langsung. */
+/** GET reports/general-ledger?account=&from=&to=&page=&limit= → {data, meta};
+ * halaman 1 diawali baris {entryId:0, memo:"Saldo awal"} bila saldo awal tidak nol. */
 export interface LedgerLine {
   entryId: number;
   number: string;
@@ -261,19 +324,64 @@ export interface LedgerLine {
   debit: number;
   credit: number;
   balance: number;
+  /** Dimensi baris (FN-08). */
+  partyName?: string;
+  productName?: string;
+  description?: string;
 }
 
-/** GET reports/tax-summary?year=&month=. */
+/** Satu akun pada buku besar semua akun (FN-08); saldo menurut sisi normal akun. */
+export interface LedgerAccountRow {
+  code: string;
+  name: string;
+  type: string;
+  normal: "debit" | "credit";
+  opening: number;
+  debit: number;
+  credit: number;
+  closing: number;
+}
+
+/** GET reports/general-ledger tanpa ?account= → {rows,totalDebit,totalCredit} + meta. */
+export interface LedgerOverview {
+  rows: LedgerAccountRow[];
+  totalDebit: number;
+  totalCredit: number;
+}
+
+/** Transaksi kena pajak tanpa nomor faktur (FN-06). */
+export interface TaxException {
+  orderId: number;
+  orderNumber: string;
+  kind: "sales" | "purchase" | string;
+  date: string;
+  partyName: string;
+  dpp: number;
+  ppn: number;
+}
+
+/** GET reports/tax-summary?year=&month=[&page=&limit=]. */
 export interface TaxSummary {
   year: number;
   month: number;
   ppnOut: number;
   ppnIn: number;
   payable: number;
+  salesDpp?: number;
+  purchaseDpp?: number;
+  exceptions?: TaxException[];
+  exceptionsMeta?: { page: number; limit: number; total: number; totalPages: number };
 }
 
-/** GET reports/tax-detail?year=&month= → array langsung. */
+/** Jenis baris rincian PPN: keluaran jual, retur jual, masukan beli, retur beli. */
+export type TaxDetailKind = "sales" | "sales_return" | "purchase" | "purchase_return";
+
+/** GET reports/tax-detail?year=&month=&page=&limit= → {data, meta} (berpaginasi). */
 export interface TaxDetailRow {
+  entryId: number;
+  kind: TaxDetailKind | string;
+  /** PPN masukan (pembelian) — terpisah dari ppn (keluaran). */
+  ppnIn: number;
   date: string;
   number: string;
   memo: string;
@@ -284,6 +392,12 @@ export interface TaxDetailRow {
   // JSON + CSV sudah menyajikan keduanya).
   taxInvoiceNumber: string;
   taxInvoiceDate: string;
+  /** FN-06: DPP baris kena pajak, pesanan induk, pihak, dan penanda tanpa faktur. */
+  dpp?: number;
+  orderId?: number;
+  orderNumber?: string;
+  partyName?: string;
+  missingInvoice?: boolean;
 }
 
 /** GET reports/inventory-value (tanpa param) → {positions,total}. */
@@ -297,17 +411,37 @@ export interface InventoryPosition {
   value: number;
 }
 
+/** Pecahan per cabang (FN-09). */
+export interface BranchValue {
+  branchId: number;
+  branchName: string;
+  total: number;
+  positions: number;
+}
+
 export interface InventoryValueReport {
   positions: InventoryPosition[];
   total: number;
+  byBranch?: BranchValue[];
 }
 
 /** GET reports/margin?from=&to= (YYYY-MM-DD). */
+export interface BranchMargin {
+  branchId: number;
+  branchName: string;
+  revenue: number;
+  cogs: number;
+  gross: number;
+  percent: number;
+}
+
 export interface MarginReport {
   revenue: number;
   cogs: number;
   gross: number;
   percent: number;
+  /** Diisi untuk cakupan semua cabang (FN-09). */
+  byBranch?: BranchMargin[];
 }
 
 /**
@@ -349,12 +483,82 @@ export function formatPercent(n: number | null | undefined): string {
   return `${n.toFixed(2).replace(".", ",")}%`;
 }
 
-/** GET /finance/posting-sources — dokumen terkonfirmasi yang belum dijurnal. */
+/**
+ * GET /finance/posting-sources & /finance/posting/orphans — satu item antrean.
+ * periodClosed: dokumen jatuh di bulan yang sudah ditutup; tetap tampil
+ * (peringatan) tetapi TIDAK ikut posting massal / tutup harian.
+ */
 export interface PostingSource {
   docType: string;
   docId: number;
   number: string;
   date: string;
+  periodClosed: boolean;
+  /** FN-01: sengaja diabaikan dengan alasan; tidak memblokir tutup periode. */
+  ignored?: boolean;
+  ignoreReason?: string;
+  ignoredAt?: string;
+  /** FN-10: nominal, pihak, ringkasan. amountKind "order" = total pesanan induk. */
+  amount?: number;
+  amountKind?: "document" | "order" | string;
+  partyId?: number;
+  partyName?: string;
+  summary?: string;
+}
+
+/** Status hari pada ikhtisar tutup hari (FN-02). */
+export type DayStatus = "kosong" | "belum" | "selesai_catatan" | "lengkap";
+
+export interface OverviewTaskItem {
+  docType: string;
+  docId: number;
+  number: string;
+  date: string;
+  amount: number;
+  partyName?: string;
+  message: string;
+}
+
+export interface OverviewTask {
+  code: string;
+  label: string;
+  hint: string;
+  count: number;
+  items: OverviewTaskItem[];
+}
+
+/** GET /finance/posting/overview?date= (FN-02). */
+export interface DailyOverview {
+  date: string;
+  status: DayStatus;
+  activity: number;
+  totals: {
+    sales: { amount: number; count: number };
+    purchases: { amount: number; count: number };
+    returns: { amount: number; count: number };
+    cashIn: number;
+    cashOut: number;
+  };
+  ready: { today: number; backlog: number };
+  tasks: OverviewTask[];
+  backlog: { count: number; ready: number; needsInput: number; tasks: OverviewTask[] };
+  ignored: number;
+  dataWarning: { invalidDateCount: number };
+  probed: number;
+  probeCapped: boolean;
+}
+
+/**
+ * Aksi satu item batch: post (default), reverse (jurnal yatim) atau catchup
+ * (jurnalkan dokumen bulan tertutup ke periode terbuka, ditandai Susulan;
+ * butuh izin finance.close.force).
+ */
+export type BatchAction = "post" | "reverse" | "catchup";
+
+export interface BatchItem {
+  docType: string;
+  docId: number;
+  action?: BatchAction;
 }
 
 /** POST /finance/posting/post-batch & /close-day — hasil per dokumen. */
@@ -366,6 +570,52 @@ export interface BatchPostResult {
   error?: string;
 }
 
+/** POST /finance/posting/close-day — data: hasil per dokumen + sisa antrean (N-52). */
+export interface CloseDayResult {
+  results: BatchPostResult[];
+  posted: number;
+  failed: number;
+  /** Dokumen layak-tutup yang MASIH antre (gagal atau melewati batas 500 per panggilan). */
+  remaining: number;
+}
+
+/** Batas satu panggilan batch (application.MaxBatch). */
+export const MAX_BATCH = 50;
+
+/** GET /finance/cutover → {docType: coveredThroughId}. */
+export type CutoverMap = Record<string, number>;
+
+/** Jenis dokumen yang punya batas cutover (SetCutover.valid). */
+export const CUTOVER_DOC_TYPES = [
+  "delivery",
+  "goods_receipt",
+  "payment",
+  "sales_return",
+  "purchase_return",
+  "sales_return_settlement",
+  "purchase_return_settlement",
+  "stock_movement",
+] as const;
+
+export type CheckStatus = "ok" | "warning" | "failed";
+
+/** Satu gerbang pada daftar periksa tutup periode. */
+export interface ReadinessCheck {
+  key: string;
+  label: string;
+  status: CheckStatus;
+  detail: string;
+  count: number;
+}
+
+export function checkLabel(s: CheckStatus): string {
+  return s === "ok" ? "Lolos" : s === "warning" ? "Peringatan" : "Gagal";
+}
+
+export function checkTone(s: CheckStatus): "success" | "warning" | "danger" {
+  return s === "ok" ? "success" : s === "warning" ? "warning" : "danger";
+}
+
 /** GET /finance/close/readiness — daftar periksa pra-tutup periode. */
 export interface PeriodReadiness {
   year: number;
@@ -375,8 +625,20 @@ export interface PeriodReadiness {
   unbalanced: number;
   missingTaxInvoice: number;
   missingSupplierInvoice: number;
+  latePeriodDocs: number;
+  orphans: number;
+  checks: ReadinessCheck[];
   ready: boolean;
   blockers: string[];
+  warnings: string[];
+}
+
+/** GET /finance/costing/uncosted — produk yang belum punya harga modal. */
+export interface UncostedItem {
+  productId: number;
+  variantId: number;
+  productCode: string;
+  productName: string;
 }
 
 /** Satu rekening kas/bank pada ringkasan kas. */
@@ -405,10 +667,161 @@ export interface FiscalLine {
 }
 
 /** GET /finance/reports/fiscal-summary — komersil → fiskal. */
+export interface FiscalClass {
+  classification: string;
+  label: string;
+  entries: number;
+  effect: number;
+}
+
 export interface FiscalSummaryReport {
   commercial: ProfitLossReport;
   lines: FiscalLine[];
+  classes?: FiscalClass[];
   fiscalProfit: number;
   from: string;
   to: string;
+}
+
+/** Satu rekening kas pada laporan kas rentang (?from&to). */
+export interface CashFlowRow {
+  code: string;
+  name: string;
+  opening: number;
+  in: number;
+  out: number;
+  closing: number;
+}
+
+/** GET /finance/reports/cash-summary?from=&to= → saldo awal + masuk - keluar = akhir. */
+export interface CashFlowReport {
+  rows: CashFlowRow[];
+  openingTotal: number;
+  closingTotal: number;
+}
+
+/** Satu dokumen terbuka pada umur piutang/hutang (?view=documents). */
+export interface AgingDoc {
+  orderId: number;
+  number: string;
+  partyId: number;
+  partyName: string;
+  orderDate: string;
+  dueDate: string;
+  grandTotal: number;
+  paid: number;
+  outstanding: number;
+  ageDays: number;
+  overdueDays: number;
+}
+
+export interface AgingBuckets {
+  d0_30: number;
+  d31_60: number;
+  d61_90: number;
+  over90: number;
+}
+
+/** GET reports/receivables|payables?view=documents[&asOf=]. */
+export interface AgingReport {
+  asOf: string;
+  documents: AgingDoc[];
+  buckets: AgingBuckets;
+  total: number;
+}
+
+/** Selisih rollup harian vs baris jurnal. */
+export interface RollupDiff {
+  accountId: number;
+  date: string;
+  scope: number;
+  linesDebit: number;
+  linesCredit: number;
+  rollupDebit: number;
+  rollupCredit: number;
+}
+
+/** GET /finance/integrity (perm finance.manage). */
+export interface IntegrityReport {
+  rollupDiffs: RollupDiff[];
+  unbalanced: number;
+  /** Rekonsiliasi akun Persediaan buku vs nilai ledger biaya (K-05). */
+  inventory?: InventoryRecon;
+  consistent: boolean;
+}
+
+/** Akun Persediaan buku dibanding nilai ledger biaya; diff = buku − ledger. */
+export interface InventoryRecon {
+  book: number;
+  ledger: number;
+  diff: number;
+  tolerance: number;
+  /** Dokumen belum dijurnal; selagi ada, selisih hanya peringatan. */
+  pending: number;
+  missingCost: number;
+  consistent: boolean;
+}
+
+/** Posisi berstok yang bernilai nol di ledger biaya. */
+export interface MissingCostItem {
+  productId: number;
+  variantId: number;
+  productCode: string;
+  productName: string;
+  qty: number;
+  /** Harga beli katalog per satuan dasar (0 = belum ada). */
+  suggestedCost: number;
+}
+
+/** GET /finance/opening/inventory — persediaan yang dijurnal server saat saldo awal. */
+export interface OpeningInventory {
+  total: number;
+  positions: number;
+  estimated: number;
+  missingCost: MissingCostItem[];
+  openingPosted: boolean;
+}
+
+/** Pratinjau saldo awal = jurnal + ringkasan persediaan terhitung. */
+export type OpeningPreview = JournalEntry & { inventory?: OpeningInventory };
+
+export const JOURNAL_STATUSES = ["posted", "reversed"] as const;
+export const JOURNAL_SOURCE_TYPES = [
+  "goods_receipt",
+  "delivery",
+  "payment",
+  "sales_return",
+  "purchase_return",
+  "sales_return_settlement",
+  "purchase_return_settlement",
+  "stock_movement",
+  "business_expense",
+  "opening",
+  "tax_adjustment",
+  "manual",
+  "reversal",
+] as const;
+
+/** Jenis koreksi fiskal (FN-07). */
+export const TAX_CLASSES = [
+  { value: "positive", label: "Koreksi positif" },
+  { value: "negative", label: "Koreksi negatif" },
+  { value: "final_income", label: "Penghasilan final" },
+  { value: "non_object", label: "Bukan objek pajak" },
+] as const;
+
+/** Koreksi fiskal = jurnal bertipe + jenis + catatan (FN-07). */
+export interface TaxAdjustment extends JournalEntry {
+  classification: string;
+  classLabel: string;
+  note: string;
+}
+
+/** Lampiran (gambar) koreksi fiskal. */
+export interface TaxAdjustmentFile {
+  id: number;
+  name: string;
+  mime: string;
+  sizeBytes: number;
+  url: string;
 }

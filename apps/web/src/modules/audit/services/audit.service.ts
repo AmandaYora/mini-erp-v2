@@ -1,34 +1,43 @@
 import { apiPage } from "@/shared/services/http-client";
+import { compactParams, positiveId } from "@/shared/lib/list-query";
 import type { AuditRecord } from "@/modules/audit/types";
 
-export interface AuditListParams {
+export interface AuditFilterParams {
+  /** "" = cabang aktif + global; "all" = semua cabang; angka = satu cabang. */
+  branchId?: string;
+  /** Awalan aksi: "product." menemukan product.create/update. */
   action?: string;
   entity?: string;
+  entityId?: number;
+  actorId?: number;
+  /** YYYY-MM-DD (hari WIB), inklusif. */
+  from?: string;
+  to?: string;
+}
+
+export interface AuditListParams extends AuditFilterParams {
   page?: number;
   limit?: number;
 }
 
-function cleanParams(p: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(p)) {
-    if (v === undefined || v === null) continue;
-    if (typeof v === "string" && v.trim() === "") continue;
-    out[k] = v;
-  }
-  return out;
+export function buildAuditListQuery(p: AuditListParams): Record<string, unknown> {
+  return compactParams({
+    branchId: p.branchId,
+    action: p.action,
+    entity: p.entity,
+    entityId: positiveId(p.entityId),
+    actorId: positiveId(p.actorId),
+    from: p.from,
+    to: p.to,
+    page: p.page ?? 1,
+    limit: p.limit ?? 20,
+  });
 }
 
 export const auditService = {
-  // GET /api/v1/audit-logs?action=&entity=&page=&limit= — paginasi,
-  // terbaru dulu (diurutkan backend).
-  list: (params: AuditListParams) =>
-    apiPage<AuditRecord>(
-      "/api/v1/audit-logs",
-      cleanParams({
-        action: params.action,
-        entity: params.entity,
-        page: params.page ?? 1,
-        limit: params.limit ?? 20,
-      }),
-    ),
+  // GET /api/v1/audit-logs?branchId&action&entity&entityId&actorId&from&to&
+  // page&limit — paginasi, terbaru dulu (diurutkan backend); tiap baris
+  // membawa actorType/actorName/branchName dan before/after/metadata.
+  list: (params: AuditListParams, signal?: AbortSignal) =>
+    apiPage<AuditRecord>("/api/v1/audit-logs", buildAuditListQuery(params), signal),
 };

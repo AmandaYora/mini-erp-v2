@@ -30,7 +30,11 @@ describe("AsyncSearchSelect", () => {
     );
     expect(screen.getByText("Pilih gudang…")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { expanded: false }));
-    await waitFor(() => expect(loadOptions).toHaveBeenCalledWith(""));
+    // Pemuat kini menerima AbortSignal kedua: request usang dihentikan,
+    // bukan sekadar diabaikan.
+    await waitFor(() =>
+      expect(loadOptions).toHaveBeenCalledWith("", expect.any(AbortSignal)),
+    );
     expect(await screen.findByText("Gudang A")).toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: /Gudang B/ }));
     expect(onChange).toHaveBeenCalledWith(
@@ -50,7 +54,10 @@ describe("AsyncSearchSelect", () => {
     expect(await screen.findByText("Ketik lebih spesifik untuk melihat hasil lainnya")).toBeInTheDocument();
     await user.type(screen.getByPlaceholderText("Cari…"), "A");
     await waitFor(() =>
-      expect(loadOptions).toHaveBeenCalledWith(expect.stringContaining("A")),
+      expect(loadOptions).toHaveBeenCalledWith(
+        expect.stringContaining("A"),
+        expect.any(AbortSignal),
+      ),
     );
     expect(await screen.findByText("Gudang A")).toBeInTheDocument();
     expect(screen.queryByText("Gudang B")).not.toBeInTheDocument();
@@ -88,5 +95,45 @@ describe("AsyncSearchSelect", () => {
     expect(screen.getByText("Gudang A")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Hapus pilihan" }));
     expect(onChange).toHaveBeenCalledWith(null, undefined);
+  });
+  it("membatalkan request yang tergantikan ketikan berikutnya", async () => {
+    const user = userEvent.setup();
+    const signals: AbortSignal[] = [];
+    const loadOptions = vi.fn(async (_q: string, signal?: AbortSignal) => {
+      if (signal) signals.push(signal);
+      return OPTIONS;
+    });
+    render(<AsyncSearchSelect loadOptions={loadOptions} debounceMs={0} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await waitFor(() => expect(signals.length).toBeGreaterThan(0));
+    await user.type(screen.getByPlaceholderText("Cari…"), "AB");
+    await waitFor(() => expect(signals.length).toBeGreaterThan(1));
+    // Semua kecuali yang terakhir harus sudah dibatalkan: request usang tidak
+    // boleh terus memakai koneksi dan kerja server.
+    const stale = signals.slice(0, -1);
+    expect(stale.length).toBeGreaterThan(0);
+    expect(stale.every((s) => s.aborted)).toBe(true);
+    expect(signals[signals.length - 1].aborted).toBe(false);
+  });
+  it("minChars: kata kunci 1 huruf tidak memanggil loadOptions, 2 huruf memanggil", async () => {
+    const user = userEvent.setup();
+    const loadOptions = vi.fn(async () => OPTIONS);
+    render(<AsyncSearchSelect loadOptions={loadOptions} debounceMs={0} minChars={2} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    // Daftar awal (kata kunci kosong) tetap dimuat.
+    await waitFor(() => expect(loadOptions).toHaveBeenCalledTimes(1));
+    expect(loadOptions).toHaveBeenLastCalledWith("", expect.any(AbortSignal));
+
+    const input = screen.getByPlaceholderText("Cari…");
+    await user.type(input, "a");
+    expect(await screen.findByText("Ketik minimal 2 huruf untuk mencari")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenCalledTimes(1);
+
+    await user.type(input, "b");
+    await waitFor(() =>
+      expect(loadOptions).toHaveBeenLastCalledWith("ab", expect.any(AbortSignal)),
+    );
+    expect(loadOptions).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Ketik minimal 2 huruf untuk mencari")).not.toBeInTheDocument();
   });
 });

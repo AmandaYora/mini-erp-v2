@@ -1,43 +1,23 @@
-import { create } from "zustand";
-import type { Tone } from "@/shared/lib/format";
+import { toast as sonner } from "sonner";
 
-export interface Toast {
-  id: number;
-  title: string;
-  description?: string;
-  tone: Tone;
-}
+/** Durasi tampil (ms) — sama dengan toast lama. */
+export const TOAST_DURATION_MS = 4500;
 
-let nextId = 1;
+const opts = (description?: string) => ({ description, duration: TOAST_DURATION_MS });
 
-interface ToastState {
-  toasts: Toast[];
-  push: (t: Omit<Toast, "id">) => void;
-  dismiss: (id: number) => void;
-}
-
-/** Toast global ala aplikasi lama (pojok kanan bawah, border-l-4). */
-export const useToastStore = create<ToastState>((set) => ({
-  toasts: [],
-  push: (t) => {
-    const id = nextId++;
-    set((s) => ({ toasts: [...s.toasts.slice(-4), { ...t, id }] }));
-    window.setTimeout(() => {
-      set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) }));
-    }, 4500);
-  },
-  dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
-}));
-
+/**
+ * Toast global (pojok kanan bawah). Dirender oleh <ToastViewport /> (Sonner, DS v2);
+ * API pemanggil tidak berubah sejak toast kustom lama.
+ */
 export const toast = {
-  success: (title: string, description?: string) => useToastStore.getState().push({ title, description, tone: "success" }),
-  warning: (title: string, description?: string) => useToastStore.getState().push({ title, description, tone: "warning" }),
-  danger: (title: string, description?: string) => useToastStore.getState().push({ title, description, tone: "danger" }),
-  info: (title: string, description?: string) => useToastStore.getState().push({ title, description, tone: "info" }),
+  success: (title: string, description?: string) => sonner.success(title, opts(description)),
+  warning: (title: string, description?: string) => sonner.warning(title, opts(description)),
+  danger: (title: string, description?: string) => sonner.error(title, opts(description)),
+  info: (title: string, description?: string) => sonner.info(title, opts(description)),
   /** Tampilkan pesan server bila ada, fallback ke teks klien bila kosong.
    * Kontrak B1: aksi tulis memakai message backend sebagai sumber kebenaran. */
   fromServer: (serverMessage: string | undefined | null, fallback: string, description?: string) => {
     const msg = (serverMessage ?? "").trim();
-    useToastStore.getState().push({ title: msg !== "" ? msg : fallback, description, tone: "success" });
+    sonner.success(msg !== "" ? msg : fallback, opts(description));
   },
 };

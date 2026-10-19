@@ -40,6 +40,8 @@ export interface PosProductDetail {
   purchaseUom: string;
   salesUom: string;
   sellingPrice: number;
+  /** Harga jual minimum per satuan dasar (0 = tanpa batas). */
+  minSellingPrice: number;
   status: string;
   variants: PosProductVariant[];
 }
@@ -54,9 +56,26 @@ export interface ScanBalance {
   available: number;
 }
 
+/** Pilihan varian saat kode produk memuat lebih dari satu varian. */
+export interface ScanVariantChoice {
+  id: number;
+  code: string;
+  name: string;
+  barcode: string;
+}
+
+/** Status hasil pindai: ok | variant_required | inactive (string agar status baru tak merusak tipe). */
+export type ScanStatus = "ok" | "variant_required" | "inactive" | (string & {});
+
 export interface ScanResult {
+  status: ScanStatus;
+  /** Jalur pencocokan: barcode | variant_code | product_code. */
+  via?: string;
   product: { id: number; code: string; name: string };
-  variant: { id: number; code: string; name: string };
+  /** null bila status variant_required / inactive. */
+  variant: { id: number; code: string; name: string } | null;
+  /** Terisi hanya bila status variant_required. */
+  variants?: ScanVariantChoice[];
   balances: ScanBalance[];
 }
 
@@ -108,6 +127,8 @@ export interface PricingQuoteLine {
   memberPrice: number;
   applied: boolean;
   memberInactive: boolean;
+  /** Galat khusus baris ini (harga dasar kosong, konversi satuan, dst); baris lain tetap berharga. */
+  error?: string;
 }
 
 /** Hasil POST /api/v1/pricing/quote — harga member yang berlaku untuk keranjang. */
@@ -137,6 +158,12 @@ export interface CartLine {
   uom: string;
   qty: number;
   unitPrice: number;
+  /** Harga minimum per satuan dasar dari detail produk (klem diskon). */
+  minSellingPrice: number;
+  /** Diskon persen baris (0–100). */
+  discountPct: number;
+  /** Diskon nominal baris (rupiah, per baris). */
+  discountNominal: number;
 }
 
 export interface PosOrderLinePayload {
@@ -144,6 +171,8 @@ export interface PosOrderLinePayload {
   variantId: number;
   uom: string;
   qty: number;
+  discountPct?: number;
+  discountNominal?: number;
 }
 
 /** Body POST /sales-orders untuk channel POS. partyId 0 = walk-in.
@@ -154,6 +183,15 @@ export interface PosOrderPayload {
   partyId: number;
   paymentTerms: "cod" | "net";
   dueDate?: string;
+  /** UUID per keranjang — kunci idempoten (replay = 200 replayed:true). */
+  clientRef: string;
+  /** PPN opsional (K-03): dihilangkan = tanpa pajak. Server menghitung ulang. */
+  taxType?: "include" | "exclude";
+  taxRate?: number;
+  /** Catatan transaksi (SL-07); dihilangkan bila kosong. */
+  notes?: string;
+  /** Alamat kirim opt-in dari buku alamat pelanggan (SL-07); hanya untuk pelanggan terdaftar. */
+  shipToAddressId?: number;
   items: PosOrderLinePayload[];
 }
 
@@ -162,6 +200,9 @@ export interface PosCreatedOrder {
   id: number;
   number: string;
   grandTotal: number;
+  status?: string;
+  paymentTerms?: string;
+  replayed?: boolean;
 }
 
 export interface PosPaymentAllocation {
@@ -175,32 +216,35 @@ export interface PosPaymentPayload {
   method: PayMethod;
   amount: number;
   allocations: PosPaymentAllocation[];
+  /** Idempoten: sama dengan clientRef keranjang. */
+  clientRef?: string;
+  amountTendered?: number;
 }
 
 export interface PosCreatedPayment {
   id: number;
   number: string;
-}
-
-export interface PosLocation {
-  id: number;
-  code: string;
-  name: string;
-  branchId: number;
-  status: string;
+  amount?: number;
+  amountTendered?: number;
+  change?: number;
+  allocations?: { orderType: string; orderId: number; amount: number }[];
 }
 
 export interface PosDeliveryLinePayload {
   productId: number;
   variantId: number;
-  locationId: number;
+  /** Dikosongkan = server mengalokasikan otomatis lintas lokasi. */
+  locationId?: number;
   uom: string;
   qty: number;
+  /** Kunci tahanan stok (pos:<ref>:<product>:<variant>:<lokasi>) yang dikonsumsi. */
+  reservationKey?: string;
 }
 
 /** Body POST /deliveries untuk mengeluarkan stok POS. */
 export interface PosDeliveryPayload {
   salesOrderId: number;
+  clientRef: string;
   items: PosDeliveryLinePayload[];
 }
 
@@ -208,6 +252,39 @@ export interface PosDeliveryPayload {
 export interface PosCreatedDelivery {
   id: number;
   number: string;
+  status?: string;
+  replayed?: boolean;
+}
+
+/** Settlement satu panggilan pada konfirmasi SJ (bayar sekarang). */
+export interface PosSettlement {
+  mode: "pay_now";
+  method: PayMethod;
+  /** Uang diterima — hanya tunai; server menghitung kembalian. */
+  amountTendered?: number;
+}
+
+export type PosNextStep =
+  | "confirm"
+  | "create_delivery"
+  | "confirm_delivery"
+  | "pay"
+  | "done"
+  | "cancelled";
+
+/** GET /sales-orders/by-client-ref/{ref}/state. */
+export interface PosOrderState {
+  order: PosCreatedOrder;
+  deliveries: { id: number; number: string; status: string }[];
+  paidAmount: number;
+  outstanding: number;
+  nextStep: PosNextStep;
+}
+
+/** POST /stock/allocations/suggest. */
+export interface StockSuggestion {
+  lines: { locationId: number; qty: number }[];
+  shortfall: number;
 }
 
 /** Ringkasan sukses yang ditampilkan setelah checkout. */

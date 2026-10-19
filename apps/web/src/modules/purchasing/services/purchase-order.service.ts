@@ -11,33 +11,53 @@
 //   purchaseUom, salesUom, purchasePrice) untuk dropdown varian & satuan.
 
 import { apiGet, apiPage, apiPostFull, apiPutFull, httpClient } from "@/shared/services/http-client";
+import { compactParams, positiveId, sortParams } from "@/shared/lib/list-query";
+import type { SortDir } from "@/shared/lib/list-query";
 import type {
   ProductSearchOption,
   PurchaseOrder,
   PurchaseOrderPayload,
   PurchasingProductDetail,
-  SupplierLookup,
 } from "@/modules/purchasing/types";
 
 export interface PurchaseOrderListParams {
   search?: string;
+  /** CSV: "confirmed,completed". */
   status?: string;
+  paymentTerms?: string;
+  partyId?: number;
+  /** YYYY-MM-DD (WIB), inklusif. */
+  from?: string;
+  to?: string;
+  sort?: string;
+  dir?: SortDir | "";
   page: number;
   limit: number;
 }
 
-function cleanParams(p: PurchaseOrderListParams): Record<string, unknown> {
-  return {
-    search: p.search?.trim() ? p.search.trim() : undefined,
-    status: p.status ? p.status : undefined,
-    page: p.page,
-    limit: p.limit,
-  };
+export type PurchaseOrderFilterParams = Omit<PurchaseOrderListParams, "page" | "limit">;
+
+/** SATU sumber query untuk GET /purchase-orders dan /purchase-orders/export. */
+export function buildPurchaseFilterQuery(p: PurchaseOrderFilterParams): Record<string, unknown> {
+  return compactParams({
+    search: p.search,
+    status: p.status,
+    paymentTerms: p.paymentTerms,
+    partyId: positiveId(p.partyId),
+    from: p.from,
+    to: p.to,
+    ...sortParams(p.sort ?? "", p.dir ?? ""),
+  });
+}
+
+export function buildPurchaseListQuery(p: PurchaseOrderListParams): Record<string, unknown> {
+  const { page, limit, ...filter } = p;
+  return { ...buildPurchaseFilterQuery(filter), page, limit };
 }
 
 export const purchaseOrderService = {
-  list: (p: PurchaseOrderListParams) =>
-    apiPage<PurchaseOrder>("/api/v1/purchase-orders", cleanParams(p)),
+  list: (p: PurchaseOrderListParams, signal?: AbortSignal) =>
+    apiPage<PurchaseOrder>("/api/v1/purchase-orders", buildPurchaseListQuery(p), signal),
 
   get: (id: number) => apiGet<PurchaseOrder>(`/api/v1/purchase-orders/${id}`),
 
@@ -84,17 +104,6 @@ export const purchaseOrderService = {
 };
 
 export const purchasingLookupService = {
-  /** Supplier aktif untuk SearchSelect (maks 50, filter lanjutan di klien). */
-  supplierOptions: () =>
-    apiPage<SupplierLookup>("/api/v1/suppliers", {
-      status: "active",
-      page: 1,
-      limit: 50,
-    }),
-
-  /** Satu supplier (untuk prefill edit bila tak ada di daftar opsi). */
-  supplierById: (id: number) => apiGet<SupplierLookup>(`/api/v1/suppliers/${id}`),
-
   /** Opsi produk — array langsung, BUKAN paginasi. */
   productOptions: (q?: string) =>
     apiGet<ProductSearchOption[]>(

@@ -8,13 +8,17 @@ export const ROUTE_PATHS = {
   salesOrders: "/sales-orders",
   deliveries: "/deliveries",
   deliveriesQueue: "/deliveries/queue",
+  deliveriesNew: "/deliveries/new",
   salesReturns: "/sales-returns",
   purchaseReturns: "/purchase-returns",
   purchaseOrders: "/purchase-orders",
   goodsReceipts: "/goods-receipts",
+  goodsReceiptsNew: "/goods-receipts/new",
   payments: "/payments",
   stock: "/stock",
+  stockBalances: "/stock/balances",
   stockTransfers: "/stock/transfers",
+  stockTransfersNew: "/stock/transfers/new",
   stockAdjustments: "/stock/adjustments",
   stockDamaged: "/stock/damaged",
   stockOpening: "/stock/opening",
@@ -35,12 +39,18 @@ export const ROUTE_PATHS = {
   inventoryValue: "/finance/reports/inventory-value",
   margin: "/finance/reports/margin",
   receivablesPayables: "/finance/reports/receivables-payables",
+  cashReport: "/finance/reports/cash",
+  financeJournalNew: "/finance/journals/new",
   financeExpenses: "/finance/expenses",
   financeAccounts: "/finance/accounts",
   financePeriods: "/finance/periods",
+  financeIntegrity: "/finance/integrity",
+  opsIntegrity: "/ops/integrity",
   financeOpening: "/finance/opening",
   taxAdjustments: "/finance/tax-adjustments",
   reporting: "/reporting",
+  reportingOrders: "/reporting/orders",
+  reportingStock: "/reporting/stock",
   auditLogs: "/audit-logs",
   assistantSetup: "/assistant/setup",
   assistantConfig: "/assistant/config",
@@ -49,6 +59,7 @@ export const ROUTE_PATHS = {
   branches: "/branches",
   company: "/company",
   printDelivery: "/print/deliveries/:id",
+  printTransfer: "/print/transfers/:id",
   printSales: "/print/sales/:id",
   printPayment: "/print/payments/:id",
   printPos: "/print/pos/:orderId",
@@ -58,6 +69,10 @@ export const ROUTE_PATHS = {
 
 export function deliveryPrintPath(id: number | string): string {
   return `/print/deliveries/${id}`;
+}
+
+export function transferPrintPath(id: number | string): string {
+  return `/print/transfers/${id}`;
 }
 
 export function salesInvoicePrintPath(id: number | string): string {

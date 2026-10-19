@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { CSSProperties } from "react";
-import { createPortal } from "react-dom";
 import { INPUT } from "./field-classes";
+import { LIST_MAX_HEIGHT, SelectPopover, SelectPopoverContent, SelectPopoverTrigger } from "./select-popover";
 import {
   SS_CHEVRON,
   SS_EMPTY,
@@ -46,18 +46,6 @@ export interface HierarchicalSelectProps {
   emptyText?: string;
 }
 
-const SEARCH_BAR_HEIGHT = 44;
-const GAP = 4;
-const MIN_LIST_HEIGHT = 140;
-
-interface PopoverPos {
-  left: number;
-  width: number;
-  listMaxHeight: number;
-  top?: number;
-  bottom?: number;
-}
-
 /**
  * HierarchicalSelect — dropdown sync dengan visual pohon (tree guide).
  *
@@ -92,58 +80,10 @@ export function HierarchicalSelect({
 
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<PopoverPos | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
-  function calcPos(): PopoverPos | null {
-    if (!containerRef.current || typeof window === "undefined") return null;
-    const rect = containerRef.current.getBoundingClientRect();
-    const vh = window.innerHeight;
-    const spaceBelow = vh - rect.bottom - GAP - 8;
-    const spaceAbove = rect.top - GAP - 8;
-    const openUpward =
-      spaceAbove > spaceBelow && spaceBelow < MIN_LIST_HEIGHT + SEARCH_BAR_HEIGHT;
-    if (openUpward) {
-      return {
-        bottom: vh - rect.top + GAP,
-        left: rect.left,
-        width: rect.width,
-        listMaxHeight: Math.max(MIN_LIST_HEIGHT, spaceAbove - SEARCH_BAR_HEIGHT),
-      };
-    }
-    return {
-      top: rect.bottom + GAP,
-      left: rect.left,
-      width: rect.width,
-      listMaxHeight: Math.max(MIN_LIST_HEIGHT, spaceBelow - SEARCH_BAR_HEIGHT),
-    };
-  }
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (containerRef.current?.contains(target)) return;
-      if (popoverRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onScrollOrResize = () => setOpen(false);
-    document.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("scroll", onScrollOrResize, true);
-    window.addEventListener("resize", onScrollOrResize);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("scroll", onScrollOrResize, true);
-      window.removeEventListener("resize", onScrollOrResize);
-    };
-  }, [open]);
-
-  function handleToggle() {
+  function handleOpenChange(next: boolean) {
     if (disabled) return;
-    if (!open) setPos(calcPos());
-    setOpen((v) => !v);
+    setOpen(next);
   }
 
   function handleSelect(option: SharedSelectOption) {
@@ -170,12 +110,7 @@ export function HierarchicalSelect({
   );
 
   return (
-    <div
-      className={["hierarchical-select", "relative w-full min-w-0", className]
-        .filter(Boolean)
-        .join(" ")}
-      ref={containerRef}
-    >
+    <div className={["hierarchical-select", "relative w-full min-w-0", className].filter(Boolean).join(" ")}>
       {name ? (
         <input
           type="hidden"
@@ -184,13 +119,14 @@ export function HierarchicalSelect({
           value={internalValue ?? ""}
         />
       ) : null}
+      <SelectPopover open={open && !disabled} onOpenChange={handleOpenChange}>
+      <SelectPopoverTrigger asChild>
       <button
         type="button"
         id={id}
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="listbox"
-        onClick={handleToggle}
         className={["hierarchical-select-trigger", INPUT, SS_TRIGGER].join(" ")}
       >
         <span
@@ -214,21 +150,9 @@ export function HierarchicalSelect({
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
+      </SelectPopoverTrigger>
 
-      {open && pos && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              className={`hierarchical-select-popover ${SS_POPOVER_HIER}`}
-              style={{
-                position: "fixed",
-                top: pos.top,
-                bottom: pos.bottom,
-                left: pos.left,
-                width: pos.width,
-                zIndex: 9999,
-              }}
-            >
+      <SelectPopoverContent className={`hierarchical-select-popover ${SS_POPOVER_HIER}`}>
               <div className={SS_SEARCH}>
                 <input
                   autoFocus
@@ -238,7 +162,7 @@ export function HierarchicalSelect({
                   className={["hierarchical-select-input", INPUT, SS_INPUT].join(" ")}
                 />
               </div>
-              <div className={SS_LIST_HIER} style={{ maxHeight: pos.listMaxHeight }}>
+              <div className={SS_LIST_HIER} style={{ maxHeight: LIST_MAX_HEIGHT }}>
                 {showEmptyOption ? (
                   <button
                     type="button"
@@ -249,7 +173,7 @@ export function HierarchicalSelect({
                   >
                     <span className={TS_CONTENT}>
                       <span className={TS_TITLE_ROW}>
-                        <span className={`${TS_TITLE} italic text-muted`}>
+                        <span className={`${TS_TITLE} italic text-muted-foreground`}>
                           {emptyOptionLabel}
                         </span>
                       </span>
@@ -273,15 +197,15 @@ export function HierarchicalSelect({
                         isActive
                           ? TS_LINES_ACTIVE
                           : option.disabled
-                            ? "before:border-hairline after:border-hairline"
+                            ? "before:border-border after:border-border"
                             : TS_LINES_IDLE
                       }`;
                   const titleCls = `${TS_TITLE} ${
                     isActive
-                      ? "font-semibold text-ink"
+                      ? "font-semibold text-foreground"
                       : option.disabled
-                        ? "font-medium text-muted"
-                        : "font-medium text-heading"
+                        ? "font-medium text-muted-foreground"
+                        : "font-medium text-foreground"
                   }`;
                   return (
                     <button
@@ -296,7 +220,7 @@ export function HierarchicalSelect({
                           "--tree-connector-left": `${connectorLeft}px`,
                         } as CSSProperties
                       }
-                      className={["hierarchical-select-item", TS_ITEM, isActive ? "bg-brand/10" : ""]
+                      className={["hierarchical-select-item", TS_ITEM, isActive ? "bg-primary/10" : ""]
                         .filter(Boolean)
                         .join(" ")}
                     >
@@ -305,7 +229,7 @@ export function HierarchicalSelect({
                         <span className={TS_TITLE_ROW}>
                           <span className={titleCls}>{option.label}</span>
                           {option.code ? (
-                            <span className="inline-flex min-h-[20px] max-w-[120px] flex-none items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full border border-hairline bg-surface-subtle px-[7px] py-0.5 text-[0.72rem] font-semibold leading-[1.2] text-muted">
+                            <span className="inline-flex min-h-[20px] max-w-[120px] flex-none items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full border border-border bg-background px-[7px] py-0.5 text-[0.72rem] font-semibold leading-[1.2] text-muted-foreground">
                               {option.code}
                             </span>
                           ) : null}
@@ -331,10 +255,8 @@ export function HierarchicalSelect({
                   <div className={SS_EMPTY}>{emptyText}</div>
                 ) : null}
               </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      </SelectPopoverContent>
+      </SelectPopover>
     </div>
   );
 }

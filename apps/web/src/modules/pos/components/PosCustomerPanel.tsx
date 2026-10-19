@@ -1,13 +1,11 @@
-import { Badge } from "@/shared/components/ui";
+import { UserRound } from "lucide-react";
+import { Badge, Button } from "@/shared/components/ui";
 import { formatIDR } from "@/shared/lib/format";
-import type {
-  PosCustomerDetail,
-  PricingQuote,
-} from "@/modules/pos/types";
+import type { PosCustomerDetail, PricingQuote } from "@/modules/pos/types";
 
-// Panel pelanggan POS (legacy: member summary panel): nama + telepon,
-// badge tipe member, dan total hemat harga member yang berlaku dari
-// POST /api/v1/pricing/quote. Presentasional — fetch milik halaman.
+// Kepala keranjang POS (legacy: member summary panel): nama pelanggan + tombol Ganti,
+// badge tipe member, dan total hemat harga member dari POST /api/v1/pricing/quote.
+// Presentasional — fetch milik hook. Ganti pelanggan = Sheet pencarian (CustomerSheet).
 export function PosCustomerPanel({
   customer,
   memberName,
@@ -15,6 +13,8 @@ export function PosCustomerPanel({
   quoteStatus,
   quoteError,
   savings,
+  locked,
+  onChange,
 }: {
   customer: PosCustomerDetail | null;
   memberName: string | null;
@@ -22,51 +22,49 @@ export function PosCustomerPanel({
   quoteStatus: "idle" | "loading" | "error";
   quoteError: string | null;
   savings: number;
+  locked: boolean;
+  onChange: () => void;
 }) {
-  if (!customer) {
-    return (
-      <div className="rounded-md border border-hairline bg-surface-subtle px-4 py-3">
-        <p className="text-[0.72rem] font-bold uppercase text-muted">Pelanggan</p>
-        <p className="font-bold text-ink">Umum / Walk-in</p>
-        <p className="mt-0.5 text-[0.78rem] text-muted">
-          Harga katalog berlaku — pilih customer untuk harga member.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="rounded-md border border-hairline bg-surface-subtle px-4 py-3">
-      <p className="text-[0.72rem] font-bold uppercase text-muted">Pelanggan</p>
-      <p className="truncate font-bold text-ink">{customer.name}</p>
-      <p className="mt-0.5 text-[0.78rem] text-muted">
-        {customer.phone?.trim() ? customer.phone : customer.code}
-      </p>
-      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-        {customer.member ? (
-          <Badge tone="info">{memberName ?? customer.member.code}</Badge>
-        ) : (
-          <Badge tone="neutral">Non-member</Badge>
-        )}
-        {quote?.memberInactive && <Badge tone="warning">Member nonaktif</Badge>}
+    <div className="border-b border-border px-4 py-3">
+      <div className="flex items-center gap-3">
+        <span aria-hidden className="flex size-10 flex-none items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <UserRound className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-2xs font-medium tracking-wide text-muted-foreground uppercase">Pelanggan</p>
+          <p className="truncate text-base font-semibold text-foreground">{customer ? customer.name : "Umum / Walk-in"}</p>
+        </div>
+        <Button
+          variant="secondary"
+          className="h-12 px-4 text-base"
+          disabled={locked}
+          onClick={onChange}
+          aria-label="Ganti pelanggan"
+        >
+          Ganti
+        </Button>
       </div>
-      {quoteStatus === "loading" && (
-        <p className="mt-2 text-[0.8rem] font-semibold text-warn">
-          Menghitung harga member…
-        </p>
+      {customer ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">{customer.phone?.trim() ? customer.phone : customer.code}</span>
+          {customer.member ? (
+            <Badge tone="info">{memberName ?? customer.member.code}</Badge>
+          ) : (
+            <Badge tone="neutral">Non-member</Badge>
+          )}
+          {quote?.memberInactive && <Badge tone="warning">Member nonaktif</Badge>}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-xs text-muted-foreground">Harga katalog berlaku — pilih pelanggan untuk harga member.</p>
       )}
-      {quoteStatus === "error" && quoteError && (
-        <p className="mt-2 text-[0.8rem] font-semibold text-bad">{quoteError}</p>
+      {quoteStatus === "loading" && <p className="mt-1.5 text-xs font-semibold text-warning">Menghitung harga member…</p>}
+      {quoteStatus === "error" && quoteError && <p className="mt-1.5 text-xs font-semibold text-destructive">{quoteError}</p>}
+      {customer && quote && !quote.memberInactive && savings > 0 && (
+        <p className="mt-1.5 text-sm font-semibold text-success">Hemat {formatIDR(savings)} dengan harga member</p>
       )}
-      {quote && !quote.memberInactive && savings > 0 && (
-        <p className="mt-2 text-[0.82rem] font-semibold text-ok">
-          Hemat {formatIDR(savings)} dengan harga member
-        </p>
-      )}
-      {quote && !quote.memberInactive && savings === 0 && customer.member && (
-        <p className="mt-2 text-[0.78rem] text-muted">
-          Harga member sama dengan harga katalog untuk keranjang ini.
-        </p>
+      {customer && quote && !quote.memberInactive && savings === 0 && customer.member && (
+        <p className="mt-1.5 text-xs text-muted-foreground">Harga member sama dengan harga katalog untuk keranjang ini.</p>
       )}
     </div>
   );

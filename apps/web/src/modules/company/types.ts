@@ -24,3 +24,14 @@ export interface SaveCompanyProfileInput {
 }
 
 export type CompanySettings = Record<string, string>;
+
+/** GET /company/settings/definitions — pengaturan terdaftar di backend (F3b-7). */
+export type SettingKind = "boolean" | "enum" | "number" | "json";
+
+export interface SettingDefinition {
+  key: string;
+  kind: SettingKind;
+  default: string;
+  enum?: string[];
+  label: string;
+}

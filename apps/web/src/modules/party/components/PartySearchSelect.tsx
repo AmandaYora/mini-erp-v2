@@ -7,7 +7,10 @@ import {
 import { customerService, supplierService } from "@/modules/party/services/party.service";
 import type { Party } from "@/modules/party/types";
 
-export type PartyKind = "customer" | "supplier";
+export type PartyKind = "customer" | "supplier" | "any";
+
+/** Pencarian pihak baru dikirim mulai 2 huruf (1 huruf terlalu lebar). */
+const MIN_PARTY_SEARCH = 2;
 
 type PartyOption = AsyncSearchOption & { party: Party };
 
@@ -27,13 +30,14 @@ export interface PartySearchSelectProps {
   allowClear?: boolean;
 }
 
-function formatPartyOption(party: Party): PartyOption {
+function formatPartyOption(party: Party, withType = false): PartyOption {
   const contact = party.phone || party.email || party.code || undefined;
+  const typeLabel = party.type === "supplier" ? "Supplier" : party.type === "customer" ? "Customer" : "";
   const memberSuffix = party.member?.code ? ` (${party.member.code})` : "";
   return {
     value: party.id,
     label: `${party.name}${memberSuffix}`,
-    description: contact,
+    description: withType && typeLabel ? [typeLabel, contact].filter(Boolean).join(" · ") : contact,
     party,
   };
 }
@@ -75,19 +79,27 @@ export function PartySearchSelect({
   }
 
   const loadOptions = useCallback(
-    async (search: string): Promise<AsyncSearchLoadResult> => {
-      const res = await svc.list({
-        search: search || undefined,
-        status: "active",
-        page: 1,
-        limit,
-      });
+    async (search: string, signal?: AbortSignal): Promise<AsyncSearchLoadResult> => {
+      const params = { search: search || undefined, status: "active", page: 1, limit };
+      if (partyKind === "any") {
+        // Pembayaran bisa ke customer maupun supplier: dua panggilan paralel.
+        const half = Math.max(1, Math.ceil(limit / 2));
+        const [c, s] = await Promise.all([
+          customerService.list({ ...params, limit: half }, signal),
+          supplierService.list({ ...params, limit: half }, signal),
+        ]);
+        return {
+          options: [...c.items, ...s.items].map((p) => formatPartyOption(p, true)),
+          hasMore: c.meta.total > c.items.length || s.meta.total > s.items.length,
+        };
+      }
+      const res = await svc.list(params, signal);
       return {
-        options: res.items.map(formatPartyOption),
+        options: res.items.map((p) => formatPartyOption(p)),
         hasMore: res.meta.total > res.items.length,
       };
     },
-    [svc, limit],
+    [svc, limit, partyKind],
   );
 
   // Pastikan pihak terpilih tampil walau di luar hasil pencarian saat ini.
@@ -95,8 +107,11 @@ export function PartySearchSelect({
   useEffect(() => {
     if (!value || selectedParty?.id === value || resolved?.value === value) return;
     let active = true;
-    svc
-      .get(value)
+    const lookup: Promise<unknown> =
+      partyKind === "any"
+        ? customerService.get(value).catch(() => supplierService.get(value))
+        : svc.get(value);
+    lookup
       .then((party) => {
         if (active) setResolved(formatPartyOption(party as Party));
       })
@@ -106,14 +121,22 @@ export function PartySearchSelect({
     return () => {
       active = false;
     };
-  }, [value, selectedParty, resolved, svc]);
+  }, [value, selectedParty, resolved, svc, partyKind]);
 
   return (
     <AsyncSearchSelect
       id={id}
       value={value}
       disabled={disabled}
-      placeholder={placeholder ?? (partyKind === "supplier" ? "Pilih supplier…" : "Pilih customer…")}
+      minChars={MIN_PARTY_SEARCH}
+      placeholder={
+        placeholder ??
+        (partyKind === "supplier"
+          ? "Pilih supplier…"
+          : partyKind === "any"
+            ? "Pilih pelanggan / supplier…"
+            : "Pilih customer…")
+      }
       searchPlaceholder={searchPlaceholder}
       selectedOption={resolved}
       allowClear={allowClear}

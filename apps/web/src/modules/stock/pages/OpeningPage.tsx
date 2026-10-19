@@ -1,30 +1,56 @@
-import { useRef, useState } from "react";
-import {
-  Button,
-  DataTable,
-  PageHeader,
-  SectionCard,
-} from "@/shared/components/ui";
+import { useState } from "react";
+import { Badge, Button, DataTable, PageHeader, SectionCard, SummaryCard } from "@/shared/components/ui";
+import { FileDropzone, Money, Page, Qty, Stepper, StickyFooter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatNumber } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
+import { openingPreviewSummary } from "@/modules/stock/lib/opening";
 import { stockService } from "@/modules/stock/services/stock.service";
-import type {
-  OpeningPreview,
-  OpeningResult,
-  OpeningRowError,
-} from "@/modules/stock/types";
+import type { OpeningPreview, OpeningPreviewRow, OpeningResult, OpeningRowError } from "@/modules/stock/types";
+
+const STEPS = [
+  { key: "template", label: "Unduh templat" },
+  { key: "upload", label: "Unggah" },
+  { key: "review", label: "Tinjau" },
+  { key: "done", label: "Selesai" },
+];
+
+const ERROR_COLUMNS = [
+  { header: "Baris", align: "right" as const, render: (r: OpeningRowError) => formatNumber(r.row) },
+  { header: "Kolom", render: (r: OpeningRowError) => r.column },
+  { header: "Nilai", render: (r: OpeningRowError) => r.value || "–" },
+  { header: "Alasan", render: (r: OpeningRowError) => r.reason },
+];
+
+const PREVIEW_COLUMNS = [
+  { header: "Baris", align: "right" as const, render: (r: OpeningPreviewRow) => formatNumber(r.row) },
+  {
+    header: "Barang",
+    render: (r: OpeningPreviewRow) => (
+      <div>
+        <p className="font-medium">{r.productName || r.productCode}</p>
+        <p className="text-xs text-muted-foreground">{[r.productCode, r.variantCode].filter(Boolean).join(" / ")}</p>
+      </div>
+    ),
+  },
+  { header: "Lokasi", render: (r: OpeningPreviewRow) => r.locationCode },
+  { header: "Jumlah", align: "right" as const, render: (r: OpeningPreviewRow) => <Qty value={r.qty} /> },
+  { header: "Nilai", align: "right" as const, render: (r: OpeningPreviewRow) => <Money value={r.value} /> },
+  {
+    header: "Status",
+    render: (r: OpeningPreviewRow) =>
+      r.status === "post" ? <Badge tone="success">Dibukukan</Badge> : <Badge tone="neutral">{"Dilewati: " + r.note}</Badge>,
+  },
+];
 
 export default function OpeningPage() {
   const can = useAuthStore((s) => s.can);
-  // Menu memakai stock.adjust, tetapi route backend opening/template|preview|commit
-  // dijaga stock.manage — butuh salah satunya, backend yang memutuskan akhir.
-  const canOpen = can("stock.adjust") || can("stock.manage");
+  // Route backend opening/template|preview|commit dijaga stock.adjust.
+  const canOpen = can("stock.adjust");
 
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -32,41 +58,37 @@ export default function OpeningPage() {
   const [result, setResult] = useState<OpeningResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function selectedFile(): File | null {
-    return fileRef.current?.files?.[0] ?? null;
-  }
+  const busy = previewing || committing;
+  const current = result ? "done" : preview ? "review" : file ? "upload" : "template";
 
   async function handleDownload() {
     setDownloading(true);
     try {
       await stockService.downloadOpeningTemplate();
-      toast.success("Template diunduh");
+      toast.success("Templat diunduh");
     } catch (err) {
-      toast.danger("Gagal mengunduh template", toApiError(err).message);
+      toast.danger("Gagal mengunduh templat", toApiError(err).message);
     } finally {
       setDownloading(false);
     }
   }
 
   async function handlePreview() {
-    const file = selectedFile();
     if (!file) {
-      setError("Pilih file Excel dulu.");
+      setError("Pilih berkas Excel dulu.");
       return;
     }
     setError(null);
     setResult(null);
     setPreviewing(true);
     try {
-      // Multipart field "file" (httpx.FormFile("file")) — pratinjau tanpa tulis.
+      // Multipart field "file" — pratinjau tanpa tulis.
       const res = await stockService.previewOpening(file);
       setPreview(res.data);
       if (res.data.errors.length === 0) {
         toast.fromServer(res.message, `${formatNumber(res.data.validRows)} baris valid`);
       } else {
-        toast.warning(
-          `${formatNumber(res.data.validRows)} baris valid, ${formatNumber(res.data.errors.length)} baris bermasalah`,
-        );
+        toast.warning(openingPreviewSummary(res.data));
       }
     } catch (err) {
       setError(toApiError(err).message);
@@ -76,9 +98,8 @@ export default function OpeningPage() {
   }
 
   async function handleCommit() {
-    const file = selectedFile();
     if (!file) {
-      setError("Pilih file Excel dulu.");
+      setError("Pilih berkas Excel dulu.");
       return;
     }
     setError(null);
@@ -98,135 +119,150 @@ export default function OpeningPage() {
     }
   }
 
+  function reset() {
+    setFile(null);
+    setPreview(null);
+    setResult(null);
+    setError(null);
+  }
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Stok & Gudang"
         title="Saldo Awal"
-        description="Impor saldo awal dari Excel: unduh template, pratinjau, lalu bukukan."
+        description="Impor saldo awal dari Excel: unduh templat, unggah, tinjau, lalu bukukan."
       />
 
+      <Stepper steps={STEPS} current={current} />
+
       {!canOpen && (
-        <div className="mb-4">
-          <Notice tone="warning" title="Izin terbatas">
-            Akun Anda tidak memiliki izin stock.adjust/stock.manage. Aksi
-            dikunci.
-          </Notice>
-        </div>
+        <Notice tone="warning" title="Izin terbatas">
+          Akun Anda tidak memiliki izin stock.adjust. Aksi dikunci.
+        </Notice>
       )}
       {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title="Gagal memproses file">
-            {error}
-          </Notice>
-        </div>
+        <Notice tone="danger" title="Gagal memproses berkas">
+          {error}
+        </Notice>
       )}
 
       <SectionCard
         title="Berkas Excel"
-        description="Kolom template: product_code, variant_code, location_code, qty."
+        description="Kolom: Kode Barang, Kode Varian (opsional), Kode Lokasi, Jumlah Stok Awal. Templat sudah berisi daftar barang dan lokasi saran; isi jumlahnya saja. Judul kolom berbahasa Indonesia maupun Inggris dikenali."
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={downloading}
-            onClick={() => void handleDownload()}
-          >
-            {downloading ? "Mengunduh…" : "Unduh Template"}
+          <Button variant="secondary" size="sm" loading={downloading} onClick={() => void handleDownload()}>
+            Unduh templat
           </Button>
         }
       >
-        <fieldset
-          disabled={!canOpen || previewing || committing}
-          className="flex flex-wrap items-end gap-3"
-        >
-          <div>
-            <label
-              htmlFor="opening-file"
-              className="text-heading mb-1.5 block text-[0.85rem] font-medium"
-            >
-              File Excel
-            </label>
-            <input
-              id="opening-file"
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={(e) => {
-                setFileName(e.target.files?.[0]?.name ?? "");
-                setPreview(null);
-                setResult(null);
-              }}
-              className="text-sm text-ink file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-hairline file:bg-surface-subtle file:px-3 file:py-1.5 file:text-sm file:font-medium"
-            />
-            {fileName && (
-              <p className="text-muted mt-1 text-[0.8rem]">{fileName}</p>
-            )}
-          </div>
-          <Button
-            variant="secondary"
-            disabled={previewing || committing}
-            onClick={() => void handlePreview()}
-          >
-            {previewing ? "Memeriksa…" : "Pratinjau"}
-          </Button>
-          <Button disabled={previewing || committing} onClick={() => void handleCommit()}>
-            {committing ? "Membukukan…" : "Bukukan"}
-          </Button>
-        </fieldset>
+        <FileDropzone
+          accept=".xlsx"
+          disabled={!canOpen || busy}
+          fileName={file?.name ?? null}
+          hint="Hanya format .xlsx (Excel 2007 ke atas). Simpan ulang file lama sebagai .xlsx."
+          label={file ? "Ganti berkas" : "Seret berkas Excel ke sini atau pilih"}
+          onFile={(f) => {
+            setFile(f);
+            setPreview(null);
+            setResult(null);
+            setError(null);
+          }}
+        />
       </SectionCard>
 
-      {preview && (
-        <div className="mt-6">
-          <SectionCard
-            title="Hasil Pratinjau"
-            description={`${formatNumber(preview.validRows)} baris valid, ${formatNumber(preview.errors.length)} baris bermasalah. Belum ada yang dibukukan.`}
-          >
-            <DataTable<OpeningRowError>
-              columns={[
-                {
-                  header: "Baris",
-                  align: "right",
-                  render: (r) => formatNumber(r.row),
-                },
-                { header: "Kolom", render: (r) => r.column },
-                { header: "Nilai", render: (r) => r.value || "-" },
-                { header: "Alasan", render: (r) => r.reason },
-              ]}
-              rows={preview.errors}
-              rowKey={(r) => `${r.row}-${r.column}`}
-              emptyTitle="Semua baris valid"
-              emptyDescription="Silakan lanjutkan ke pembukuan."
+      {preview && !result && (
+        <SectionCard
+          title="Hasil pratinjau"
+          description={`${openingPreviewSummary(preview)}. Belum ada yang dibukukan.`}
+          flush
+        >
+          {(preview.warnings ?? []).length > 0 && (
+            <div className="px-5 pt-5">
+              <Notice tone="warning" title="Perhatian">
+                <ul className="list-disc pl-5">
+                  {(preview.warnings ?? []).map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </Notice>
+            </div>
+          )}
+          <div className="grid gap-4 p-5 sm:grid-cols-3 lg:grid-cols-5">
+            <SummaryCard label="Baris valid" value={formatNumber(preview.validRows)} tone="success" />
+            <SummaryCard label="Total jumlah" value={formatNumber(preview.totalQty ?? 0)} hint="Satuan dasar, baris yang dibukukan" />
+            <SummaryCard label="Total nilai" value={`Rp ${formatNumber(preview.totalValue ?? 0)}`} hint="Jumlah x harga beli" />
+            <SummaryCard label="Dilewati" value={formatNumber(preview.skipped ?? 0)} hint="Posisi sudah punya mutasi" />
+            <SummaryCard
+              label="Bermasalah"
+              value={formatNumber(preview.errors.length)}
+              tone={preview.errors.length > 0 ? "danger" : "brand"}
             />
-          </SectionCard>
-        </div>
+          </div>
+          {(preview.rows ?? []).length > 0 && (
+            <DataTable<OpeningPreviewRow>
+              columns={PREVIEW_COLUMNS}
+              rows={preview.rows ?? []}
+              rowKey={(r) => String(r.row)}
+              emptyTitle="Tidak ada baris"
+            />
+          )}
+          <DataTable<OpeningRowError>
+            columns={ERROR_COLUMNS}
+            rows={preview.errors}
+            rowKey={(r) => `${r.row}-${r.column}`}
+            emptyTitle="Semua baris valid"
+            emptyDescription="Silakan lanjutkan ke pembukuan."
+          />
+        </SectionCard>
       )}
 
       {result && (
-        <div className="mt-6">
-          <SectionCard
-            title="Hasil Pembukuan"
-            description={`Dibukukan ${formatNumber(result.posted)}, dilewati ${formatNumber(result.skipped)} (sudah punya mutasi), gagal ${formatNumber(result.failures.length)}.`}
-          >
-            <DataTable<OpeningRowError>
-              columns={[
-                {
-                  header: "Baris",
-                  align: "right",
-                  render: (r) => formatNumber(r.row),
-                },
-                { header: "Kolom", render: (r) => r.column },
-                { header: "Nilai", render: (r) => r.value || "-" },
-                { header: "Alasan", render: (r) => r.reason },
-              ]}
-              rows={result.failures}
-              rowKey={(r) => `${r.row}-${r.column}`}
-              emptyTitle="Tanpa kegagalan"
-              emptyDescription="Semua baris valid berhasil dibukukan."
-            />
-          </SectionCard>
-        </div>
+        <SectionCard
+          title="Hasil pembukuan"
+          description={`Dibukukan ${formatNumber(result.posted)}, dilewati ${formatNumber(result.skipped)} (sudah punya mutasi), gagal ${formatNumber(result.failures.length)}.`}
+          flush
+        >
+          <DataTable<OpeningRowError>
+            columns={ERROR_COLUMNS}
+            rows={result.failures}
+            rowKey={(r) => `${r.row}-${r.column}`}
+            emptyTitle="Tanpa kegagalan"
+            emptyDescription="Semua baris valid berhasil dibukukan."
+          />
+        </SectionCard>
       )}
-    </div>
+
+      <StickyFooter
+        summary={
+          result ? (
+            <span>
+              Selesai: <Qty value={result.posted} /> baris dibukukan
+            </span>
+          ) : file ? (
+            <span className="truncate">{file.name}</span>
+          ) : (
+            <span>Pilih berkas untuk memulai.</span>
+          )
+        }
+      >
+        {result ? (
+          <Button onClick={reset}>Impor berkas lain</Button>
+        ) : (
+          <>
+            <Button
+              variant="secondary"
+              disabled={!canOpen || !file || committing}
+              loading={previewing}
+              onClick={() => void handlePreview()}
+            >
+              Pratinjau
+            </Button>
+            <Button disabled={!canOpen || !file || previewing} loading={committing} onClick={() => void handleCommit()}>
+              Bukukan
+            </Button>
+          </>
+        )}
+      </StickyFooter>
+    </Page>
   );
 }

@@ -1,32 +1,36 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { Archive, SquarePen } from "lucide-react";
 import {
-  Badge,
   Button,
   ConfirmDialog,
+  DetailSkeleton,
   PageHeader,
   SectionCard,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
 } from "@/shared/components/ui";
+import { DescriptionList, DocNumber, Page, useUrlTab } from "@/shared/components/patterns";
+import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
-import { statusLabel, statusTone } from "@/shared/lib/format";
+import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { supplierService } from "@/modules/party/services/party.service";
 import { PartyFormModal } from "@/modules/party/components/PartyFormModal";
+import { PartyBalancePanel, PartyTransactionsPanel } from "@/modules/party/components/PartyActivityPanels";
 import type { PartyFormValues } from "@/modules/party/schemas/party.schema";
+import { rowsToAttrs } from "@/shared/lib/key-value";
+import { PartyAttributes } from "@/modules/party/components/PartyAttributes";
 
-function InfoRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt className="text-muted text-[0.8rem] font-medium">{label}</dt>
-      <dd className="mt-0.5 text-sm text-ink">{children}</dd>
-    </div>
-  );
-}
+const TABS = ["ringkasan", "transaksi", "saldo"] as const;
 
 export default function SupplierDetailPage() {
   const { id } = useParams();
@@ -36,6 +40,11 @@ export default function SupplierDetailPage() {
   const can = useAuthStore((s) => s.can);
   const canUpdate = can("suppliers.update");
   const canArchive = can("suppliers.archive");
+  const canOrders = can("purchasing.view");
+  const canBalance = can("payment.view");
+
+  const [rawTab, setTab] = useUrlTab(TABS, "ringkasan");
+  const tab = (rawTab === "transaksi" && !canOrders) || (rawTab === "saldo" && !canBalance) ? "ringkasan" : rawTab;
 
   const [confirm, setConfirm] = useState<"archive" | "restore" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,13 +53,21 @@ export default function SupplierDetailPage() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  const { data: detail, loading, error, reload } = useAsyncData(
+  const { data: detail, loading, error, errorStatus, reload } = useAsyncData(
     () => (!validId ? Promise.resolve(null) : supplierService.get(supplierId)),
     [supplierId],
   );
+  usePageCrumb(detail?.name);
 
-  if (!validId) {
-    return <Notice tone="danger" title="ID supplier tidak valid." />;
+  if (!validId || errorStatus === 404) {
+    return (
+      <NotFoundState
+        title="Supplier tidak ditemukan"
+        message={!validId ? "ID supplier tidak valid." : "Supplier ini tidak ada atau sudah dihapus."}
+        backTo={ROUTE_PATHS.suppliers}
+        backLabel="Kembali ke daftar pemasok"
+      />
+    );
   }
 
   const isArchived = detail?.status === "archived";
@@ -66,6 +83,8 @@ export default function SupplierDetailPage() {
         email: values.email === "" ? undefined : values.email,
         address: values.address === "" ? undefined : values.address,
         notes: values.notes === "" ? undefined : values.notes,
+        // Selalu dikirim: editor memuat isi lama, {} = dikosongkan.
+        attributes: rowsToAttrs(values.attrs),
       });
       toast.fromServer(res.message, "Supplier disimpan");
       setEditOpen(false);
@@ -97,74 +116,106 @@ export default function SupplierDetailPage() {
     }
   }
 
+  if (loading && !detail) return <DetailSkeleton />;
+
+  if (error || !detail) {
+    return (
+      <Page>
+        <ErrorState title="Gagal memuat supplier" message={error ?? "Supplier tidak ditemukan."} onRetry={reload} />
+      </Page>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <Link to={ROUTE_PATHS.suppliers} className="text-sm font-medium text-brand hover:underline">
-        ← Kembali ke daftar pemasok
-      </Link>
+    <Page>
+      <PageHeader
+        title={detail.name}
+        meta={<StatusBadge status={detail.status} />}
+        subtitle={
+          <>
+            <DocNumber value={detail.code} copyable /> · Supplier
+          </>
+        }
+        actions={
+          <>
+            {canArchive &&
+              (isArchived ? (
+                <Button variant="secondary" onClick={() => setConfirm("restore")}>
+                  Pulihkan
+                </Button>
+              ) : (
+                <Button variant="danger" onClick={() => setConfirm("archive")}>
+                  <Archive aria-hidden /> Arsipkan
+                </Button>
+              ))}
+            {canUpdate && !isArchived && (
+              <Button
+                onClick={() => {
+                  setEditError(null);
+                  setEditOpen(true);
+                }}
+              >
+                <SquarePen aria-hidden /> Ubah
+              </Button>
+            )}
+          </>
+        }
+      />
 
-      {loading && !detail ? (
-        <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-      ) : error ? (
-        <Notice tone="danger" title={error}>
-          <button
-            type="button"
-            onClick={() => reload()}
-            className="cursor-pointer font-semibold text-brand hover:underline"
-          >
-            Coba lagi
-          </button>
+      {isArchived && (
+        <Notice tone="muted" title="Supplier diarsipkan">
+          Arsip tidak menghapus data — kode tetap dicadangkan dan dapat dipulihkan.
         </Notice>
-      ) : detail ? (
-        <>
-          <PageHeader
-            eyebrow={detail.code}
-            title={detail.name}
-            description={`Supplier #${detail.id}`}
-            actions={
-              <>
-                {canUpdate && !isArchived && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setEditError(null);
-                      setEditOpen(true);
-                    }}
-                  >
-                    Ubah
-                  </Button>
-                )}
-                {canArchive &&
-                  (isArchived ? (
-                    <Button variant="secondary" onClick={() => setConfirm("restore")}>
-                      Pulihkan
-                    </Button>
-                  ) : (
-                    <Button variant="danger" onClick={() => setConfirm("archive")}>
-                      Arsipkan
-                    </Button>
-                  ))}
-              </>
-            }
-          />
+      )}
 
+      <Tabs value={tab} onValueChange={(v) => setTab(v as (typeof TABS)[number])} className="gap-5">
+        <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b border-border">
+          <TabsTrigger value="ringkasan" className="flex-none px-3">
+            Ringkasan
+          </TabsTrigger>
+          {canOrders && (
+            <TabsTrigger value="transaksi" className="flex-none px-3">
+              Transaksi
+            </TabsTrigger>
+          )}
+          {canBalance && (
+            <TabsTrigger value="saldo" className="flex-none px-3">
+              Saldo
+            </TabsTrigger>
+          )}
+        </TabsList>
+
+        <TabsContent value="ringkasan" className="flex flex-col gap-6">
           <SectionCard title="Informasi">
-            <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <InfoRow label="Kode">{detail.code}</InfoRow>
-              <InfoRow label="Nama">{detail.name}</InfoRow>
-              <InfoRow label="Status">
-                <Badge tone={statusTone(detail.status)}>{statusLabel(detail.status)}</Badge>
-              </InfoRow>
-              <InfoRow label="Telepon">{detail.phone || "-"}</InfoRow>
-              <InfoRow label="Email">{detail.email || "-"}</InfoRow>
-              <InfoRow label="Alamat">{detail.address || "-"}</InfoRow>
-              <InfoRow label="Catatan">{detail.notes || "-"}</InfoRow>
-            </dl>
+            <DescriptionList
+              items={[
+                { label: "Kode", value: <DocNumber value={detail.code} /> },
+                { label: "Nama", value: detail.name },
+                { label: "Status", value: <StatusBadge status={detail.status} /> },
+                { label: "Telepon", value: detail.phone },
+                { label: "Email", value: detail.email },
+                { label: "Alamat", value: detail.address, wide: true },
+                { label: "Catatan", value: detail.notes, wide: true },
+              ]}
+            />
           </SectionCard>
-        </>
-      ) : null}
+          <PartyAttributes attributes={detail.attributes} />
+        </TabsContent>
 
-      {editOpen && detail && (
+        {canOrders && (
+          <TabsContent value="transaksi">
+            <PartyTransactionsPanel kind="supplier" partyId={detail.id} />
+          </TabsContent>
+        )}
+
+        {canBalance && (
+          <TabsContent value="saldo">
+            <PartyBalancePanel partyId={detail.id} />
+          </TabsContent>
+        )}
+      </Tabs>
+
+      {editOpen && (
         <PartyFormModal
           open
           title="Ubah Supplier"
@@ -184,8 +235,8 @@ export default function SupplierDetailPage() {
         title={confirm === "archive" ? "Arsipkan supplier?" : "Pulihkan supplier?"}
         message={
           confirm === "archive"
-            ? `Supplier ${detail?.code} akan diarsipkan.`
-            : `Supplier ${detail?.code} akan aktif kembali.`
+            ? `Supplier ${detail.code} akan diarsipkan.`
+            : `Supplier ${detail.code} akan aktif kembali.`
         }
         confirmLabel={confirm === "archive" ? "Arsipkan" : "Pulihkan"}
         tone={confirm === "archive" ? "danger" : "primary"}
@@ -194,6 +245,6 @@ export default function SupplierDetailPage() {
         }}
         onCancel={() => setConfirm(null)}
       />
-    </div>
+    </Page>
   );
 }

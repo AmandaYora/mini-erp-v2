@@ -16,12 +16,33 @@ export interface DashboardBalances {
   inventory: number;
 }
 
+// Angka "dari order" (dokumen hidup, tanpa perlu posting jurnal) — dilabeli
+// terpisah dari angka pembukuan (today / monthToDate).
+export interface DashboardOperations {
+  salesToday: number;
+  salesMonth: number;
+  salesOrdersToday: number;
+  salesOrdersMonth: number;
+  ordersToday: number;
+  ordersMonth: number;
+  purchasesToday: number;
+  purchasesMonth: number;
+  outstandingReceivable: number;
+  outstandingPayable: number;
+  criticalCount: number;
+  trackedCount: number;
+  // Status basis biaya margin (DB-01): produk dengan HPP estimasi dan statusnya.
+  missingCostCount?: number;
+  costBasis?: "complete" | "estimated" | string;
+}
+
 export interface DashboardSummary {
   branchId: number;
   today: DashboardPeriod;
   monthToDate: DashboardPeriod;
   balances: DashboardBalances;
   inventoryValue: number;
+  operations: DashboardOperations;
 }
 
 // Bentuk JSON backend: reporting/contracts TrendPoint (date, revenue, expense,
@@ -55,6 +76,11 @@ export interface PriorityOrder {
   partyName: string;
   orderDate: string;
   dueDate: string;
+  score: number;
+  // DB-01: pesanan jual ATAU beli, alasan tampil, dan umur pesanan.
+  kind?: "sales" | "purchase";
+  reason?: string;
+  ageDays?: number;
 }
 
 // Bentuk JSON backend: dashboard/contracts OrderStatus — hitungan order per
@@ -87,12 +113,15 @@ export interface TopMarginProduct {
   cogs: number;
   gross: number;
   percent: number;
+  // Sebagian HPP berupa estimasi (harga katalog) — margin hanya indikatif.
+  costIncomplete: boolean;
 }
 
-// Rentang tren penjualan (F7): 30 hari … 12 bulan.
-export type TrendRangeKey = "30d" | "90d" | "12m";
+// Rentang tren penjualan (F7): 7 hari … 12 bulan.
+export type TrendRangeKey = "7d" | "30d" | "90d" | "12m";
 
 export const TREND_RANGES: { value: TrendRangeKey; label: string; days: number }[] = [
+  { value: "7d", label: "7 hari", days: 7 },
   { value: "30d", label: "30 hari", days: 30 },
   { value: "90d", label: "90 hari", days: 90 },
   { value: "12m", label: "12 bulan", days: 365 },

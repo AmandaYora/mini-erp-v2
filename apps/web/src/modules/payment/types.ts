@@ -22,15 +22,17 @@ export interface Payment {
   paidAt: string;
   notes: string;
   status: string;
+  /** Kunci idempoten pembuatan (unik per cabang); kosong untuk pembayaran lama. */
+  clientRef: string;
+  /** Referensi transfer / nomor cek. */
+  reference: string;
+  /** Uang tunai yang diserahkan (hanya cash); 0 = tidak dicatat. */
+  amountTendered: number;
+  /** Kembalian turunan (tendered - amount), tidak disimpan. */
+  change: number;
+  /** ID kaki lawan pada offset kredit (0 = tidak berpasangan). */
+  pairId: number;
   allocations: PaymentAllocation[];
-}
-
-/** Pihak untuk SearchSelect — gabungan customers + suppliers aktif. */
-export interface PartyLookup {
-  id: number;
-  name: string;
-  /** "customer" | "supplier" (party/contracts: PartyCustomer/PartySupplier). */
-  type: string;
 }
 
 // --- payload keluar (kunci persis struct Create/SettleCredit di handler.go) ---
@@ -47,8 +49,32 @@ export interface PaymentCreatePayload {
   method?: string;
   paidAt?: string;
   notes?: string;
+  /** Kunci idempoten: pengiriman ulang dengan clientRef sama tidak menggandakan. */
+  clientRef?: string;
+  /** Uang diterima (hanya cash, harus >= amount). */
+  amountTendered?: number;
+  /** Referensi transfer / nomor cek (maks 100 karakter). */
+  reference?: string;
   /** Kosong = backend alokasi FIFO otomatis (handler.go: Create). */
   allocations?: AllocationInput[];
+}
+
+/** Pakai saldo uang muka retur ke tagihan (N-41): kunci persis handler UseCredit. */
+export type UseCreditPayload = SettleCreditPayload;
+
+/** Satu retur yang menyimpan saldo pihak (GET credit-balances). */
+export interface CreditBalance {
+  returnType: "sales_return" | "purchase_return";
+  returnId: number;
+  number: string;
+  credited: number;
+  used: number;
+  remaining: number;
+}
+
+export interface CreditBalances {
+  items: CreditBalance[];
+  totalRemaining: number;
 }
 
 export interface SettleCreditPayload {
@@ -84,6 +110,33 @@ export interface PartyBalance {
   returns: OrderBalance[];
 }
 
+/** Sisi daftar pihak bersaldo (PY-01): piutang pelanggan atau hutang supplier. */
+export type OpenPartySide = "receivable" | "payable";
+
+/** Satu pihak yang masih punya dokumen belum lunas (GET /payments/open-parties). */
+export interface OpenParty {
+  partyId: number;
+  code: string;
+  name: string;
+  side: OpenPartySide;
+  /** Jumlah dokumen (order) belum lunas. */
+  orderCount: number;
+  /** Jatuh tempo (atau tanggal order) tertua, YYYY-MM-DD. */
+  oldestDate: string;
+  outstanding: number;
+}
+
+export interface OpenPartiesPage {
+  items: OpenParty[];
+  /** Jumlah pihak seluruh hasil filter. */
+  total: number;
+  /** Total sisa seluruh hasil filter (bukan hanya halaman ini). */
+  totalOutstanding: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export interface PaymentProof {
   id: number;
   originalName: string;
@@ -100,8 +153,12 @@ export function methodLabel(method: string | null | undefined): string {
       return "Tunai";
     case "transfer":
       return "Transfer";
+    case "check":
+      return "Cek";
     case "offset":
       return "Offset";
+    case "advance":
+      return "Saldo uang muka";
     default:
       return method ?? "-";
   }
@@ -131,4 +188,52 @@ export function orderTypeLabel(t: string | null | undefined): string {
     default:
       return t ?? "-";
   }
+}
+
+/** Metode yang boleh dipilih pengguna — "offset" hanya dibuat sistem (settle-credit). */
+export const USER_PAYMENT_METHODS = ["cash", "transfer", "check"] as const;
+
+export type UserPaymentMethod = (typeof USER_PAYMENT_METHODS)[number];
+
+/** Label kolom referensi menurut metode. */
+export function referenceLabel(method: string | null | undefined): string {
+  return method === "check" ? "Nomor Cek" : "Referensi Transfer";
+}
+
+/** Tipe dokumen retur = pembayaran ini refund (uang kembali), bukan tagihan. */
+export function isReturnOrderType(t: string | null | undefined): boolean {
+  return t === "sales_return" || t === "purchase_return";
+}
+
+/**
+ * Jenis pembayaran: refund bila mengalokasi ke dokumen retur, offset bila
+ * metode offset (non-tunai, berpasangan), selain itu pembayaran tagihan.
+ */
+export function paymentKind(p: Pick<Payment, "method" | "allocations">): "offset" | "refund" | "bill" {
+  if (p.method === "offset") return "offset";
+  if (p.allocations.some((a) => isReturnOrderType(a.orderType))) return "refund";
+  return "bill";
+}
+
+export function paymentKindLabel(p: Pick<Payment, "method" | "allocations">): string {
+  switch (paymentKind(p)) {
+    case "offset":
+      return "Offset kredit";
+    case "refund":
+      return "Refund retur";
+    default:
+      return "Pembayaran tagihan";
+  }
+}
+
+/**
+ * Pesan penjaga pembatalan dari backend (guardCancel): order COD/prepaid yang
+ * sudah selesai tidak boleh jadi belum lunas. Tambahkan petunjuk ke Retur.
+ */
+export function cancelGuardHint(message: string | null | undefined): string | null {
+  if (!message) return null;
+  if (message.includes("sudah selesai") && message.includes("belum lunas")) {
+    return "Order tunai/COD yang sudah selesai tidak bisa dibatalkan pembayarannya. Gunakan Retur (Retur Jual/Retur Beli) untuk mengembalikan nilainya.";
+  }
+  return null;
 }

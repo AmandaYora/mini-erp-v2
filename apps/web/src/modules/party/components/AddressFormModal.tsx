@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import {
-  ActionRow,
   Button,
+  Checkbox,
   FormField,
-  Modal,
+  FormSheet,
   TextArea,
   TextInput,
 } from "@/shared/components/ui";
@@ -63,16 +63,29 @@ export function AddressFormModal({
   }
 
   return (
-    <Modal
+    <FormSheet
       open={open}
-      title={initial ? "Ubah Alamat" : "Tambah Alamat"}
+      title={initial ? "Ubah alamat" : "Tambah alamat"}
       description="Tepat satu alamat utama per customer — menandai alamat ini sebagai utama akan melepas yang lain."
-      size="lg"
       onClose={onClose}
+      actions={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button type="submit" form="address-form" loading={submitting}>
+            Simpan
+          </Button>
+        </>
+      }
     >
-      <form onSubmit={handleSubmit}>
+      <form id="address-form" onSubmit={handleSubmit}>
         <div className="space-y-4">
-          {serverError && <Notice tone="danger" title={serverError} />}
+          {serverError && (
+            <Notice tone="danger" title="Gagal menyimpan">
+              {serverError}
+            </Notice>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Label" htmlFor="addr-label" errorText={errors.label}>
               <TextInput
@@ -124,25 +137,14 @@ export function AddressFormModal({
               maxLength={1000}
             />
           </FormField>
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={isPrimary}
-              onChange={(e) => setIsPrimary(e.target.checked)}
-            />
-            Jadikan alamat utama
-          </label>
-          <ActionRow>
-            <Button variant="secondary" onClick={onClose} disabled={submitting}>
-              Batal
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Menyimpan…" : "Simpan"}
-            </Button>
-          </ActionRow>
+          <div className="flex items-center gap-2">
+            <Checkbox id="addr-primary" checked={isPrimary} onCheckedChange={(v) => setIsPrimary(v === true)} />
+            <label htmlFor="addr-primary" className="cursor-pointer text-sm text-foreground">
+              Jadikan alamat utama
+            </label>
+          </div>
         </div>
       </form>
-    </Modal>
+    </FormSheet>
   );
 }

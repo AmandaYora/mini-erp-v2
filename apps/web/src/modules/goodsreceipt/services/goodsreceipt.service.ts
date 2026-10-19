@@ -8,11 +8,15 @@
 //   (purchasing/presentation/handler.go: List) untuk SearchSelect PO.
 // - GET /api/v1/stock/locations → array langsung StockLocation[]
 //   (stock.service.ts: listLocations) untuk dropdown lokasi per baris.
+// - POST /api/v1/goods-receipts/:id/complete {settlement?} → posting ulang
+//   receipt pending (idempoten); POST :id/discard → batalkan receipt pending
+//   (handler.go: Complete/Discard, izin goodsreceipt.create).
 
 import { apiGet, apiPage, apiPostFull } from "@/shared/services/http-client";
 import type {
   GoodsReceipt,
   GoodsReceiptPayload,
+  ReceiptSettlementPayload,
   PurchaseOrderOption,
   StockLocationOption,
 } from "@/modules/goodsreceipt/types";
@@ -32,21 +36,24 @@ function cleanParams(p: GoodsReceiptListParams): Record<string, unknown> {
 }
 
 export const goodsreceiptService = {
-  list: (p: GoodsReceiptListParams) =>
-    apiPage<GoodsReceipt>("/api/v1/goods-receipts", cleanParams(p)),
+  list: (p: GoodsReceiptListParams, signal?: AbortSignal) =>
+    apiPage<GoodsReceipt>("/api/v1/goods-receipts", cleanParams(p), signal),
 
   get: (id: number) => apiGet<GoodsReceipt>(`/api/v1/goods-receipts/${id}`),
 
   create: (body: GoodsReceiptPayload) =>
     apiPostFull<GoodsReceipt>("/api/v1/goods-receipts", body),
 
-  /** PO terkonfirmasi untuk SearchSelect modal Terima (maks 50). */
-  purchaseOrderOptions: () =>
-    apiPage<PurchaseOrderOption>("/api/v1/purchase-orders", {
-      status: "confirmed",
-      page: 1,
-      limit: 50,
-    }),
+  /** Posting ulang receipt pending; settlement hanya untuk PO COD yang tuntas. */
+  complete: (id: number, settlement?: ReceiptSettlementPayload) =>
+    apiPostFull<GoodsReceipt>(
+      `/api/v1/goods-receipts/${id}/complete`,
+      settlement ? { settlement } : undefined,
+    ),
+
+  /** Batalkan receipt pending (stok yang sudah bergerak dibalik server). */
+  discard: (id: number) =>
+    apiPostFull<GoodsReceipt>(`/api/v1/goods-receipts/${id}/discard`),
 
   /** Satu PO beserta barisnya (untuk membangun baris terima + nama produk). */
   purchaseOrderDetail: (id: number) =>

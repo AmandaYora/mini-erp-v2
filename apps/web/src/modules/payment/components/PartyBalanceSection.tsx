@@ -1,39 +1,44 @@
 import { useState } from "react";
 import {
+  CardSkeleton,
   DataTable,
+  ErrorState,
   FormField,
   Pagination,
-  SearchSelect,
   SectionCard,
+  StatusBadge,
   SummaryCard,
+  TableSkeleton,
 } from "@/shared/components/ui";
-import type { SearchSelectOption } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
+import { DocNumber, Money, Page } from "@/shared/components/patterns";
+import { PartySearchSelect } from "@/modules/party/components/PartySearchSelect";
 import { EmptyState } from "@/shared/components/feedback/empty-state";
-import { formatDate, formatIDR, statusLabel } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
-import { toast } from "@/shared/stores/toast.store";
+import { formatDate, formatIDR } from "@/shared/lib/format";
 import { paymentService } from "@/modules/payment/services/payment.service";
-import type {
-  PartyBalance,
-  PartyLookup,
-  Payment,
-} from "@/modules/payment/types";
+import { OpenPartiesList } from "@/modules/payment/components/OpenPartiesList";
+import type { OpenParty, OrderBalance, PartyBalance, Payment } from "@/modules/payment/types";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { methodLabel, orderTypeLabel } from "@/modules/payment/types";
 
 const LEDGER_LIMIT = 10;
 
-interface PartyBalanceSectionProps {
-  parties: PartyLookup[];
-}
-
 /**
  * Saldo & buku pembayaran per pihak (read-only). Hutang (supplier) /
  * piutang (customer) dihitung live oleh backend — tanpa saldo tersimpan.
  */
-export function PartyBalanceSection({ parties }: PartyBalanceSectionProps) {
+export function PartyBalanceSection({
+  canPay = false,
+  refreshKey = 0,
+  onPay,
+}: {
+  canPay?: boolean;
+  /** Naik setelah pembayaran dicatat: daftar dan saldo dimuat ulang. */
+  refreshKey?: number;
+  /** "Catat bayar" pada daftar pihak bersaldo; induk membuka form pembayaran. */
+  onPay?: (party: OpenParty) => void;
+}) {
   const [partyId, setPartyId] = useState<number | null>(null);
+  const [partyType, setPartyType] = useState<string | undefined>(undefined);
   const [ledgerPage, setLedgerPage] = useState(1);
 
   const { data, loading, error, reload } = useAsyncData(
@@ -45,199 +50,155 @@ export function PartyBalanceSection({ parties }: PartyBalanceSectionProps) {
           total: 0,
         };
       }
-      try {
-        const [bal, led] = await Promise.all([
-          paymentService.balance(partyId),
-          paymentService.ledger(partyId, ledgerPage, LEDGER_LIMIT),
-        ]);
-        return { balance: bal, ledger: led.items, total: led.meta.total };
-      } catch (err) {
-        const apiErr = toApiError(err);
-        toast.danger("Gagal memuat saldo pihak", apiErr.message);
-        throw err;
-      }
+      const [bal, led] = await Promise.all([
+        paymentService.balance(partyId),
+        paymentService.ledger(partyId, ledgerPage, LEDGER_LIMIT),
+      ]);
+      return { balance: bal, ledger: led.items, total: led.meta.total };
     },
-    [partyId, ledgerPage],
+    [partyId, ledgerPage, refreshKey],
   );
   const balance: PartyBalance | null = data?.balance ?? null;
   const ledger: Payment[] = data?.ledger ?? [];
   const ledgerTotal = data?.total ?? 0;
 
-  const partyOptions: SearchSelectOption[] = parties.map((p) => ({
-    value: p.id,
-    label: `${p.name} (${p.type === "supplier" ? "Supplier" : "Customer"})`,
-  }));
-  const partyType = parties.find((p) => p.id === partyId)?.type;
-  const positionLabel =
-    partyType === "supplier" ? "Hutang Usaha (sisa)" : "Piutang Usaha (sisa)";
+  const positionLabel = partyType === "supplier" ? "Hutang usaha (sisa)" : "Piutang usaha (sisa)";
 
   return (
-    <div className="flex flex-col gap-4">
-      <SectionCard
-        title="Saldo Pihak"
-        description="Pilih pihak untuk melihat posisi hutang/piutang live."
-      >
+    <Page>
+      <OpenPartiesList
+        canPay={canPay && onPay !== undefined}
+        refreshKey={refreshKey}
+        selectedPartyId={partyId}
+        onSelect={(p) => {
+          setPartyId(p.partyId);
+          setPartyType(p.side === "payable" ? "supplier" : "customer");
+          setLedgerPage(1);
+        }}
+        onPay={(p) => onPay?.(p)}
+      />
+      <SectionCard title="Saldo pihak" description="Pilih pihak untuk melihat posisi hutang/piutang live.">
         <div className="max-w-md">
           <FormField label="Pihak">
-            <SearchSelect
-              options={partyOptions}
+            <PartySearchSelect
+              partyKind="any"
               value={partyId}
-              allowClear
-              onChange={(v) => {
-                setPartyId(
-                  typeof v === "number" ? v : v === null ? null : Number(v),
-                );
+              onChange={(id, party) => {
+                setPartyId(id);
+                setPartyType(party?.type);
                 setLedgerPage(1);
               }}
-              placeholder="Pilih customer / supplier…"
+              placeholder="Cari customer / supplier…"
             />
           </FormField>
         </div>
+      </SectionCard>
 
-        {error && (
-          <div className="mt-4">
-            <Notice tone="danger" title={error}>
-              <button
-                type="button"
-                onClick={() => reload()}
-                className="cursor-pointer font-semibold text-brand hover:underline"
-              >
-                Coba lagi
-              </button>
-            </Notice>
+      {error && <ErrorState title="Gagal memuat saldo pihak" message={error} onRetry={reload} />}
+
+      {!partyId ? (
+        <SectionCard>
+          <EmptyState
+            title="Belum ada pihak dipilih"
+            description="Pilih customer atau supplier untuk melihat saldo dan bukunya."
+          />
+        </SectionCard>
+      ) : loading && !balance ? (
+        <div className="flex flex-col gap-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <CardSkeleton />
+            <CardSkeleton />
+            <CardSkeleton />
+            <CardSkeleton />
           </div>
-        )}
-
-        {!partyId ? (
-          <div className="mt-4">
-            <EmptyState
-              title="Belum ada pihak dipilih"
-              description="Pilih customer atau supplier untuk melihat saldo dan bukunya."
+          <SectionCard flush>
+            <TableSkeleton rows={4} cols={5} />
+          </SectionCard>
+        </div>
+      ) : balance ? (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <SummaryCard
+              label={positionLabel}
+              value={formatIDR(balance.outstanding)}
+              tone={balance.outstanding > 0 ? "danger" : "success"}
+            />
+            <SummaryCard label="Total ditagih" value={formatIDR(balance.totalBilled)} tone="brand" />
+            <SummaryCard label="Sudah dibayar" value={formatIDR(balance.totalPaid)} tone="success" />
+            <SummaryCard
+              label="Dikurangi retur"
+              value={formatIDR(balance.totalReturned)}
+              hint={`Dikompensasi ${formatIDR(balance.totalRefunded)}`}
+              tone="warning"
             />
           </div>
-        ) : loading && !balance ? (
-          <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-        ) : balance ? (
-          <div className="mt-4 flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <SummaryCard
-                label={positionLabel}
-                value={formatIDR(balance.outstanding)}
-                tone={balance.outstanding > 0 ? "danger" : "success"}
-              />
-              <SummaryCard
-                label="Total Ditagih"
-                value={formatIDR(balance.totalBilled)}
-                tone="brand"
-              />
-              <SummaryCard
-                label="Sudah Dibayar"
-                value={formatIDR(balance.totalPaid)}
-                tone="success"
-              />
-              <SummaryCard
-                label="Dikurangi Retur"
-                value={formatIDR(balance.totalReturned)}
-                hint={`Dikompensasi ${formatIDR(balance.totalRefunded)}`}
-                tone="warning"
-              />
-            </div>
 
-            <DataTable
-              rows={balance.orders}
-              rowKey={(r) => `${r.orderType}-${r.orderId}`}
-              emptyTitle="Tidak ada tagihan"
-              emptyDescription="Pihak ini tidak punya order terbuka."
+          <SectionCard flush title="Tagihan terbuka" description="Order beserta total, pembayaran, dan sisanya.">
+            <BalanceTable rows={balance.orders} numberHeader="Nomor" paidHeader="Dibayar" emptyTitle="Tidak ada tagihan" emptyDescription="Pihak ini tidak punya order terbuka." />
+          </SectionCard>
+
+          {balance.returns.length > 0 && (
+            <SectionCard flush title="Retur" description="Retur yang mengurangi tagihan pihak ini.">
+              <BalanceTable rows={balance.returns} numberHeader="Nomor retur" paidHeader="Dikompensasi" emptyTitle="Tidak ada retur" />
+            </SectionCard>
+          )}
+
+          <SectionCard flush title="Buku pembayaran" description="Pembayaran aktif pihak ini, terbaru dulu.">
+            <DataTable<Payment>
+              rows={ledger}
+              rowKey={(r) => r.id}
+              emptyTitle="Belum ada pembayaran"
               columns={[
-                { header: "Nomor", render: (r) => r.number },
-                { header: "Tipe", render: (r) => orderTypeLabel(r.orderType) },
+                { header: "Nomor", render: (r) => <DocNumber value={r.number} /> },
+                { header: "Tanggal", render: (r) => formatDate(r.paidAt) },
+                { header: "Metode", render: (r) => methodLabel(r.method) },
+                { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
                 {
-                  header: "Total",
+                  header: "Jumlah",
                   align: "right",
-                  render: (r) => formatIDR(r.grandTotal),
-                },
-                {
-                  header: "Dibayar",
-                  align: "right",
-                  render: (r) => formatIDR(r.paid),
-                },
-                {
-                  header: "Sisa",
-                  align: "right",
-                  render: (r) => (
-                    <span className="font-medium">
-                      {formatIDR(r.outstanding)}
-                    </span>
-                  ),
+                  render: (r) => <Money value={r.amount} className="font-medium" />,
                 },
               ]}
             />
+            <Pagination
+              page={ledgerPage}
+              limit={LEDGER_LIMIT}
+              total={ledgerTotal}
+              onPageChange={(p) => setLedgerPage(p)}
+            />
+          </SectionCard>
+        </>
+      ) : null}
+    </Page>
+  );
+}
 
-            {balance.returns.length > 0 && (
-              <DataTable
-                rows={balance.returns}
-                rowKey={(r) => `${r.orderType}-${r.orderId}`}
-                emptyTitle="Tidak ada retur"
-                columns={[
-                  { header: "Nomor Retur", render: (r) => r.number },
-                  { header: "Tipe", render: (r) => orderTypeLabel(r.orderType) },
-                  {
-                    header: "Total",
-                    align: "right",
-                    render: (r) => formatIDR(r.grandTotal),
-                  },
-                  {
-                    header: "Dikompensasi",
-                    align: "right",
-                    render: (r) => formatIDR(r.paid),
-                  },
-                  {
-                    header: "Sisa",
-                    align: "right",
-                    render: (r) => (
-                      <span className="font-medium">
-                        {formatIDR(r.outstanding)}
-                      </span>
-                    ),
-                  },
-                ]}
-              />
-            )}
-          </div>
-        ) : null}
-      </SectionCard>
-
-      {partyId && balance && (
-        <SectionCard
-          title="Buku Pembayaran"
-          description="Pembayaran aktif pihak ini, terbaru dulu."
-        >
-          <DataTable<Payment>
-            rows={ledger}
-            rowKey={(r) => r.id}
-            emptyTitle="Belum ada pembayaran"
-            columns={[
-              { header: "Nomor", render: (r) => r.number },
-              { header: "Tanggal", render: (r) => formatDate(r.paidAt) },
-              { header: "Metode", render: (r) => methodLabel(r.method) },
-              { header: "Status", render: (r) => statusLabel(r.status) },
-              {
-                header: "Jumlah",
-                align: "right",
-                render: (r) => (
-                  <span className="font-medium">{formatIDR(r.amount)}</span>
-                ),
-              },
-            ]}
-          />
-          <Pagination
-            page={ledgerPage}
-            limit={LEDGER_LIMIT}
-            total={ledgerTotal}
-            onPageChange={(p) => setLedgerPage(p)}
-          />
-        </SectionCard>
-      )}
-    </div>
+function BalanceTable({
+  rows,
+  numberHeader,
+  paidHeader,
+  emptyTitle,
+  emptyDescription,
+}: {
+  rows: OrderBalance[];
+  numberHeader: string;
+  paidHeader: string;
+  emptyTitle: string;
+  emptyDescription?: string;
+}) {
+  return (
+    <DataTable<OrderBalance>
+      rows={rows}
+      rowKey={(r) => `${r.orderType}-${r.orderId}`}
+      emptyTitle={emptyTitle}
+      emptyDescription={emptyDescription}
+      columns={[
+        { header: numberHeader, render: (r) => <DocNumber value={r.number} /> },
+        { header: "Jenis", render: (r) => orderTypeLabel(r.orderType) },
+        { header: "Total", align: "right", render: (r) => <Money value={r.grandTotal} /> },
+        { header: paidHeader, align: "right", render: (r) => <Money value={r.paid} /> },
+        { header: "Sisa", align: "right", render: (r) => <Money value={r.outstanding} className="font-medium" /> },
+      ]}
+    />
   );
 }

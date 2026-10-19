@@ -3,6 +3,7 @@
 // Data: salesService.get (orderView sudah membawa ship-to C2 + nomor faktur
 // pajak C3). Uang integer rupiah; terbilang dari modul ini.
 
+import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { formatDate, formatDateTime, formatIDR, formatNumber } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
@@ -18,18 +19,31 @@ import {
   withPaperModeParam,
   type PrintPaperMode,
 } from "@/modules/print/paper";
+import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import { fetchSalesOrderForPrint, type SalesOrder } from "@/modules/print/services/print-fetch";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import {
+  discountCell,
+  documentTitle,
+  documentTotals,
+  dueDateCell,
+  hasLineDiscount,
+  lineAmount,
+  readHideDiscount,
+  withHideDiscountParam,
+} from "@/modules/print/lib/sales-document";
 import { continuousInvoiceStyles, invoiceStyles } from "@/modules/print/styles";
 
 export default function SalesInvoicePrintPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const { identity, paper, corrupt, loading: profileLoading } = usePrintProfile();
+  const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
 
   const orderId = Number(id);
+  // Catatan cetak: hanya tercetak, tidak disimpan ke order (paritas legacy).
+  const [printNotes, setPrintNotes] = useState("");
 
   const { data: order, loading, error } = useAsyncData(
     async (): Promise<SalesOrder> => {
@@ -64,6 +78,12 @@ export default function SalesInvoicePrintPage() {
   const fillerRows = isContinuous ? 0 : Math.max(0, 6 - order.items.length);
   const hideLetterhead = readHideLetterhead(searchParams, !paper.showLetterhead);
   const showStatic = !isContinuous || !hideLetterhead;
+  const hideDiscount = readHideDiscount(searchParams);
+  const showDiscountCol = !hideDiscount && hasLineDiscount(order.items);
+  const totals = documentTotals(order, hideDiscount);
+  const dueDate = dueDateCell(order);
+  const termLabel =
+    order.paymentTerms === "net" ? "Tempo" : order.paymentTerms === "prepaid" ? "Prabayar" : "Tunai";
 
   const shipToRecipient = order.shipToRecipient.trim();
   const contact = resolveShipToContact({
@@ -85,19 +105,37 @@ export default function SalesInvoicePrintPage() {
         onChange: (hidden) =>
           setSearchParams(withHideLetterheadParam(searchParams, hidden), { replace: true }),
       }}
-      notice={
-        corrupt ? (
-          <div className="no-print print-warning">
-            Profil kertas tersimpan rusak — memakai default 241,3 × 139,7 mm. Perbaiki di kalibrasi kertas.
-          </div>
-        ) : undefined
-      }
+      notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
       mainClassName={isContinuous ? "nota-page continuous" : "nota-page"}
+      extraToolbar={
+        <>
+          <label className="print-toolbar-option">
+            <input
+              type="checkbox"
+              checked={hideDiscount}
+              onChange={(e) =>
+                setSearchParams(withHideDiscountParam(searchParams, e.target.checked), { replace: true })
+              }
+            />
+            <span>Sembunyikan diskon</span>
+          </label>
+          <label className="print-toolbar-option">
+            <span>Notes (hanya tercetak)</span>
+            <input
+              type="text"
+              value={printNotes}
+              maxLength={200}
+              onChange={(e) => setPrintNotes(e.target.value)}
+              aria-label="Notes hanya tercetak"
+            />
+          </label>
+        </>
+      }
     >
       <div className="nota-head">
         {showStatic ? <Letterhead identity={identity} /> : <div />}
         <div>
-          <div className="nota-title">Faktur</div>
+          <div className="nota-title">{documentTitle(order)}</div>
           <div className="nota-meta">{order.number}</div>
         </div>
       </div>
@@ -120,8 +158,8 @@ export default function SalesInvoicePrintPage() {
         </div>
         <div className="nota-kv">
           <span className="lbl">Tanggal</span><span>:</span><span>{formatDate(order.orderDate)}</span>
-          <span className="lbl">Jatuh Tempo</span><span>:</span><span>{formatDate(order.dueDate)}</span>
-          <span className="lbl">Termin</span><span>:</span><span>{order.paymentTerms === "net" ? "Tempo" : "Tunai"}</span>
+          <span className="lbl">Tgl. Jtp</span><span>:</span><span>{dueDate !== null ? formatDate(dueDate) : "-"}</span>
+          <span className="lbl">Termin</span><span>:</span><span>{termLabel}</span>
           {order.taxInvoiceNumber.trim() !== "" ? (
             <>
               <span className="lbl">Faktur Pajak</span><span>:</span><span>{order.taxInvoiceNumber}</span>
@@ -134,47 +172,43 @@ export default function SalesInvoicePrintPage() {
       <table className="doc-table nota-table">
         <colgroup>
           <col style={{ width: "4%" }} />
-          <col style={{ width: "10%" }} />
-          <col />
           <col style={{ width: "8%" }} />
-          <col style={{ width: "7%" }} />
-          <col style={{ width: "13%" }} />
-          <col style={{ width: "10%" }} />
-          <col style={{ width: "14%" }} />
+          <col style={{ width: "8%" }} />
+          <col />
+          <col style={{ width: "15%" }} />
+          {showDiscountCol ? <col style={{ width: "11%" }} /> : null}
+          <col style={{ width: "16%" }} />
         </colgroup>
         <thead>
           <tr>
             <th>No</th>
-            <th>Kode</th>
-            <th>Produk</th>
             <th>Qty</th>
             <th>Satuan</th>
-            <th>Harga</th>
-            <th>Diskon</th>
-            <th>Jumlah</th>
+            <th>Produk</th>
+            <th>Harga Satuan</th>
+            {showDiscountCol ? <th>Disc</th> : null}
+            <th>Harga Jual</th>
           </tr>
         </thead>
         <tbody>
-          {order.items.map((item, idx) => {
-            const discount =
-              item.discountNominal > 0
-                ? formatIDR(item.discountNominal)
-                : item.discountPct > 0
-                  ? `${formatNumber(item.discountPct)}%`
-                  : "-";
-            return (
-              <tr key={item.id}>
-                <td className="t-c">{idx + 1}</td>
-                <td>{item.productCode}</td>
-                <td>{item.productName}</td>
-                <td className="t-r">{formatNumber(item.qty)}</td>
-                <td className="t-c">{item.uom}</td>
-                <td className="t-r">{formatIDR(item.unitPrice)}</td>
-                <td className="t-c">{discount}</td>
-                <td className="t-r">{formatIDR(item.lineTotal)}</td>
-              </tr>
-            );
-          })}
+          {order.items.map((item, idx) => (
+            <tr key={item.id}>
+              <td className="t-c">{idx + 1}</td>
+              <td className="t-r">{formatNumber(item.qty)}</td>
+              <td className="t-c">{item.uom}</td>
+              <td>
+                {item.productName}
+                {item.productCode !== "" ? (
+                  <div style={{ fontSize: "0.8em", color: "#4b5563" }}>{item.productCode}</div>
+                ) : null}
+              </td>
+              <td className="t-r">{formatIDR(item.unitPrice)}</td>
+              {showDiscountCol ? (
+                <td className="t-c">{discountCell(item, hideDiscount, formatIDR, formatNumber)}</td>
+              ) : null}
+              <td className="t-r">{formatIDR(lineAmount(item, hideDiscount))}</td>
+            </tr>
+          ))}
           {Array.from({ length: fillerRows }).map((_, index) => (
             <tr key={`filler-${index}`}>
               <td>&nbsp;</td>
@@ -182,13 +216,14 @@ export default function SalesInvoicePrintPage() {
               <td />
               <td />
               <td />
-              <td />
-              <td />
+              {showDiscountCol ? <td /> : null}
               <td />
             </tr>
           ))}
         </tbody>
       </table>
+
+      {printNotes.trim() !== "" ? <div className="nota-terbilang">Notes: {printNotes.trim()}</div> : null}
 
       <div className="nota-sumbar">
         <div className="nota-terbilang">
@@ -198,24 +233,36 @@ export default function SalesInvoicePrintPage() {
           <tbody>
             <tr>
               <td>Subtotal</td>
-              <td>{formatIDR(order.subtotal)}</td>
+              <td>{formatIDR(totals.subtotal)}</td>
             </tr>
-            {order.discountTotal > 0 ? (
+            {totals.discount !== null ? (
               <tr>
                 <td>Diskon</td>
-                <td>{formatIDR(order.discountTotal)}</td>
+                <td>{formatIDR(totals.discount)}</td>
               </tr>
             ) : null}
-            {order.taxTotal > 0 ? (
+            {totals.tax !== null ? (
               <tr>
                 <td>PPN</td>
-                <td>{formatIDR(order.taxTotal)}</td>
+                <td>{formatIDR(totals.tax)}</td>
               </tr>
             ) : null}
             <tr className="bold">
               <td>Total</td>
-              <td>{formatIDR(order.grandTotal)}</td>
+              <td>{formatIDR(totals.total)}</td>
             </tr>
+            {totals.paid !== null ? (
+              <tr>
+                <td>Sudah Dibayar</td>
+                <td>{formatIDR(totals.paid)}</td>
+              </tr>
+            ) : null}
+            {totals.outstanding !== null ? (
+              <tr className="bold">
+                <td>Sisa Tagihan</td>
+                <td>{formatIDR(totals.outstanding)}</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

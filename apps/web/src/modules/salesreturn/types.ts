@@ -48,10 +48,20 @@
 //   GET /api/v1/deliveries?salesOrderId= (noteView: documentKind +
 //   salesReturnId).
 // - Settlement: POST /:id/settlements {type!, date?, amount!, paymentMethod?,
-//   referenceNumber?, notes?} → full returnView. Syarat: retur confirmed;
-//   total settlement TIDAK boleh melebihi total retur (server 409).
-//   type ∈ collect_payment | reduce_receivable | refund | customer_credit
-//   (contracts/client.go).
+//   referenceNumber?, notes?} → full returnView. Syarat: retur confirmed.
+//   K-04c: jenis sah menurut ARAH selisih — retur murni / tukar lebih murah:
+//   refund | customer_credit (nominal <= externalRemaining = nilai terutang −
+//   pengurang piutang otomatis − yang sudah diselesaikan); tukar lebih mahal:
+//   collect_payment saja (nominal <= chargeRemaining). reduce_receivable =
+//   offset otomatis saat konfirmasi, tidak bisa dicatat manual. customer_credit
+//   butuh order ber-customer dan dijurnal (Piutang → Uang Muka Pelanggan, K-04a).
+// - K-04c/d: view membawa externalRemaining, chargeRemaining,
+//   allowedSettlementTypes; preview membawa difference, owedToCustomer,
+//   chargeToCustomer, orderOutstanding, receivableReduction, externalRemaining,
+//   allowedSettlementTypes, hasParty (angka sama dengan hasil konfirmasi).
+// - K-04e: confirm pengganti menerima settlement? {mode: "pay_now", amount?,
+//   method?, paymentDate?, reference?, amountTendered?} untuk menagih selisih
+//   tukar yang lebih mahal saat serah terima (butuh izin payment.create).
 
 export interface SalesReturnItem {
   id: number;
@@ -68,9 +78,11 @@ export interface SalesReturnItem {
   taxBase: number;
   taxAmount: number;
   lineTotal: number;
+  /** normal | damaged | not_returned. */
+  condition: string;
 }
 
-/** Satu baris barang pengganti — TANPA rincian diskon/pajak (harga katalog). */
+/** Satu baris barang pengganti (sejak F2a membawa dasar pajak + PPN). */
 export interface SalesReturnReplacementItem {
   id: number;
   productId: number;
@@ -81,6 +93,8 @@ export interface SalesReturnReplacementItem {
   qty: number;
   qtyBase: number;
   unitPrice: number;
+  taxBase: number;
+  taxAmount: number;
   lineTotal: number;
 }
 
@@ -110,6 +124,14 @@ export interface SalesReturn {
   total: number;
   status: string;
   notes: string;
+  reason: string;
+  replacementSubtotal: number;
+  replacementTaxTotal: number;
+  replacementTotal: number;
+  /** replacementTotal - total (bertanda): >0 pelanggan bayar, <0 pelanggan dikreditkan. */
+  differenceAmount: number;
+  /** Bagian nilai retur yang otomatis mengurangi piutang. */
+  receivableReduction: number;
   returnMode: string;
   replacementDeliveryStatus: string;
   items: SalesReturnItem[];
@@ -117,15 +139,33 @@ export interface SalesReturn {
   settlements: ReturnSettlement[];
   settledTotal: number;
   unsettledTotal: number;
+  /** Nilai yang masih boleh direfund / dijadikan saldo pelanggan (K-04c). */
+  externalRemaining: number;
+  /** Selisih tukar (lebih mahal) yang belum ditagih. */
+  chargeRemaining: number;
+  /** Jenis penyelesaian manual yang masih sah ([] bila tak ada). */
+  allowedSettlementTypes: string[];
 }
 
 /** Satu baris body POST — kunci persis struct Create di handler.go. */
 export interface SalesReturnLinePayload {
   productId: number;
   variantId: number;
-  locationId: number;
+  /** Normal: wajib hanya untuk produk berstok; damaged/not_returned: dikosongkan. */
+  locationId?: number;
   uom: string;
   qty: number;
+  condition: ReturnCondition;
+}
+
+/** Baris pengganti: harga opsional (kosong = harga katalog). */
+export interface SalesReturnReplacementPayload {
+  productId: number;
+  variantId: number;
+  locationId?: number;
+  uom: string;
+  qty: number;
+  unitPrice?: number;
 }
 
 export interface SalesReturnPayload {
@@ -133,8 +173,10 @@ export interface SalesReturnPayload {
   returnDate?: string;
   notes?: string;
   returnMode?: string;
+  /** Wajib non-kosong. */
+  reason: string;
   items: SalesReturnLinePayload[];
-  replacementItems?: SalesReturnLinePayload[];
+  replacementItems?: SalesReturnReplacementPayload[];
 }
 
 /** Subset orderView SO untuk modal buat (sales/presentation/handler.go). */
@@ -234,13 +276,27 @@ export interface SalesReturnPreview {
   items: SalesReturnPreviewItem[];
   replacementItems: SalesReturnPreviewReplacement[];
   replacementTotal: number;
+  /** replacementTotal − total untuk tukar; 0 untuk retur murni. */
+  difference: number;
+  /** Nilai terutang ke pelanggan (retur murni / tukar lebih murah). */
+  owedToCustomer: number;
+  /** Selisih yang harus dibayar pelanggan (tukar lebih mahal). */
+  chargeToCustomer: number;
+  /** Sisa piutang order sebelum retur ini. */
+  orderOutstanding: number;
+  /** Bagian retur yang otomatis mengurangi piutang saat dikonfirmasi. */
+  receivableReduction: number;
+  /** Sisa yang bisa direfund / dijadikan saldo pelanggan. */
+  externalRemaining: number;
+  allowedSettlementTypes: string[];
+  hasParty: boolean;
 }
 
 export interface SalesReturnPreviewPayload {
   salesOrderId: number;
   returnMode?: string;
   items: SalesReturnLinePayload[];
-  replacementItems?: SalesReturnLinePayload[];
+  replacementItems?: SalesReturnReplacementPayload[];
 }
 
 /** Body POST /:id/replacement-deliveries — semua opsional. */
@@ -265,6 +321,19 @@ export interface ReplacementConfirmPayload {
   recipientName?: string;
   recipientSignatureStatus?: "signed" | "missing";
   recipientSignatureMissingReason?: string;
+  /** Tagih selisih tukar saat serah (K-04e); atomik dengan konfirmasi. */
+  settlement?: ReplacementPayNow;
+}
+
+/** Pembayaran selisih tukar yang lebih mahal, dicatat saat SJ pengganti dikonfirmasi. */
+export interface ReplacementPayNow {
+  mode: "pay_now";
+  /** Kosong = seluruh selisih yang masih terbuka. */
+  amount?: number;
+  method?: "cash" | "transfer" | "check";
+  paymentDate?: string;
+  reference?: string;
+  amountTendered?: number;
 }
 
 /** Body POST /:id/settlements. */
@@ -310,6 +379,44 @@ export const SALES_RETURN_STATUSES = ["draft", "confirmed", "cancelled"] as cons
 
 export type SalesReturnStatus = (typeof SALES_RETURN_STATUSES)[number];
 
+export const RETURN_CONDITIONS = ["normal", "damaged", "not_returned"] as const;
+
+export type ReturnCondition = (typeof RETURN_CONDITIONS)[number];
+
+/** Label Indonesia untuk kondisi barang retur. */
+export function returnConditionLabel(c: string | null | undefined): string {
+  switch (c) {
+    case "normal":
+      return "Normal (masuk stok)";
+    case "damaged":
+      return "Rusak (ke lokasi rusak)";
+    case "not_returned":
+      return "Tidak dikembalikan (tanpa stok)";
+    default:
+      return c ?? "-";
+  }
+}
+
+export type ReturnDifferenceKind = "refund" | "charge" | "none";
+
+/**
+ * Arah selisih retur tukar dari tanda differenceAmount (replacementTotal -
+ * total; service.go projection): <0 pelanggan dikreditkan (refund),
+ * >0 pelanggan membayar lebih (charge). View tidak membawa Kind.
+ */
+export function returnDifferenceKind(difference: number): ReturnDifferenceKind {
+  if (difference < 0) return "refund";
+  if (difference > 0) return "charge";
+  return "none";
+}
+
+export function returnDifferenceLabel(difference: number): string {
+  const kind = returnDifferenceKind(difference);
+  if (kind === "refund") return "Pelanggan dikreditkan (refund)";
+  if (kind === "charge") return "Pelanggan membayar selisih (tagihan)";
+  return "Impas";
+}
+
 export const SALES_RETURN_MODES = ["return_only", "exchange"] as const;
 
 export type SalesReturnMode = (typeof SALES_RETURN_MODES)[number];
@@ -340,7 +447,7 @@ export function replacementStatusLabel(status: string | null | undefined): strin
     case "dispatched":
       return "Dikirim";
     case "confirmed":
-      return "Diterima";
+      return "Diterima / diserahkan";
     default:
       return status ?? "-";
   }
@@ -356,8 +463,47 @@ export function settlementTypeLabel(type: string | null | undefined): string {
     case "refund":
       return "Refund";
     case "customer_credit":
-      return "Kredit pelanggan";
+      return "Saldo pelanggan (uang muka)";
     default:
       return type ?? "-";
   }
+}
+
+/**
+ * Baris-baris "apa yang akan terjadi pada nilai retur ini" untuk langkah Tinjau
+ * (K-04d). Angka datang dari server (preview memakai aturan & helper offset
+ * yang sama dengan konfirmasi) — fungsi ini hanya memformat.
+ */
+export function salesSettlementOutlook(
+  p: Pick<
+    SalesReturnPreview,
+    | "chargeToCustomer"
+    | "owedToCustomer"
+    | "orderOutstanding"
+    | "receivableReduction"
+    | "externalRemaining"
+    | "allowedSettlementTypes"
+  >,
+  formatMoney: (n: number) => string,
+): string[] {
+  if (p.chargeToCustomer > 0) {
+    return [
+      `Pelanggan membayar selisih ${formatMoney(p.chargeToCustomer)} — tagih saat barang pengganti diserahkan (atau catat sebagai tagih pembayaran)`,
+    ];
+  }
+  if (p.owedToCustomer <= 0) return ["Impas: tidak ada selisih yang perlu diselesaikan"];
+  const out: string[] = [
+    `Nilai terutang ke pelanggan: ${formatMoney(p.owedToCustomer)}`,
+    `Sisa piutang order sebelum retur: ${formatMoney(p.orderOutstanding)}`,
+  ];
+  if (p.receivableReduction > 0) {
+    out.push(`Mengurangi piutang otomatis saat dikonfirmasi: ${formatMoney(p.receivableReduction)}`);
+  }
+  if (p.externalRemaining > 0) {
+    const labels = p.allowedSettlementTypes.map((t) => settlementTypeLabel(t).toLowerCase()).join(" atau ");
+    out.push(`Sisa ${formatMoney(p.externalRemaining)} dapat diselesaikan sebagai ${labels}`);
+  } else {
+    out.push("Seluruh nilai retur mengurangi piutang: tidak ada yang perlu direfund atau dijadikan saldo pelanggan");
+  }
+  return out;
 }

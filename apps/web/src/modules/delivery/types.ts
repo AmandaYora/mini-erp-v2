@@ -42,6 +42,8 @@ export interface DeliveryItem {
 }
 
 export interface DeliveryNote {
+  /** true hanya pada respons replay create (HTTP 200, clientRef sama). */
+  replayed?: boolean;
   id: number;
   number: string;
   branchId: number;
@@ -61,6 +63,11 @@ export interface DeliveryNote {
   dispatchedBy: number | null;
   confirmedAt: string | null;
   confirmedBy: number | null;
+  /** "order" (SJ order) | "replacement" (barang pengganti retur). */
+  documentKind?: string;
+  salesReturnId?: number;
+  /** Peringatan lunak hanya pada respons create (DL-04): [0] = stok belum ditahan, sisanya per posisi. */
+  warnings?: string[];
   items: DeliveryItem[];
 }
 
@@ -69,9 +76,13 @@ export interface DeliveryNote {
 export interface DeliveryLinePayload {
   productId: number;
   variantId: number;
-  locationId: number;
+  /** Dihilangkan/0 untuk barang stok = server mengalokasikan lintas lokasi
+   * (satu baris bisa menjadi beberapa item di respons). */
+  locationId?: number;
   uom: string;
   qty: number;
+  /** Tahanan stok (keranjang POS) yang dikonsumsi saat konfirmasi. */
+  reservationKey?: string;
 }
 
 export interface DeliveryPayload {
@@ -82,7 +93,23 @@ export interface DeliveryPayload {
   warehouseStaffName?: string;
   dropLocationNote?: string;
   notes?: string;
+  /** UUID per percobaan simpan: ulang dengan clientRef sama = replay. */
+  clientRef?: string;
   items: DeliveryLinePayload[];
+}
+
+export type SettlementMode = "pay_now" | "switch_to_net";
+
+/** Pelunasan order COD yang dituntaskan surat jalan ini (handler.Confirm). */
+export interface DeliverySettlementPayload {
+  mode: SettlementMode;
+  /** cash | transfer | check — kosong = cash (hanya pay_now). */
+  method?: "cash" | "transfer" | "check";
+  paymentDate?: string;
+  reference?: string;
+  amountTendered?: number;
+  /** Wajib untuk switch_to_net (YYYY-MM-DD). */
+  dueDate?: string;
 }
 
 /** Body POST /:id/confirm — semua opsional, body kosong tetap valid. */
@@ -90,9 +117,13 @@ export interface DeliveryConfirmPayload {
   recipientName?: string;
   recipientSignatureStatus?: "signed" | "missing" | "";
   recipientSignatureMissingReason?: string;
+  settlement?: DeliverySettlementPayload;
 }
 
 // --- bukti kirim (service.go: Proofs) ---
+
+/** Tujuan bukti kirim (DL-01): scan SJ fisik bertanda tangan (wajib) vs foto lokasi (opsional). */
+export type DeliveryProofPurpose = "delivery_signed_document" | "delivery_location_photo";
 
 export interface DeliveryProof {
   id: number;
@@ -100,6 +131,7 @@ export interface DeliveryProof {
   mime: string;
   sizeBytes: number;
   url: string;
+  purpose: DeliveryProofPurpose;
 }
 
 // --- lookup SO untuk modal Buat ---
@@ -127,6 +159,8 @@ export interface SalesOrderOption {
   channel: string;
   orderDate: string;
   status: string;
+  paymentTerms?: string;
+  grandTotal?: number;
   items: SalesOrderOptionItem[];
 }
 
@@ -169,6 +203,8 @@ export interface QueueOrder {
   totalOrdered: number;
   totalDelivered: number;
   pendingDrafts: number;
+  /** Jumlah baris produk yang masih harus dikirim (DL-02). */
+  itemCount: number;
 }
 
 export interface WaitingNote {
@@ -181,6 +217,8 @@ export interface WaitingNote {
   ageDays: number;
   driverName: string;
   vehiclePlate: string;
+  /** Scan/foto SJ bertanda tangan sudah diunggah (DL-01). */
+  hasSignedDocument: boolean;
 }
 
 export interface WorkQueue {

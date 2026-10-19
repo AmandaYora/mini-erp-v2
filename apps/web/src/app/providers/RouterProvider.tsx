@@ -8,7 +8,7 @@ export function RouterProvider() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center text-muted">
+        <div className="flex min-h-screen items-center justify-center text-muted-foreground">
           Memuat halaman…
         </div>
       }

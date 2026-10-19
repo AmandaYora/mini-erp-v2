@@ -17,27 +17,29 @@ export type PurchaseReturnLineFormValues = z.infer<typeof purchaseReturnLineSche
 
 export const purchaseReturnSchema = z.object({
   purchaseOrderId: z.number().int().positive("Order beli wajib dipilih"),
+  // Tanggal tidak boleh di masa depan (cek di modal via validateReturnDate).
   returnDate: z.string().default(""),
   notes: z.string().default(""),
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Alasan retur wajib diisi")
+    .max(255, "Alasan maksimal 255 karakter"),
   items: z.array(purchaseReturnLineSchema).min(1, "Minimal 1 baris item dengan qty > 0"),
 });
 
 export type PurchaseReturnFormValues = z.infer<typeof purchaseReturnSchema>;
 
-// Batasan disalin dari service.go AddSettlement: retur harus confirmed
-// (dicek server), type dikenal, amount > 0 dan total settlement tidak boleh
-// melebihi total retur (server 409 bila lebih).
+// Batasan disalin dari service.go AddSettlement + settlement_rules.go (K-04b/c):
+// retur harus confirmed (dicek server), jenis manual hanya refund atau
+// supplier_credit (reduce_payable = offset otomatis), amount > 0 dan tidak
+// melebihi kelebihan di atas sisa hutang (server 409 bila lebih).
 export const purchaseReturnSettlementSchema = z.object({
   type: z
     .string()
-    .refine(
-      (v) =>
-        v === "collect_payment" ||
-        v === "reduce_receivable" ||
-        v === "refund" ||
-        v === "customer_credit",
-      { message: "Jenis penyelesaian wajib dipilih" },
-    ),
+    .refine((v) => v === "refund" || v === "supplier_credit", {
+      message: "Jenis penyelesaian wajib dipilih",
+    }),
   date: z.string().default(""),
   amount: z.coerce.number().positive("Nominal harus lebih dari 0"),
   paymentMethod: z.string().default(""),

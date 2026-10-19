@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { setAuthExpiredHandler, tokenStore } from "@/shared/services/http-client";
+import { setAuthExpiredHandler, toApiError, tokenStore } from "@/shared/services/http-client";
 import { authService } from "@/modules/auth/services/auth.service";
-import type { AuthBranch, AuthCompany, AuthUser } from "@/modules/auth/types";
+import type { AuthBranch, AuthCompany, AuthRole, AuthUser } from "@/modules/auth/types";
 
 interface AuthState {
   ready: boolean;
@@ -9,11 +9,17 @@ interface AuthState {
   branch: AuthBranch | null;
   permissions: string[];
   company: AuthCompany | null;
+  activeRole: AuthRole | null;
+  availableRoles: AuthRole[];
   pendingBranches: AuthBranch[];
-  login: (username: string, password: string) => Promise<{ requiresBranchSelection: boolean }>;
+  /** "network" = sesi belum bisa dipulihkan karena server tak terjangkau (token tetap). */
+  bootError: "network" | null;
+  login: (identifier: string, password: string) => Promise<{ requiresBranchSelection: boolean }>;
   chooseBranch: (branchId: number) => Promise<void>;
   loadMe: () => Promise<void>;
   switchBranch: (branchId: number) => Promise<void>;
+  /** Ganti role aktif lalu muat ulang izin (/auth/me). */
+  switchRole: (roleId: number) => Promise<void>;
   logout: () => Promise<void>;
   can: (perm: string) => boolean;
 }
@@ -26,10 +32,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   branch: null,
   permissions: [],
   company: null,
+  activeRole: null,
+  availableRoles: [],
   pendingBranches: [],
+  bootError: null,
 
-  login: async (username, password) => {
-    const res = await authService.login(username, password);
+  login: async (identifier, password) => {
+    const res = await authService.login(identifier, password);
     tokenStore.set(res.accessToken, res.refreshToken);
     if (res.requiresBranchSelection || !res.branch) {
       // Tanpa cabang: tidak ada rute ber-permission yang bisa dituju, jadi
@@ -53,15 +62,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   loadMe: async () => {
     try {
       const me = await authService.me();
-      set({ user: me.user, branch: me.branch, permissions: me.permissions ?? [], company: me.company, pendingBranches: [], ready: true });
-    } catch {
-      tokenStore.clear();
-      set({ user: null, branch: null, permissions: [], company: null, pendingBranches: [], ready: true });
+      set({ user: me.user, branch: me.branch, permissions: me.permissions ?? [], company: me.company, activeRole: me.activeRole ?? null, availableRoles: me.availableRoles ?? [], pendingBranches: [], bootError: null, ready: true });
+    } catch (err) {
+      const status = toApiError(err).status;
+      if (status === 401 || status === 403) {
+        // Server menolak sesi: benar-benar habis.
+        tokenStore.clear();
+        set({ user: null, branch: null, permissions: [], company: null, activeRole: null, availableRoles: [], pendingBranches: [], bootError: null, ready: true });
+      } else {
+        // Jaringan putus/5xx: jangan buang token — tawarkan coba lagi.
+        set({ bootError: "network", ready: true });
+      }
     }
   },
 
   switchBranch: async (branchId) => {
     const { accessToken } = await authService.switchBranch(branchId);
+    if (tokenStore.refresh) tokenStore.set(accessToken, tokenStore.refresh);
+    await get().loadMe();
+  },
+
+  switchRole: async (roleId) => {
+    const { accessToken } = await authService.switchRole(roleId);
     if (tokenStore.refresh) tokenStore.set(accessToken, tokenStore.refresh);
     await get().loadMe();
   },
@@ -73,7 +95,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Token mati pun sesi lokal tetap dibersihkan.
     }
     tokenStore.clear();
-    set({ user: null, branch: null, permissions: [], company: null, pendingBranches: [], ready: true });
+    set({ user: null, branch: null, permissions: [], company: null, activeRole: null, availableRoles: [], pendingBranches: [], ready: true });
   },
 
   can: (perm) => get().permissions.includes(perm),

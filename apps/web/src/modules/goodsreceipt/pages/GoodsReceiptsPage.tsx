@@ -1,185 +1,155 @@
-import { useState } from "react";
-import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Button,
   DataTable,
-  FilterBar,
   FormField,
   PageHeader,
   Pagination,
   SectionCard,
-  TextInput,
+  StatusBadge,
 } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
-import { formatDate, formatNumber } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { DocNumber, Page, Qty, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
+import { formatDate } from "@/shared/lib/format";
+import { isAbort, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { goodsreceiptService } from "@/modules/goodsreceipt/services/goodsreceipt.service";
-import { ReceiveModal } from "@/modules/goodsreceipt/components/ReceiveModal";
 import type { GoodsReceipt } from "@/modules/goodsreceipt/types";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useUrlFilters } from "@/shared/hooks/use-url-filters";
+import { PurchaseOrderSearchSelect } from "@/modules/purchasing/components/PurchaseOrderSearchSelect";
+import {
+  GOODSRECEIPT_LIST_DEFAULTS,
+  goodsreceiptListFilterSchema,
+} from "@/modules/goodsreceipt/schemas/goodsreceipt-list-filter.schema";
 
 const LIMIT = 20;
 
-// Kolom tabel hanya dari kunci receiptView yang benar-benar ada: id,
-// orderNumber, receivedAt, items. Backend TIDAK menyediakan nomor dokumen,
-// supplier, maupun status penerimaan — kolom-kolom itu sengaja tidak ada.
-// Filter: backend List hanya menerima purchaseOrderId (tanpa search).
+// Kolom tabel dari kunci receiptView: id, number, status (pending|posted|void),
+// supplierDeliveryNumber, orderNumber, receivedAt, items. Penerimaan `pending`
+// = tersimpan tetapi stok belum masuk (diselesaikan/dibatalkan di detail).
+// Filter: backend List hanya menerima purchaseOrderId (tanpa search/tanggal/status/sortir).
 
 export default function GoodsReceiptsPage() {
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const canCreate = can("goodsreceipt.create");
 
-  const [poInput, setPoInput] = useState("");
-  const [purchaseOrderId, setPurchaseOrderId] = useState<number | null>(null);
-  const [page, setPage] = useState(1);
-  const [modalOpen, setModalOpen] = useState(false);
+  const { filters, setFilters, reset } = useUrlFilters(goodsreceiptListFilterSchema, GOODSRECEIPT_LIST_DEFAULTS);
 
   const { data, loading, error, reload } = useAsyncData(
-    () =>
+    (signal) =>
       goodsreceiptService
-        .list({
-          purchaseOrderId: purchaseOrderId ?? undefined,
-          page,
-          limit: LIMIT,
-        })
+        .list(
+          { purchaseOrderId: filters.purchaseOrderId || undefined, page: filters.page, limit: LIMIT },
+          signal,
+        )
         .then((res) => ({ items: res.items, total: res.meta.total }))
         .catch((err) => {
-          const apiErr = toApiError(err);
-          toast.danger("Gagal memuat penerimaan", apiErr.message);
+          // Batalan sendiri bukan kegagalan muat.
+          if (!isAbort(err)) {
+            const apiErr = toApiError(err);
+            toast.danger("Gagal memuat penerimaan", apiErr.message);
+          }
           throw err;
         }),
-    [purchaseOrderId, page],
+    [filters],
   );
   const items: GoodsReceipt[] = data?.items ?? [];
   const total = data?.total ?? 0;
 
-  function applyFilter(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const n = Number(poInput.trim());
-    setPurchaseOrderId(poInput.trim() !== "" && Number.isInteger(n) && n > 0 ? n : null);
-    setPage(1);
+  const active: ActiveFilter[] = [];
+  if (filters.purchaseOrderId) {
+    active.push({
+      key: "po",
+      label: "Order beli dipilih",
+      onRemove: () => setFilters({ purchaseOrderId: 0 }),
+    });
   }
+  const filtered = active.length > 0;
+
+  const createButton = canCreate ? (
+    <Button asChild>
+      <Link to={ROUTE_PATHS.goodsReceiptsNew}>Catat penerimaan</Link>
+    </Button>
+  ) : undefined;
 
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Pembelian"
-        title="Penerimaan Barang"
-        description="Catatan penerimaan per purchase order — klik ID untuk melihat detail."
-        actions={
-          canCreate ? (
-            <Button onClick={() => setModalOpen(true)}>
-              Catat Penerimaan
-            </Button>
-          ) : undefined
-        }
+        title="Penerimaan barang"
+        description="Catatan penerimaan per purchase order. Klik baris untuk melihat detail."
+        actions={createButton}
       />
 
-      <FilterBar>
-        <form onSubmit={applyFilter} className="flex flex-wrap items-end gap-4">
-          <div className="min-w-52 flex-1">
-            <FormField
-              label="Purchase Order ID"
-              helperText="Backend hanya mendukung filter purchaseOrderId."
-            >
-              <TextInput
-                value={poInput}
-                onChange={(e) => setPoInput(e.target.value)}
-                placeholder="cth: 12 (kosongkan = semua)"
-                inputMode="numeric"
+      <Toolbar
+        primary={
+          <div className="min-w-64 flex-1 sm:max-w-md">
+            <FormField label="Order beli">
+              <PurchaseOrderSearchSelect
+                value={filters.purchaseOrderId || null}
+                allowClear
+                placeholder="Semua order beli"
+                onChange={(id) => setFilters({ purchaseOrderId: id ?? 0 })}
               />
             </FormField>
           </div>
-          <Button type="submit" variant="secondary">
-            Cari
-          </Button>
-        </form>
-      </FilterBar>
-
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title={error}>
-            <button
-              type="button"
-              onClick={() => reload()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
-            >
-              Coba lagi
-            </button>
-          </Notice>
-        </div>
-      )}
-
-      <SectionCard>
-        {loading && items.length === 0 ? (
-          <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-        ) : (
-          <>
-            <DataTable<GoodsReceipt>
-              rows={items}
-              rowKey={(r) => r.id}
-              emptyTitle="Belum ada penerimaan"
-              emptyDescription="Catat penerimaan baru atau ubah filter purchase order."
-              columns={[
-                {
-                  header: "ID",
-                  render: (r) => (
-                    <Link
-                      to={`${ROUTE_PATHS.goodsReceipts}/${r.id}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      #{r.id}
-                    </Link>
-                  ),
-                },
-                {
-                  header: "Tanggal Terima",
-                  render: (r) => formatDate(r.receivedAt),
-                },
-                { header: "No. PO", render: (r) => r.orderNumber || "-" },
-                {
-                  header: "Baris",
-                  align: "right",
-                  render: (r) => formatNumber(r.items.length),
-                },
-                {
-                  header: "Aksi",
-                  align: "right",
-                  render: (r) => (
-                    <Link
-                      to={`${ROUTE_PATHS.goodsReceipts}/${r.id}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      Detail
-                    </Link>
-                  ),
-                },
-              ]}
-            />
-            <Pagination
-              page={page}
-              limit={LIMIT}
-              total={total}
-              onPageChange={(p) => setPage(p)}
-            />
-          </>
-        )}
-      </SectionCard>
-
-      <ReceiveModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onCreated={(id) => {
-          setModalOpen(false);
-          reload();
-          navigate(`${ROUTE_PATHS.goodsReceipts}/${id}`);
-        }}
+        }
+        active={active}
+        onClearAll={reset}
       />
-    </div>
+
+      <SectionCard flush>
+        <DataTable<GoodsReceipt>
+          rows={items}
+          rowKey={(r) => r.id}
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          onRowClick={(r) => void navigate(`${ROUTE_PATHS.goodsReceipts}/${r.id}`)}
+          emptyTitle={filtered ? "Tidak ada yang cocok dengan filter ini" : "Belum ada penerimaan"}
+          emptyDescription={
+            filtered
+              ? "Ubah atau hapus filter order beli untuk melihat penerimaan lain."
+              : "Catat penerimaan pertama dari purchase order yang sudah dikonfirmasi."
+          }
+          emptyAction={
+            filtered ? (
+              <Button variant="secondary" onClick={reset}>
+                Hapus filter
+              </Button>
+            ) : (
+              createButton
+            )
+          }
+          columns={[
+            {
+              header: "No. penerimaan",
+              render: (r) => (
+                <Link
+                  to={`${ROUTE_PATHS.goodsReceipts}/${r.id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  <DocNumber value={r.number || `#${r.id}`} />
+                </Link>
+              ),
+            },
+            { header: "Tanggal terima", render: (r) => formatDate(r.receivedAt) },
+            { header: "No. PO", render: (r) => (r.orderNumber ? <DocNumber value={r.orderNumber} /> : "-") },
+            { header: "SJ pemasok", render: (r) => r.supplierDeliveryNumber || "-" },
+            { header: "Baris", align: "right", render: (r) => <Qty value={r.lineCount} /> },
+            { header: "Diterima oleh", render: (r) => r.receivedByName || "-" },
+            { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
+          ]}
+        />
+        <Pagination
+          page={filters.page}
+          limit={LIMIT}
+          total={total}
+          onPageChange={(p) => setFilters({ page: p })}
+        />
+      </SectionCard>
+    </Page>
   );
 }

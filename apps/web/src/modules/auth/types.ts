@@ -6,6 +6,13 @@ export interface AuthUser {
   roleIds: number[];
 }
 
+/** Role yang dimiliki pengguna (F3b-1). */
+export interface AuthRole {
+  id: number;
+  code: string;
+  name: string;
+}
+
 export interface AuthBranch {
   id: number;
   code: string;
@@ -28,6 +35,8 @@ export interface LoginResponse {
   branch: AuthBranch | null;
   requiresBranchSelection: boolean;
   branches?: AuthBranch[];
+  activeRole?: AuthRole | null;
+  availableRoles?: AuthRole[];
 }
 
 export interface MeResponse {
@@ -35,4 +44,7 @@ export interface MeResponse {
   branch: AuthBranch | null;
   permissions: string[];
   company: AuthCompany | null;
+  /** Izin sesi hanya berasal dari role aktif (F3b-1). */
+  activeRole?: AuthRole | null;
+  availableRoles?: AuthRole[];
 }

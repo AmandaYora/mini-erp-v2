@@ -5,6 +5,7 @@ import type {
   UpdateUserInput,
   UserDetail,
   UserItem,
+  UserListItem,
 } from "@/modules/users/types";
 
 export interface ListUsersParams {
@@ -17,8 +18,8 @@ export interface ListUsersParams {
 // Endpoint diverifikasi dari
 // apps/api/internal/modules/user/presentation/routes.go.
 export const userService = {
-  list: (params: ListUsersParams) =>
-    apiPage<UserItem>("/api/v1/users", { ...params }),
+  list: (params: ListUsersParams, signal?: AbortSignal) =>
+    apiPage<UserListItem>("/api/v1/users", { ...params }, signal),
   get: (id: number) => apiGet<UserDetail>(`/api/v1/users/${id}`),
   create: (body: CreateUserInput) =>
     apiPostFull<UserItem>("/api/v1/users", body),

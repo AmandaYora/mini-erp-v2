@@ -7,7 +7,7 @@ import { INPUT } from "./field-classes";
 
 function ErrorText({ message }: { message?: string }) {
   if (!message) return null;
-  return <p className="text-bad mt-1 text-[0.82rem]">{message}</p>;
+  return <p className="mt-1 text-xs font-medium text-destructive">{message}</p>;
 }
 
 export interface TextInputProps
@@ -20,6 +20,7 @@ export function TextInput({ error, className, ...rest }: TextInputProps) {
     <div>
       <input
         className={className ? `${INPUT} ${className}` : INPUT}
+        aria-invalid={error ? true : undefined}
         {...rest}
       />
       <ErrorText message={error} />
@@ -37,6 +38,7 @@ export function DateInput({ error, className, ...rest }: DateInputProps) {
       <input
         type="date"
         className={className ? `${INPUT} ${className}` : INPUT}
+        aria-invalid={error ? true : undefined}
         {...rest}
       />
       <ErrorText message={error} />
@@ -58,7 +60,8 @@ export function SelectInput({
   return (
     <div>
       <select
-        className={className ? `${INPUT} ${className}` : INPUT}
+        className={`${INPUT} select-chevron cursor-pointer appearance-none pr-9 ${className ?? ""}`}
+        aria-invalid={error ? true : undefined}
         {...rest}
       >
         {children}
@@ -77,7 +80,8 @@ export function TextArea({ error, className, ...rest }: TextAreaProps) {
   return (
     <div>
       <textarea
-        className={className ? `${INPUT} ${className}` : INPUT}
+        className={`${INPUT} h-auto min-h-[84px] py-2 ${className ?? ""}`}
+        aria-invalid={error ? true : undefined}
         {...rest}
       />
       <ErrorText message={error} />

@@ -15,8 +15,8 @@ export interface ListBranchesParams {
 // Endpoint diverifikasi dari
 // apps/api/internal/modules/branch/presentation/handler.go (RegisterRoutes).
 export const branchService = {
-  list: (params: ListBranchesParams) =>
-    apiPage<BranchItem>("/api/v1/branches", { ...params }),
+  list: (params: ListBranchesParams, signal?: AbortSignal) =>
+    apiPage<BranchItem>("/api/v1/branches", { ...params }, signal),
   get: (id: number) => apiGet<BranchItem>(`/api/v1/branches/${id}`),
   create: (body: CreateBranchInput) =>
     apiPostFull<BranchItem>("/api/v1/branches", body),

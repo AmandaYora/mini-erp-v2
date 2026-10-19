@@ -1,22 +1,27 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
+import { Archive, ChevronDown, ChevronRight, SquarePen } from "lucide-react";
 import {
-  Badge,
   Button,
   ConfirmDialog,
   DataTable,
   FormField,
-  Modal,
+  FormSheet,
   PageHeader,
+  Pagination,
   SearchSelect,
+  SectionCard,
+  StatusBadge,
   TextInput,
 } from "@/shared/components/ui";
+import { ActionMenu, DocNumber, Page } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { statusLabel, statusTone } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { toast } from "@/shared/stores/toast.store";
+import { buildCategoryRows, parentIds } from "@/modules/products/lib/category-tree";
+import type { CategoryTreeRow } from "@/modules/products/lib/category-tree";
 import {
   categoryCreateSchema,
   categoryUpdateSchema,
@@ -24,7 +29,10 @@ import {
 import { productsService } from "@/modules/products/services/products.service";
 import type { ProductCategory } from "@/modules/products/types";
 
-interface ModalState {
+const LIMIT = 20;
+const FORM_ID = "category-form";
+
+interface SheetState {
   mode: "create" | "edit";
   target: ProductCategory | null;
 }
@@ -33,47 +41,61 @@ export default function CategoriesPage() {
   const can = useAuthStore((s) => s.can);
   const manageable = can("product_categories.manage");
 
-  const [modal, setModal] = useState<ModalState | null>(null);
+  const [sheet, setSheet] = useState<SheetState | null>(null);
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState<number | null>(null);
+  const [sortOrder, setSortOrder] = useState("0");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<ProductCategory | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
+  const [page, setPage] = useState(1);
 
-  const { data, loading, error, reload } = useAsyncData(
-    () => productsService.listCategories(),
-    [],
-  );
-  const items = data ?? [];
+  const { data, loading, error, reload } = useAsyncData(() => productsService.listCategories(), []);
+  const items = useMemo(() => data ?? [], [data]);
 
-  function parentName(parentIdValue: number | null): string {
-    if (parentIdValue === null) return "-";
-    return items.find((c) => c.id === parentIdValue)?.name ?? `#${parentIdValue}`;
+  // Pohon diratakan lalu dipaginasi di klien (endpoint mengembalikan seluruh kategori).
+  const treeRows = useMemo(() => buildCategoryRows(items, collapsed), [items, collapsed]);
+  const totalPages = Math.max(1, Math.ceil(treeRows.length / LIMIT));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = treeRows.slice((safePage - 1) * LIMIT, safePage * LIMIT);
+  const hasParents = useMemo(() => parentIds(items).length > 0, [items]);
+  const allCollapsed = hasParents && parentIds(items).every((id) => collapsed.has(id));
+
+  function toggleNode(id: number) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function openCreate() {
     setCode("");
     setName("");
     setParentId(null);
+    setSortOrder("0");
     setFieldErrors({});
-    setModal({ mode: "create", target: null });
+    setSheet({ mode: "create", target: null });
   }
 
   function openEdit(target: ProductCategory) {
     setCode(target.code);
     setName(target.name);
     setParentId(target.parentId);
+    setSortOrder(String(target.sortOrder ?? 0));
     setFieldErrors({});
-    setModal({ mode: "edit", target });
+    setSheet({ mode: "edit", target });
   }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!modal) return;
-    if (modal.mode === "create") {
-      const parsed = categoryCreateSchema.safeParse({ code, name, parentId });
+    if (!sheet) return;
+    if (sheet.mode === "create") {
+      const parsed = categoryCreateSchema.safeParse({ code, name, parentId, sortOrder: Number(sortOrder.trim() === "" ? 0 : sortOrder) });
       if (!parsed.success) {
         const errs: Record<string, string> = {};
         for (const issue of parsed.error.issues) {
@@ -90,9 +112,10 @@ export default function CategoriesPage() {
           code: parsed.data.code.trim(),
           name: parsed.data.name.trim(),
           parentId: parsed.data.parentId,
+          sortOrder: parsed.data.sortOrder,
         });
         toast.fromServer(res.message, "Kategori dibuat");
-        setModal(null);
+        setSheet(null);
         reload();
       } catch (err) {
         toast.danger("Gagal membuat kategori", toApiError(err).message);
@@ -100,7 +123,7 @@ export default function CategoriesPage() {
         setSaving(false);
       }
     } else {
-      const parsed = categoryUpdateSchema.safeParse({ name, parentId });
+      const parsed = categoryUpdateSchema.safeParse({ name, parentId, sortOrder: Number(sortOrder.trim() === "" ? 0 : sortOrder) });
       if (!parsed.success) {
         const errs: Record<string, string> = {};
         for (const issue of parsed.error.issues) {
@@ -110,20 +133,21 @@ export default function CategoriesPage() {
         setFieldErrors(errs);
         return;
       }
-      if (!modal.target) return;
-      if (parentId === modal.target.id) {
+      if (!sheet.target) return;
+      if (parentId === sheet.target.id) {
         setFieldErrors({ parentId: "Kategori tidak boleh menjadi induk dirinya sendiri" });
         return;
       }
       setFieldErrors({});
       setSaving(true);
       try {
-        const res = await productsService.updateCategory(modal.target.id, {
+        const res = await productsService.updateCategory(sheet.target.id, {
           name: parsed.data.name.trim(),
           parentId: parsed.data.parentId,
+          sortOrder: parsed.data.sortOrder,
         });
         toast.fromServer(res.message, "Kategori disimpan");
-        setModal(null);
+        setSheet(null);
         reload();
       } catch (err) {
         toast.danger("Gagal menyimpan kategori", toApiError(err).message);
@@ -148,89 +172,140 @@ export default function CategoriesPage() {
     }
   }
 
-  const parentOptions = (modal?.mode === "edit" && modal.target
-    ? items.filter((c) => c.id !== modal.target!.id)
+  const parentOptions = (sheet?.mode === "edit" && sheet.target
+    ? items.filter((c) => c.id !== sheet.target!.id)
     : items
   ).map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }));
 
+  const addButton = manageable ? <Button onClick={openCreate}>Tambah kategori</Button> : undefined;
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Master"
-        title="Kategori Produk"
+        title="Kategori produk"
         description="Kelompok produk, opsional bertingkat via induk."
         actions={
-          manageable ? <Button onClick={openCreate}>Tambah</Button> : undefined
+          <>
+            {hasParents && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setCollapsed(allCollapsed ? new Set() : new Set(parentIds(items)));
+                  setPage(1);
+                }}
+              >
+                {allCollapsed ? "Buka semua" : "Lipat semua"}
+              </Button>
+            )}
+            {addButton}
+          </>
         }
       />
 
       {!manageable && (
-        <div className="mb-4">
-          <Notice tone="info" title="Mode baca">
-            Anda hanya dapat melihat kategori — pengelolaan butuh izin product_categories.manage.
-          </Notice>
-        </div>
+        <Notice tone="info" title="Mode baca">
+          Anda hanya dapat melihat kategori — pengelolaan butuh izin product_categories.manage.
+        </Notice>
       )}
 
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title="Gagal memuat kategori">
-            {error}
-          </Notice>
-        </div>
-      )}
-
-      <div className="rounded-lg border border-hairline bg-surface">
-        {loading ? (
-          <p className="text-muted px-6 py-10 text-center text-sm">Memuat…</p>
-        ) : (
-          <DataTable<ProductCategory>
-            columns={[
-              { header: "Kode", render: (r) => <span className="font-medium">{r.code}</span> },
-              { header: "Nama", render: (r) => r.name },
-              { header: "Induk", render: (r) => parentName(r.parentId) },
-              {
-                header: "Status",
-                render: (r) => <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>,
-              },
-              {
-                header: "Aksi",
-                align: "right",
-                render: (r) =>
-                  manageable && r.status !== "archived" ? (
-                    <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(r)}>
-                        Ubah
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setArchiveTarget(r)}>
-                        Arsipkan
-                      </Button>
-                    </div>
+      <SectionCard flush>
+        <DataTable<CategoryTreeRow>
+          caption="Pohon kategori produk"
+          rows={loading && data === null ? null : pageRows}
+          rowKey={(r) => r.category.id}
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          emptyTitle="Belum ada kategori"
+          emptyDescription="Buat kategori pertama untuk mengelompokkan produk."
+          emptyAction={addButton}
+          columns={[
+            {
+              header: "Nama",
+              render: (r) => (
+                <div className="flex items-center gap-1" style={{ paddingLeft: `${r.depth * 1.5}rem` }}>
+                  {r.hasChildren ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-expanded={!collapsed.has(r.category.id)}
+                      aria-label={`${collapsed.has(r.category.id) ? "Buka" : "Lipat"} ${r.category.name}`}
+                      onClick={() => toggleNode(r.category.id)}
+                    >
+                      {collapsed.has(r.category.id) ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
+                    </Button>
                   ) : (
-                    <span className="text-muted">-</span>
-                  ),
-              },
-            ]}
-            rows={items}
-            rowKey={(r) => r.id}
-            emptyTitle="Belum ada kategori"
-            emptyDescription="Buat kategori pertama untuk mengelompokkan produk."
-          />
+                    <span aria-hidden className="inline-block size-7 flex-none" />
+                  )}
+                  <span className={r.depth === 0 ? "font-medium" : undefined}>{r.category.name}</span>
+                </div>
+              ),
+            },
+            { header: "Kode", render: (r) => <DocNumber value={r.category.code} /> },
+            { header: "Urutan", align: "right" as const, render: (r) => r.category.sortOrder ?? 0 },
+            { header: "Status", render: (r) => <StatusBadge status={r.category.status} /> },
+            ...(manageable
+              ? [
+                  {
+                    header: "Aksi",
+                    width: 56,
+                    align: "right" as const,
+                    render: (r: CategoryTreeRow) =>
+                      r.category.status !== "archived" ? (
+                        <ActionMenu
+                          variant="ghost"
+                          label={`Aksi untuk ${r.category.name}`}
+                          items={[
+                            {
+                              key: "edit",
+                              label: "Ubah",
+                              icon: <SquarePen aria-hidden />,
+                              onSelect: () => openEdit(r.category),
+                            },
+                            {
+                              key: "archive",
+                              label: "Arsipkan",
+                              icon: <Archive aria-hidden />,
+                              destructive: true,
+                              onSelect: () => setArchiveTarget(r.category),
+                            },
+                          ]}
+                        />
+                      ) : (
+                        <span className="text-muted-foreground">–</span>
+                      ),
+                  },
+                ]
+              : []),
+          ]}
+        />
+        {!error && (
+          <Pagination page={safePage} limit={LIMIT} total={treeRows.length} onPageChange={setPage} />
         )}
-      </div>
+      </SectionCard>
 
-      <Modal
-        open={modal !== null}
-        title={modal?.mode === "edit" ? "Ubah Kategori" : "Tambah Kategori"}
-        description={modal?.mode === "edit" ? "Kode tidak dapat diubah." : undefined}
-        onClose={() => setModal(null)}
+      <FormSheet
+        open={sheet !== null}
+        title={sheet?.mode === "edit" ? "Ubah kategori" : "Tambah kategori"}
+        description={sheet?.mode === "edit" ? "Kode tidak dapat diubah." : undefined}
+        onClose={() => setSheet(null)}
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setSheet(null)} disabled={saving}>
+              Batal
+            </Button>
+            <Button type="submit" form={FORM_ID} loading={saving}>
+              {sheet?.mode === "edit" ? "Simpan" : "Buat kategori"}
+            </Button>
+          </>
+        }
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
           <FormField label="Kode" required htmlFor="cat-code" errorText={fieldErrors.code}>
             <TextInput
               id="cat-code"
               value={code}
-              disabled={modal?.mode === "edit"}
+              disabled={sheet?.mode === "edit"}
               onChange={(e) => setCode(e.target.value)}
               placeholder="KTG-001"
             />
@@ -243,8 +318,7 @@ export default function CategoriesPage() {
               placeholder="Nama kategori"
             />
           </FormField>
-          <div>
-            <span className="text-heading mb-1.5 block text-[0.85rem] font-medium">Induk</span>
+          <FormField label="Induk" errorText={fieldErrors.parentId}>
             <SearchSelect
               options={parentOptions}
               value={parentId}
@@ -252,29 +326,35 @@ export default function CategoriesPage() {
               placeholder="Tanpa induk"
               allowClear
             />
-            {fieldErrors.parentId && (
-              <p className="text-bad mt-1 text-[0.82rem]">{fieldErrors.parentId}</p>
-            )}
-          </div>
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" size="sm" onClick={() => setModal(null)}>
-              Batal
-            </Button>
-            <Button type="submit" size="sm" disabled={saving}>
-              {saving ? "Menyimpan…" : modal?.mode === "edit" ? "Simpan" : "Buat"}
-            </Button>
-          </div>
+          </FormField>
+          <FormField
+            label="Urutan tampil"
+            htmlFor="cat-sort"
+            helperText="Angka kecil tampil lebih dulu di daftar dan pemilih kategori."
+            errorText={fieldErrors.sortOrder}
+          >
+            <TextInput
+              id="cat-sort"
+              type="number"
+              inputMode="numeric"
+              step={1}
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value)}
+            />
+          </FormField>
         </form>
-      </Modal>
+      </FormSheet>
 
       <ConfirmDialog
         open={archiveTarget !== null}
         title="Arsipkan kategori?"
         message={`Kategori ${archiveTarget?.code} — ${archiveTarget?.name} akan diarsipkan. Hanya kategori kosong yang bisa diarsipkan.`}
         confirmLabel={archiving ? "Mengarsipkan…" : "Arsipkan"}
-        onConfirm={handleArchive}
+        onConfirm={() => {
+          if (!archiving) void handleArchive();
+        }}
         onCancel={() => setArchiveTarget(null)}
       />
-    </div>
+    </Page>
   );
 }

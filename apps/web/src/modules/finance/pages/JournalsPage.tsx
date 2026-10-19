@@ -1,276 +1,187 @@
-import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  Badge,
   Button,
   DataTable,
-  DateInput,
-  FilterBar,
+  DateRangeFields,
   FormField,
   PageHeader,
   Pagination,
+  SearchInput,
   SearchSelect,
   SectionCard,
+  SelectInput,
+  StatusBadge,
 } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
-import {
-  formatDate,
-  monthStartWIB,
-  statusLabel,
-  statusTone,
-  todayWIB,
-} from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
-import { toast } from "@/shared/stores/toast.store";
+import { DocNumber, Page, Toolbar } from "@/shared/components/patterns";
+import type { ActiveFilter } from "@/shared/components/patterns";
+import { formatDate, statusLabel } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { financeService } from "@/modules/finance/services/finance.service";
-import type { ManualJournalValues } from "@/modules/finance/schemas/finance.schema";
-import { journalSourceLabel } from "@/modules/finance/types";
+import {
+  JOURNAL_LIST_DEFAULTS,
+  journalListFilterSchema,
+} from "@/modules/finance/schemas/finance-list-filter.schema";
+import { JOURNAL_SOURCE_TYPES, JOURNAL_STATUSES, docTypeLabel, journalSourceLabel } from "@/modules/finance/types";
 import type { Account, JournalEntry } from "@/modules/finance/types";
-import { ManualJournalModal } from "@/modules/finance/components/ManualJournalModal";
 
 const LIMIT = 20;
 
-// List backend (entryView withLines=false) TIDAK membawa lines/total, jadi
-// kolom Debit/Kredit menampilkan "-" (lihat komentar kolom di bawah). Filter
-// terverifikasi dari handler.go: from, to (YYYY-MM-DD), accountId.
+// List backend (entryView withLines=false) tidak membawa baris/total — nilai per jurnal ada di detail.
 export default function JournalsPage() {
+  const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const canManage = can("finance.manage");
 
-  const [fromInput, setFromInput] = useState(monthStartWIB());
-  const [toInput, setToInput] = useState(todayWIB());
-  const [accountInput, setAccountInput] = useState<number | null>(null);
-  const [from, setFrom] = useState(monthStartWIB());
-  const [to, setTo] = useState(todayWIB());
-  const [accountId, setAccountId] = useState<number | null>(null);
-  const [page, setPage] = useState(1);
+  const { filters, setFilters, reset } = useUrlFilters(journalListFilterSchema, JOURNAL_LIST_DEFAULTS);
+
   const { data, loading, error, reload } = useAsyncData(
     () =>
       financeService
         .journals({
-          from: from ? from : undefined,
-          to: to ? to : undefined,
-          accountId: accountId ?? undefined,
-          page,
+          from: filters.from,
+          to: filters.to,
+          accountId: filters.accountId || undefined,
+          q: filters.search,
+          sourceType: filters.sourceType,
+          status: filters.status,
+          page: filters.page,
           limit: LIMIT,
         })
-        .then((res) => ({ items: res.items, total: res.meta.total }))
-        .catch((err) => {
-          const apiErr = toApiError(err);
-          toast.danger("Gagal memuat jurnal", apiErr.message);
-          throw err;
-        }),
-    [from, to, accountId, page],
+        .then((res) => ({ items: res.items, total: res.meta.total })),
+    [filters],
   );
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const [accounts, setAccounts] = useState<Account[]>([]);
 
-  const [manualOpen, setManualOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  const { data: accounts } = useAsyncData(() => financeService.accounts("active").then((a) => a ?? ([] as Account[])), []);
+  const accountOptions = (accounts ?? []).map((a) => ({ value: a.id, label: `${a.code} — ${a.name}` }));
+  const accountLabel = accountOptions.find((o) => o.value === filters.accountId)?.label ?? `Akun #${filters.accountId}`;
 
-  useEffect(() => {
-    let cancelled = false;
-    financeService
-      .accounts("active")
-      .then((res) => {
-        if (!cancelled) setAccounts(res);
-      })
-      .catch((err) => {
-        if (!cancelled)
-          toast.danger("Gagal memuat daftar akun", toApiError(err).message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  function applyFilter(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setFrom(fromInput);
-    setTo(toInput);
-    setAccountId(accountInput);
-    setPage(1);
-  }
-
-  async function handleManual(values: ManualJournalValues) {
-    setSubmitting(true);
-    setServerError(null);
-    try {
-      const res = await financeService.manual({
-        date: values.date,
-        memo: values.memo,
-        lines: values.lines.map((l) => ({
-          accountCode: l.accountCode,
-          debit: l.debit,
-          credit: l.credit,
-        })),
-      });
-      toast.fromServer(res.message, "Jurnal manual dicatat", res.data.number);
-      setManualOpen(false);
-      setPage(1);
-      reload();
-    } catch (err) {
-      setServerError(toApiError(err).message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const accountOptions = accounts.map((a) => ({
-    value: a.id,
-    label: `${a.code} — ${a.name}`,
-  }));
+  const active: ActiveFilter[] = [];
+  if (filters.accountId) active.push({ key: "accountId", label: `Akun: ${accountLabel}`, onRemove: () => setFilters({ accountId: 0 }) });
+  if (filters.sourceType) active.push({ key: "sourceType", label: `Sumber: ${docTypeLabel(filters.sourceType)}`, onRemove: () => setFilters({ sourceType: "" }) });
+  if (filters.status) active.push({ key: "status", label: `Status: ${statusLabel(filters.status)}`, onRemove: () => setFilters({ status: "" }) });
+  const hasFilters = active.length > 0 || Boolean(filters.search || filters.from || filters.to);
 
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Keuangan"
         title="Jurnal"
-        description="Daftar entri jurnal terposting dan pembaliknya."
+        description="Daftar entri jurnal terposting dan pembaliknya. Klik baris untuk melihat debit dan kredit."
         actions={
           canManage ? (
-            <Button
-              onClick={() => {
-                setServerError(null);
-                setManualOpen(true);
-              }}
-            >
-              Jurnal Manual
+            <Button asChild>
+              <Link to={ROUTE_PATHS.financeJournalNew}>Jurnal manual</Link>
             </Button>
           ) : undefined
         }
       />
 
-      <FilterBar>
-        <form onSubmit={applyFilter} className="flex flex-wrap items-end gap-4">
-          <div className="min-w-40">
-            <FormField label="Dari">
-              <DateInput
-                value={fromInput}
-                onChange={(e) => setFromInput(e.target.value)}
-              />
-            </FormField>
-          </div>
-          <div className="min-w-40">
-            <FormField label="Sampai">
-              <DateInput
-                value={toInput}
-                onChange={(e) => setToInput(e.target.value)}
-              />
-            </FormField>
-          </div>
-          <div className="min-w-52 flex-1">
+      <Toolbar
+        search={
+          <SearchInput
+            aria-label="Cari jurnal"
+            value={filters.search}
+            onSearch={(v) => setFilters({ search: v })}
+            placeholder="Nomor atau memo…"
+          />
+        }
+        primary={
+          <>
+            <DateRangeFields from={filters.from} to={filters.to} onChange={({ from, to }) => setFilters({ from, to })} />
             <FormField label="Akun">
               <SearchSelect
                 options={accountOptions}
-                value={accountInput}
-                onChange={(v) =>
-                  setAccountInput(
-                    typeof v === "number" ? v : v === null ? null : Number(v),
-                  )
-                }
+                value={filters.accountId || null}
+                onChange={(v) => setFilters({ accountId: v === null ? 0 : Number(v) })}
                 placeholder="Semua akun…"
                 allowClear
               />
             </FormField>
-          </div>
-          <Button type="submit" variant="secondary">
-            Terapkan
-          </Button>
-        </form>
-      </FilterBar>
-
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title={error}>
-            <button
-              type="button"
-              onClick={() => reload()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
-            >
-              Coba lagi
-            </button>
-          </Notice>
-        </div>
-      )}
-
-      <SectionCard>
-        {loading && items.length === 0 ? (
-          <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-        ) : (
-          <>
-            <DataTable<JournalEntry>
-              rows={items}
-              rowKey={(r) => r.id}
-              emptyTitle="Belum ada jurnal"
-              emptyDescription="Posting dokumen dari halaman Posting atau catat jurnal manual."
-              columns={[
-                {
-                  header: "Nomor",
-                  render: (r) => (
-                    <Link
-                      to={`${ROUTE_PATHS.financeJournals}/${r.id}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      {r.number}
-                    </Link>
-                  ),
-                },
-                { header: "Tanggal", render: (r) => formatDate(r.date) },
-                { header: "Memo", render: (r) => r.memo || "-" },
-                { header: "Sumber", render: (r) => journalSourceLabel(r) },
-                // entryView list (withLines=false) tidak membawa total —
-                // nilai per baris hanya ada di detail (GET /journals/:id).
-                { header: "Debit", align: "right", render: () => "-" },
-                { header: "Kredit", align: "right", render: () => "-" },
-                {
-                  header: "Status",
-                  render: (r) => (
-                    <Badge tone={statusTone(r.status)}>
-                      {statusLabel(r.status)}
-                    </Badge>
-                  ),
-                },
-                {
-                  header: "Aksi",
-                  align: "right",
-                  render: (r) => (
-                    <Link
-                      to={`${ROUTE_PATHS.financeJournals}/${r.id}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      Detail
-                    </Link>
-                  ),
-                },
-              ]}
-            />
-            <Pagination
-              page={page}
-              limit={LIMIT}
-              total={total}
-              onPageChange={(p) => setPage(p)}
-            />
           </>
-        )}
-      </SectionCard>
+        }
+        more={
+          <>
+            <FormField label="Sumber">
+              <SelectInput
+                aria-label="Sumber jurnal"
+                value={filters.sourceType}
+                onChange={(e) => setFilters({ sourceType: e.target.value as typeof filters.sourceType })}
+              >
+                <option value="">Semua</option>
+                {JOURNAL_SOURCE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {docTypeLabel(t)}
+                  </option>
+                ))}
+              </SelectInput>
+            </FormField>
+            <FormField label="Status">
+              <SelectInput
+                aria-label="Status jurnal"
+                value={filters.status}
+                onChange={(e) => setFilters({ status: e.target.value as typeof filters.status })}
+              >
+                <option value="">Semua</option>
+                {JOURNAL_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {statusLabel(s)}
+                  </option>
+                ))}
+              </SelectInput>
+            </FormField>
+          </>
+        }
+        moreActiveCount={Number(Boolean(filters.sourceType)) + Number(Boolean(filters.status))}
+        active={active}
+        onClearAll={reset}
+      />
 
-      {manualOpen && (
-        <ManualJournalModal
-          open
-          accounts={accounts}
-          submitting={submitting}
-          serverError={serverError}
-          onClose={() => setManualOpen(false)}
-          onSubmit={(v) => void handleManual(v)}
+      <SectionCard flush>
+        <DataTable<JournalEntry>
+          rows={items}
+          rowKey={(r) => r.id}
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          onRowClick={(r) => navigate(`${ROUTE_PATHS.financeJournals}/${r.id}`)}
+          emptyTitle={hasFilters ? "Tidak ada jurnal yang cocok dengan filter ini" : "Belum ada jurnal"}
+          emptyDescription={
+            hasFilters
+              ? "Ubah atau hapus filter untuk melihat jurnal lain."
+              : "Posting dokumen dari halaman Posting atau catat jurnal manual."
+          }
+          emptyAction={
+            hasFilters ? (
+              <Button variant="secondary" size="sm" onClick={reset}>
+                Hapus filter
+              </Button>
+            ) : canManage ? (
+              <Button asChild>
+                <Link to={ROUTE_PATHS.financeJournalNew}>Catat jurnal manual</Link>
+              </Button>
+            ) : undefined
+          }
+          columns={[
+            {
+              header: "Nomor",
+              render: (r) => (
+                <Link to={`${ROUTE_PATHS.financeJournals}/${r.id}`} className="font-medium text-primary hover:underline">
+                  <DocNumber value={r.number} />
+                </Link>
+              ),
+            },
+            { header: "Tanggal", render: (r) => formatDate(r.date) },
+            { header: "Memo", render: (r) => r.memo || "-" },
+            { header: "Sumber", render: (r) => journalSourceLabel(r) },
+            { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
+          ]}
         />
-      )}
-    </div>
+        <Pagination page={filters.page} limit={LIMIT} total={total} onPageChange={(p) => setFilters({ page: p })} />
+      </SectionCard>
+    </Page>
   );
 }

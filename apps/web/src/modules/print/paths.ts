@@ -3,6 +3,7 @@
 
 export const PRINT_PATHS = {
   deliveryNote: "/print/deliveries/:id",
+  stockTransfer: "/print/transfers/:id",
   salesInvoice: "/print/sales/:id",
   paymentReceipt: "/print/payments/:id",
   posReceipt: "/print/pos/:orderId",
@@ -11,6 +12,10 @@ export const PRINT_PATHS = {
 
 export function deliveryPrintPath(id: number | string): string {
   return `/print/deliveries/${id}`;
+}
+
+export function transferPrintPath(id: number | string): string {
+  return `/print/transfers/${id}`;
 }
 
 export function salesInvoicePrintPath(id: number | string): string {

@@ -19,13 +19,17 @@ export function calcLineEstimate(
   discountNominal: number,
   taxType: string,
   taxRate: number,
+  /** false = baris bebas pajak (server: taxable=false). */
+  taxable = true,
 ): LineEstimate {
   const gross = Math.round(qty * unitPrice);
   const disc = Math.round((gross * discountPct) / 100);
   const net = gross - disc - discountNominal;
   let tax = 0;
   let total = net;
-  if (taxType === "exclude") {
+  if (!taxable) {
+    // Baris bebas pajak: tidak ada pajak, total = net.
+  } else if (taxType === "exclude") {
     tax = Math.round((net * taxRate) / 100);
     total = net + tax;
   } else if (taxType === "include") {

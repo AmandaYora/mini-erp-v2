@@ -25,4 +25,22 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": "warn",
     },
   },
+  // DS v2 (PLAN U3): modul dan app hanya boleh memakai fasad shared/components/ui dan patterns;
+  // primitif shadcn (shared/components/primitives) adalah detail implementasi.
+  {
+    files: ["src/modules/**/*.{ts,tsx}", "src/app/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/shared/components/primitives", "@/shared/components/primitives/*"],
+              message: "Impor lewat @/shared/components/ui atau /patterns, bukan primitif shadcn langsung (PLAN U3).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

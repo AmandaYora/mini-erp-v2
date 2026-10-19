@@ -2,8 +2,8 @@
 //
 // Data: sales order channel POS + satu pembayaran opsional (?paymentId=).
 // Cetak: jembatan native Android bila tersedia, fallback window.print() (D6).
-// Uang tunai diterima/kembalian tidak ada di view revamp — tidak ditampilkan
-// (tidak ditebak).
+// Uang tunai diterima/kembalian dibaca dari pembayaran TERSIMPAN (backend:
+// paymentView.amountTendered/change), jadi cetak ulang konsisten.
 
 import { useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -13,6 +13,9 @@ import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { PRINT_LOGO_SRC } from "@/modules/print/components/print-assets";
 import { formatPhoneLine } from "@/modules/print/document";
+import { receiptPaymentLines, receiptView } from "@/modules/print/lib/pos-receipt";
+import { readHideDiscount, withHideDiscountParam } from "@/modules/print/lib/sales-document";
+import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import {
   fetchPaymentForPrint,
@@ -26,6 +29,7 @@ import {
   type ThermalPrintPayload,
 } from "@/modules/print/lib/native-printer";
 import {
+  LEGACY_UA_CSS,
   readThermalWidth,
   thermalStyles,
   type ThermalWidth,
@@ -53,7 +57,7 @@ export default function PosThermalReceiptPage() {
   const { orderId } = useParams<{ orderId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const { identity, loading: profileLoading } = usePrintProfile();
+  const { identity, warning, loading: profileLoading } = usePrintProfile();
 
   const [printing, setPrinting] = useState(false);
 
@@ -61,6 +65,8 @@ export default function PosThermalReceiptPage() {
   const paymentIdParam = searchParams.get("paymentId");
   const paymentId = paymentIdParam !== null ? Number(paymentIdParam) : NaN;
   const width: ThermalWidth = readThermalWidth(searchParams);
+  // SL-05: pilihan checkout ikut di tautan (?hideDiscount=1); toolbar bisa mengubahnya.
+  const hideDiscount = readHideDiscount(searchParams);
 
   const { data, loading, error } = useAsyncData(
     async () => {
@@ -105,16 +111,14 @@ export default function PosThermalReceiptPage() {
   const o: SalesOrder = order;
 
   const customerName = o.partyName.trim() !== "" ? o.partyName : "Umum";
-  const cashierName = user?.fullName?.trim() !== "" ? (user?.fullName ?? "-") : "-";
+  // SL-10: kasir = pencatat pembayaran (server: cashierName); pengguna yang mencetak
+  // ulang hanya cadangan bila server tak mengirim nama.
+  const printer = user?.fullName?.trim() ? user.fullName : "-";
+  const cashierName = o.cashierName?.trim() ? o.cashierName : printer;
   const statusStamp = payment !== null ? "LUNAS" : statusLabel(o.status).toUpperCase();
-  const paidAmount = payment !== null ? payment.amount : 0;
-  const outstanding = Math.max(0, o.grandTotal - paidAmount);
-  const methodLine =
-    payment !== null
-      ? payment.method
-      : o.paymentTerms === "net"
-        ? "Tempo"
-        : "-";
+  const view = receiptView(o, payment, hideDiscount);
+  const pay = receiptPaymentLines(view.payment, view.total, o.paymentTerms);
+  const methodLine = pay.method;
   const rekeningLine =
     identity.bankAccounts.length > 0
       ? `REKENING : ${identity.bankAccounts.map((a) => `(${a.bank} ${a.number})`).join(" / ")}`
@@ -144,20 +148,19 @@ export default function PosThermalReceiptPage() {
         qty: line.qty,
         uom: line.uom,
         unitPrice: line.unitPrice,
-        lineTotal: line.lineTotal,
-        discount:
-          line.discountNominal > 0
-            ? line.discountNominal
-            : undefined,
+        lineTotal: view.lineAmount(line),
+        discount: !hideDiscount && line.discountNominal > 0 ? line.discountNominal : undefined,
         note: undefined,
       })),
       summary: {
-        subtotal: o.subtotal,
-        discount: o.discountTotal > 0 ? o.discountTotal : undefined,
+        subtotal: view.subtotal,
+        discount: view.discount ?? undefined,
         tax: o.taxTotal > 0 ? o.taxTotal : undefined,
-        total: o.grandTotal,
-        paid: payment !== null ? paidAmount : undefined,
-        outstanding: payment !== null && outstanding > 0 ? outstanding : undefined,
+        total: view.total,
+        paid: pay.paid ?? undefined,
+        tendered: pay.tendered ?? undefined,
+        change: pay.change ?? undefined,
+        outstanding: pay.outstanding ?? undefined,
         method: methodLine,
       },
     };
@@ -184,7 +187,7 @@ export default function PosThermalReceiptPage() {
 
   return (
     <>
-      <style>{thermalStyles(width)}</style>
+      <style>{LEGACY_UA_CSS + thermalStyles(width)}</style>
       <div className="no-print thermal-toolbar">
         <label className="thermal-toolbar-option">
           <input
@@ -212,10 +215,21 @@ export default function PosThermalReceiptPage() {
           />
           <span>58mm</span>
         </label>
+        {o.discountTotal > 0 ? (
+          <label className="thermal-toolbar-option">
+            <input
+              type="checkbox"
+              checked={hideDiscount}
+              onChange={(e) => setSearchParams(withHideDiscountParam(searchParams, e.target.checked), { replace: true })}
+            />
+            <span>Sembunyikan diskon</span>
+          </label>
+        ) : null}
         <button type="button" onClick={() => void handlePrint()} disabled={printing}>
           {printing ? "Mencetak…" : "Cetak Struk"}
         </button>
       </div>
+      <PrintProfileNotice corrupt={false} warning={warning} />
       <main className="thermal-receipt">
         <header className="thermal-center">
           <img alt="Logo" className="thermal-logo" src={PRINT_LOGO_SRC} />
@@ -253,9 +267,9 @@ export default function PosThermalReceiptPage() {
                 <span>
                   {formatQty(line.qty)} {line.uom} x {formatIDR(line.unitPrice)}
                 </span>
-                <span>{formatIDR(line.lineTotal)}</span>
+                <span>{formatIDR(view.lineAmount(line))}</span>
               </div>
-              {line.discountNominal > 0 ? (
+              {!hideDiscount && line.discountNominal > 0 ? (
                 <div className="thermal-item-meta">
                   <span>Diskon</span>
                   <span>-{formatIDR(line.discountNominal)}</span>
@@ -268,19 +282,28 @@ export default function PosThermalReceiptPage() {
         <div className="thermal-separator" />
 
         <section>
-          <div className="thermal-row"><span>Subtotal</span><span>{formatIDR(o.subtotal)}</span></div>
-          {o.discountTotal > 0 ? (
-            <div className="thermal-row"><span>Diskon</span><span>{formatIDR(o.discountTotal)}</span></div>
+          <div className="thermal-row"><span>Subtotal</span><span>{formatIDR(view.subtotal)}</span></div>
+          {view.discount !== null ? (
+            <div className="thermal-row"><span>Diskon</span><span>{formatIDR(view.discount)}</span></div>
           ) : null}
           {o.taxTotal > 0 ? (
-            <div className="thermal-row"><span>Pajak</span><span>{formatIDR(o.taxTotal)}</span></div>
+            <div className="thermal-row"><span>DPP</span><span>{formatIDR(o.grandTotal - o.taxTotal)}</span></div>
           ) : null}
-          <div className="thermal-row thermal-total"><span>TOTAL</span><span>{formatIDR(o.grandTotal)}</span></div>
-          {payment !== null ? (
-            <div className="thermal-row"><span>Dibayar</span><span>{formatIDR(paidAmount)}</span></div>
+          {o.taxTotal > 0 ? (
+            <div className="thermal-row"><span>{o.taxRate > 0 ? `PPN ${o.taxRate}%` : "PPN"}</span><span>{formatIDR(o.taxTotal)}</span></div>
           ) : null}
-          {payment !== null && outstanding > 0 ? (
-            <div className="thermal-row"><span>Sisa</span><span>{formatIDR(outstanding)}</span></div>
+          <div className="thermal-row thermal-total"><span>TOTAL</span><span>{formatIDR(view.total)}</span></div>
+          {pay.paid !== null ? (
+            <div className="thermal-row"><span>Dibayar</span><span>{formatIDR(pay.paid)}</span></div>
+          ) : null}
+          {pay.tendered !== null ? (
+            <div className="thermal-row"><span>Tunai diterima</span><span>{formatIDR(pay.tendered)}</span></div>
+          ) : null}
+          {pay.change !== null ? (
+            <div className="thermal-row"><span>Kembalian</span><span>{formatIDR(pay.change)}</span></div>
+          ) : null}
+          {pay.outstanding !== null ? (
+            <div className="thermal-row"><span>Sisa</span><span>{formatIDR(pay.outstanding)}</span></div>
           ) : null}
           <div className="thermal-row"><span>Metode</span><span>{methodLine}</span></div>
         </section>

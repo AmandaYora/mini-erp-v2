@@ -8,6 +8,7 @@ import {
   FormField,
   Modal,
   SelectInput,
+  Skeleton,
 } from "@/shared/components/ui";
 import { Notice } from "@/shared/components/feedback/notice";
 import { toApiError } from "@/shared/services/http-client";
@@ -15,6 +16,7 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
 import { productsService } from "@/modules/products/services/products.service";
 import { productLabelsPrintPath } from "@/app/routes/route-paths";
+import { labelVariants } from "@/modules/products/lib/product-option";
 import type { ProductVariant } from "@/modules/products/types";
 
 interface QrModalProps {
@@ -46,17 +48,19 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
   const [prevProductId, setPrevProductId] = useState<number | null>(null);
   if (loadedProductId !== prevProductId) {
     setPrevProductId(loadedProductId);
-    const def = product
-      ? (product.variants.find((v) => v.isDefault) ?? product.variants[0] ?? null)
-      : null;
+    // Varian bawaan tersembunyi tidak punya label sendiri: tanpa varian
+    // pilihan, label berada di tingkat produk (isi = kode produk).
+    const labelVs = product ? labelVariants(product.variants) : [];
+    const def = labelVs.find((v) => v.isDefault) ?? labelVs[0] ?? null;
     setVariantId(def ? def.id : null);
   }
 
   const { data: imgUrl, error: qrError } = useAsyncData(
     async () => {
-      if (!open || product === null || variantId === null) return null;
+      if (!open || product === null) return null;
+      if (variantId === null && labelVariants(product.variants).length > 0) return null;
       try {
-        return await productsService.qrPngUrl(product.id, variantId);
+        return await productsService.qrPngUrl(product.id, variantId ?? undefined);
       } catch (err) {
         const apiErr = toApiError(err);
         toast.danger("Gagal memuat QR", apiErr.message);
@@ -74,17 +78,20 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
     };
   }, [imgUrl]);
 
-  const variant: ProductVariant | null =
-    product?.variants.find((v) => v.id === variantId) ?? null;
+  const labelVs = product ? labelVariants(product.variants) : [];
+  const variant: ProductVariant | null = labelVs.find((v) => v.id === variantId) ?? null;
+  // Tingkat produk: tak ada varian pilihan (hanya varian bawaan tersembunyi).
+  const productLevel = product !== null && labelVs.length === 0;
+  const canDownload = product !== null && (variant !== null || productLevel);
 
   async function handleDownload() {
-    if (product === null || variant === null) return;
+    if (product === null || !canDownload) return;
     setDownloading(true);
     try {
       await productsService.downloadQr(
         product.id,
-        `${variant.code || product.code}.png`,
-        variant.id,
+        `${variant?.code || product.code}.png`,
+        variant?.id,
       );
     } catch (err) {
       toast.danger("Gagal mengunduh QR", toApiError(err).message);
@@ -116,7 +123,7 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
           ) : null}
           <Button
             onClick={() => void handleDownload()}
-            disabled={downloading || variant === null}
+            disabled={downloading || !canDownload}
           >
             {downloading ? "Mengunduh…" : "Unduh PNG"}
           </Button>
@@ -124,14 +131,17 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
       }
     >
       {loading ? (
-        <p className="text-muted py-6 text-center text-sm">Memuat…</p>
+        <div role="status" aria-busy="true" aria-label="Memuat QR" className="flex flex-col items-center gap-2">
+          <Skeleton className="size-60" />
+          <Skeleton className="h-4 w-40" />
+        </div>
       ) : error !== null ? (
         <Notice tone="danger" title="Gagal memuat QR">
           {error}
         </Notice>
       ) : product !== null ? (
         <div className="space-y-4">
-          {product.variants.length > 1 ? (
+          {labelVs.length > 1 ? (
             <FormField label="Varian">
               <SelectInput
                 value={variantId === null ? "" : String(variantId)}
@@ -139,7 +149,7 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
                   setVariantId(e.target.value === "" ? null : Number(e.target.value))
                 }
               >
-                {product.variants.map((v) => (
+                {labelVs.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name || v.code}
                     {v.isDefault ? " (utama)" : ""}
@@ -148,21 +158,26 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
               </SelectInput>
             </FormField>
           ) : null}
-          {imgUrl !== null && variant !== null ? (
+          {imgUrl !== null && (variant !== null || productLevel) ? (
             <div className="flex flex-col items-center gap-2">
               <img
                 src={imgUrl}
-                alt={`QR ${variant.code}`}
-                className="h-60 w-60 border border-hairline bg-white"
+                alt={`QR ${variant?.code ?? product.code}`}
+                className="size-60 border border-border bg-white"
               />
-              <p className="text-sm font-bold text-ink">
+              <p className="text-sm font-bold text-foreground">
                 {product.name}
-                {product.variants.length > 1 ? ` - ${variant.name || variant.code}` : ""}
+                {labelVs.length > 1 && variant ? ` - ${variant.name || variant.code}` : ""}
               </p>
-              <p className="font-mono text-sm text-muted">{variantPayload(variant)}</p>
+              <p className="font-mono text-sm text-muted-foreground">
+                {variant ? variantPayload(variant) : product.code}
+              </p>
             </div>
           ) : (
-            <p className="text-muted py-6 text-center text-sm">Memuat QR…</p>
+            <div role="status" aria-busy="true" aria-label="Memuat QR" className="flex flex-col items-center gap-2">
+              <Skeleton className="size-60" />
+              <Skeleton className="h-4 w-40" />
+            </div>
           )}
         </div>
       ) : null}

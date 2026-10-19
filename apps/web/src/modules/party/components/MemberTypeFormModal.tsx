@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import {
-  ActionRow,
   Button,
+  Checkbox,
   FormField,
-  Modal,
+  FormSheet,
   SelectInput,
   TextArea,
   TextInput,
@@ -13,9 +13,12 @@ import { Notice } from "@/shared/components/feedback/notice";
 import { formatIDR } from "@/shared/lib/format";
 import {
   NOMINAL_CONFIRM_THRESHOLD,
+  ROUNDING_STEP_PRESETS,
   adjustTypeOptions,
   basisOptions,
   directionOptions,
+  foldRoundingMode,
+  maxPercentFor,
   memberTypeCreateSchema,
   memberTypeUpdateSchema,
   roundingModeOptions,
@@ -52,8 +55,10 @@ export function MemberTypeFormModal({
   const [direction, setDirection] = useState(initial?.direction ?? "minus");
   const [adjType, setAdjType] = useState(initial?.type ?? "percent");
   const [value, setValue] = useState(String(initial?.value ?? 0));
-  const [mode, setMode] = useState(initial?.roundingMode ?? "none");
-  const [step, setStep] = useState(String(initial?.roundingStep ?? 0));
+  // Data lama bisa membawa nama pembulatan lama: dilipat ke enum baru.
+  const initialRounding = foldRoundingMode(initial?.roundingMode ?? "none", initial?.roundingStep ?? 0);
+  const [mode, setMode] = useState(initialRounding.mode);
+  const [step, setStep] = useState(String(initialRounding.step));
   const [confirmed, setConfirmed] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -91,9 +96,9 @@ export function MemberTypeFormModal({
   }
 
   return (
-    <Modal
+    <FormSheet
       open={open}
-      title={isEdit ? `Ubah Tipe Member ${initial.code}` : "Tambah Tipe Member"}
+      title={isEdit ? `Ubah tipe member ${initial.code}` : "Tambah tipe member"}
       description={
         isEdit
           ? "Kode terkunci setelah terbit — hanya nama, aturan, dan pembulatan yang dapat diubah."
@@ -101,10 +106,24 @@ export function MemberTypeFormModal({
       }
       size="lg"
       onClose={onClose}
+      actions={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button type="submit" form="member-type-form" loading={submitting}>
+            Simpan
+          </Button>
+        </>
+      }
     >
-      <form onSubmit={handleSubmit}>
+      <form id="member-type-form" onSubmit={handleSubmit}>
         <div className="space-y-4">
-          {serverError && <Notice tone="danger" title={serverError} />}
+          {serverError && (
+            <Notice tone="danger" title="Gagal menyimpan">
+              {serverError}
+            </Notice>
+          )}
           {!isEdit && (
             <FormField label="Kode" htmlFor="mt-code" required errorText={errors.code}>
               <TextInput
@@ -175,7 +194,7 @@ export function MemberTypeFormModal({
                 id="mt-value"
                 type="number"
                 min={0}
-                max={adjType === "percent" ? 100 : undefined}
+                max={adjType === "percent" ? maxPercentFor(direction) : undefined}
                 step="any"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
@@ -188,6 +207,7 @@ export function MemberTypeFormModal({
                   const next = e.target.value;
                   setMode(next);
                   if (next === "none") setStep("0");
+                  else if (Number(step) <= 0) setStep(String(ROUNDING_STEP_PRESETS[0]));
                 }}
               >
                 {roundingModeOptions.map((o) => (
@@ -212,31 +232,34 @@ export function MemberTypeFormModal({
                 onChange={(e) => setStep(e.target.value)}
                 disabled={mode === "none"}
               />
+              {mode !== "none" && (
+                <div className="mt-2 flex gap-2">
+                  {ROUNDING_STEP_PRESETS.map((p) => (
+                    <Button key={p} variant="secondary" size="sm" onClick={() => setStep(String(p))}>
+                      {p}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </FormField>
           </div>
           {needsConfirm && (
             <Notice tone="warning" title={`Nominal di atas ${formatIDR(NOMINAL_CONFIRM_THRESHOLD)}`}>
-              <label className="mt-1 flex cursor-pointer items-start gap-2">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4"
+              <div className="mt-1 flex items-start gap-2">
+                <Checkbox
+                  id="mt-confirmed"
+                  className="mt-0.5"
                   checked={confirmed}
-                  onChange={(e) => setConfirmed(e.target.checked)}
+                  onCheckedChange={(v) => setConfirmed(v === true)}
                 />
-                <span>Saya yakin — kirim dengan konfirmasi eksplisit.</span>
-              </label>
+                <label htmlFor="mt-confirmed" className="cursor-pointer">
+                  Saya yakin — kirim dengan konfirmasi eksplisit.
+                </label>
+              </div>
             </Notice>
           )}
-          <ActionRow>
-            <Button variant="secondary" onClick={onClose} disabled={submitting}>
-              Batal
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Menyimpan…" : "Simpan"}
-            </Button>
-          </ActionRow>
         </div>
       </form>
-    </Modal>
+    </FormSheet>
   );
 }

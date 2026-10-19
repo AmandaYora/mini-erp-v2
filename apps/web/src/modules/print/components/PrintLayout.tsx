@@ -1,5 +1,8 @@
 import { useId, type ReactNode } from "react";
+import { Printer } from "lucide-react";
+import { Button, Checkbox, RadioGroup, RadioGroupItem } from "@/shared/components/ui";
 import type { PrintPaperMode } from "@/modules/print/paper";
+import { LEGACY_UA_CSS } from "@/modules/print/styles";
 
 interface PrintLayoutProps {
   /** CSS dasar halaman (mode A4). */
@@ -25,8 +28,8 @@ interface PrintLayoutProps {
 }
 
 /**
- * Kerangka halaman cetak: toolbar layar (selalu .no-print) + injeksi <style>
- * + wadah <main>. Toolbar tidak pernah ikut tercetak.
+ * Kerangka halaman cetak: toolbar layar (selalu .no-print, sticky) + injeksi <style>
+ * + wadah <main>. Toolbar tidak pernah ikut tercetak; kertas fisik tidak disentuh (PLAN U12).
  */
 export function PrintLayout({
   baseCss,
@@ -40,45 +43,46 @@ export function PrintLayout({
   mainClassName,
   children,
 }: PrintLayoutProps) {
-  const group = useId();
+  const id = useId();
   const isContinuous = paperMode === "continuous";
   return (
     <>
-      <style>{baseCss}</style>
+      <style>{LEGACY_UA_CSS + baseCss}</style>
       {continuousCss !== null ? <style>{continuousCss}</style> : null}
-      <div className="no-print print-toolbar">
-        <label className="print-toolbar-option">
-          <input
-            type="radio"
-            name={`${group}-paper`}
-            checked={paperMode === "a4"}
-            onChange={() => onPaperModeChange("a4")}
-          />
-          <span>Kertas A4 (biasa)</span>
-        </label>
-        <label className="print-toolbar-option">
-          <input
-            type="radio"
-            name={`${group}-paper`}
-            checked={isContinuous}
-            onChange={() => onPaperModeChange("continuous")}
-          />
-          <span>Kontinu 3-Ply (Dot-Matrix)</span>
-        </label>
+      <div
+        role="toolbar"
+        aria-label="Opsi cetak"
+        className="no-print sticky top-0 z-30 flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-border bg-card px-4 py-3 text-base text-foreground print:hidden"
+      >
+        <RadioGroup
+          aria-label="Jenis kertas"
+          value={paperMode}
+          onValueChange={(v) => onPaperModeChange(v as PrintPaperMode)}
+          className="flex flex-wrap items-center gap-x-5 gap-y-2"
+        >
+          <label htmlFor={`${id}-a4`} className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <RadioGroupItem id={`${id}-a4`} value="a4" />
+            Kertas A4 (biasa)
+          </label>
+          <label htmlFor={`${id}-continuous`} className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <RadioGroupItem id={`${id}-continuous`} value="continuous" />
+            Kontinu 3-ply (dot-matrix)
+          </label>
+        </RadioGroup>
         {isContinuous && letterheadToggle !== null ? (
-          <label className="print-toolbar-option">
-            <input
-              type="checkbox"
+          <label htmlFor={`${id}-preprinted`} className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+            <Checkbox
+              id={`${id}-preprinted`}
               checked={letterheadToggle.hidden}
-              onChange={(e) => letterheadToggle.onChange(e.target.checked)}
+              onCheckedChange={(v) => letterheadToggle.onChange(v === true)}
             />
-            <span>Kop/rekening sudah preprinted (sembunyikan)</span>
+            Kop/rekening sudah preprinted (sembunyikan)
           </label>
         ) : null}
         {extraToolbar}
-        <button type="button" onClick={onPrint ?? (() => window.print())}>
-          Cetak / Print
-        </button>
+        <Button className="ml-auto" onClick={onPrint ?? (() => window.print())}>
+          <Printer aria-hidden /> Cetak
+        </Button>
       </div>
       {notice}
       <main className={mainClassName}>{children}</main>

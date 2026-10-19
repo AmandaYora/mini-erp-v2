@@ -1,399 +1,128 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
-import { Link } from "react-router-dom";
-import {
-  Button,
-  FormField,
-  PageHeader,
-  SectionCard,
-  TextArea,
-  TextInput,
-  buttonClass,
-} from "@/shared/components/ui";
+import { PageHeader } from "@/shared/components/ui";
+import { Page } from "@/shared/components/patterns";
+import { DetailSkeleton } from "@/shared/components/feedback/skeleton";
+import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { cn } from "@/shared/lib/cn";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { companyService } from "@/modules/company/services/company.service";
-import { companyProfileSchema } from "@/modules/company/schemas/company.schema";
+import CompanyProfileForm from "@/modules/company/components/CompanyProfileForm";
 import DocumentProfileForm from "@/modules/company/components/DocumentProfileForm";
-import type { CompanySettings } from "@/modules/company/types";
+import OperationalSettingsForm from "@/modules/company/components/OperationalSettingsForm";
+import OtherSettingsForm from "@/modules/company/components/OtherSettingsForm";
+import type { CompanySettings, SettingDefinition } from "@/modules/company/types";
 
-interface SettingRow {
-  localId: number;
-  key: string;
-  value: string;
-}
-
-let nextRowId = 1;
-
-function toRows(settings: CompanySettings): SettingRow[] {
-  return Object.entries(settings)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => ({ localId: nextRowId++, key, value }));
-}
+const SECTIONS = [
+  { id: "profil", label: "Profil" },
+  { id: "dokumen", label: "Dokumen & cetak" },
+  { id: "operasional", label: "Operasional" },
+] as const;
 
 export default function CompanyPage() {
   const can = useAuthStore((s) => s.can);
   const canManage = can("company.manage");
 
-  const [profileEmpty, setProfileEmpty] = useState(false);
+  const [definitions, setDefinitions] = useState<SettingDefinition[]>([]);
+  const [settings, setSettings] = useState<CompanySettings>({});
+  const [settingsVersion, setSettingsVersion] = useState(0);
+  const [activeSection, setActiveSection] = useState<string>("profil");
 
-  const [name, setName] = useState("");
-  const [legalName, setLegalName] = useState("");
-  const [address, setAddress] = useState("");
-  const [city, setCity] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [taxId, setTaxId] = useState("");
-  const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
-  const [savingProfile, setSavingProfile] = useState(false);
-
-  const [rows, setRows] = useState<SettingRow[]>([]);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [savingSettings, setSavingSettings] = useState(false);
+  function applySettings(next: CompanySettings) {
+    setSettings(next);
+    setSettingsVersion((v) => v + 1);
+  }
 
   async function reloadSettings() {
     try {
-      const settings = await companyService.getSettings();
-      setRows(toRows(settings ?? {}));
+      applySettings((await companyService.getSettings()) ?? {});
     } catch (err) {
       toast.danger("Gagal memuat pengaturan", toApiError(err).message);
     }
   }
 
-  const { data, loading } = useAsyncData(
-    async () => {
-      try {
-        const [profile, settings] = await Promise.all([
-          companyService.getProfile(),
-          companyService.getSettings(),
-        ]);
-        return { profile, settings };
-      } catch (err) {
-        toast.danger("Gagal memuat data perusahaan", toApiError(err).message);
-        throw err;
-      }
-    },
-    [],
-  );
+  const { data, loading, error, reload } = useAsyncData(async () => {
+    const [profile, settings, defs] = await Promise.all([
+      companyService.getProfile(),
+      companyService.getSettings(),
+      companyService.getSettingDefinitions(),
+    ]);
+    return { profile, settings, defs };
+  }, []);
 
-  // Salin hasil fetch ke state form sekali saat tiba.
-  const [applied, setApplied] = useState(false);
-  if (data && !applied) {
-    setApplied(true);
-    if (data.profile) {
-      setProfileEmpty(false);
-      setName(data.profile.name ?? "");
-      setLegalName(data.profile.legalName ?? "");
-      setAddress(data.profile.address ?? "");
-      setCity(data.profile.city ?? "");
-      setPhone(data.profile.phone ?? "");
-      setEmail(data.profile.email ?? "");
-      setTaxId(data.profile.taxId ?? "");
-    } else {
-      setProfileEmpty(true);
-    }
-    setRows(toRows(data.settings));
+  // Salin hasil fetch ke state pengaturan sekali saat tiba.
+  const [applied, setApplied] = useState<typeof data>(null);
+  if (data && applied !== data) {
+    setApplied(data);
+    setDefinitions(data.defs);
+    applySettings(data.settings);
   }
 
-  async function handleProfileSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const parsed = companyProfileSchema.safeParse({
-      name,
-      legalName,
-      address,
-      city,
-      phone,
-      email,
-      taxId,
-    });
-    if (!parsed.success) {
-      const errs: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
-        errs[String(issue.path[0] ?? "")] ??= issue.message;
-      }
-      setProfileErrors(errs);
-      return;
-    }
-    setProfileErrors({});
-    setSavingProfile(true);
-    try {
-      const saved = await companyService.saveProfile({
-        name: parsed.data.name,
-        legalName: parsed.data.legalName ?? "",
-        address: parsed.data.address ?? "",
-        city: parsed.data.city ?? "",
-        phone: parsed.data.phone ?? "",
-        email: parsed.data.email ?? "",
-        taxId: parsed.data.taxId ?? "",
-      });
-      setProfileEmpty(false);
-      const profile = saved.data;
-      setName(profile.name ?? "");
-      setLegalName(profile.legalName ?? "");
-      setAddress(profile.address ?? "");
-      setCity(profile.city ?? "");
-      setPhone(profile.phone ?? "");
-      setEmail(profile.email ?? "");
-      setTaxId(profile.taxId ?? "");
-      toast.fromServer(saved.message, "Profil perusahaan disimpan");
-    } catch (err) {
-      const apiErr = toApiError(err);
-      const next: Record<string, string> = {};
-      for (const fe of apiErr.errors ?? []) {
-        if (fe.field) next[fe.field] ??= fe.message;
-      }
-      setProfileErrors(next);
-      toast.danger("Gagal menyimpan profil", apiErr.message);
-    } finally {
-      setSavingProfile(false);
-    }
-  }
-
-  function updateRow(localId: number, patch: Partial<SettingRow>) {
-    setRows((prev) =>
-      prev.map((r) => (r.localId === localId ? { ...r, ...patch } : r)),
-    );
-  }
-
-  function removeRow(localId: number) {
-    setRows((prev) => prev.filter((r) => r.localId !== localId));
-  }
-
-  function addRow() {
-    setRows((prev) => [...prev, { localId: nextRowId++, key: "", value: "" }]);
-  }
-
-  async function handleSettingsSave() {
-    const payload: CompanySettings = {};
-    for (const row of rows) {
-      const key = row.key.trim();
-      if (key === "") {
-        setSettingsError("Semua baris pengaturan wajib memiliki kunci.");
-        return;
-      }
-      if (key in payload) {
-        setSettingsError(`Kunci ganda: "${key}". Gabungkan menjadi satu baris.`);
-        return;
-      }
-      payload[key] = row.value;
-    }
-    if (Object.keys(payload).length === 0) {
-      setSettingsError("Tidak ada pengaturan untuk disimpan.");
-      return;
-    }
-    setSettingsError(null);
-    setSavingSettings(true);
-    try {
-      // Server melakukan merge (tidak menghapus kunci lain).
-      const saved = await companyService.saveSettings(payload);
-      setRows(toRows(saved.data ?? {}));
-      toast.fromServer(saved.message, "Pengaturan perusahaan disimpan");
-    } catch (err) {
-      const apiErr = toApiError(err);
-      setSettingsError(apiErr.message);
-      toast.danger("Gagal menyimpan pengaturan", apiErr.message);
-    } finally {
-      setSavingSettings(false);
-    }
+  function goTo(id: string) {
+    setActiveSection(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   return (
-    <div>
-      <PageHeader
-        eyebrow="Pengaturan"
-        title="Perusahaan"
-        description="Profil identitas dan pengaturan operasional perusahaan."
-        actions={
-          <Link to="/print/calibration" className={buttonClass("secondary", "md")}>
-            Kalibrasi Kertas
-          </Link>
-        }
-      />
+    <Page>
+      <PageHeader title="Perusahaan" description="Profil identitas dan pengaturan operasional perusahaan." />
 
-      {loading ? (
-        <p className="text-muted py-6 text-sm">Memuat data perusahaan…</p>
+      {!canManage && (
+        <Notice tone="info" title="Mode baca saja">
+          Anda tidak memiliki izin mengubah pengaturan perusahaan. Semua isian ditampilkan terkunci dan tidak dapat disimpan.
+        </Notice>
+      )}
+
+      {loading && !data ? (
+        <DetailSkeleton />
+      ) : error || !data ? (
+        <ErrorState message={error ?? "Data perusahaan tidak tersedia."} onRetry={reload} />
       ) : (
-        <div className="space-y-6">
-          <SectionCard
-            title="Profil Perusahaan"
-            description="Identitas yang dicetak pada dokumen."
-          >
-            {profileEmpty && (
-              <div className="mb-4">
-                <Notice tone="info" title="Profil belum diisi">
-                  Lengkapi data di bawah lalu simpan untuk membuat profil
-                  perusahaan.
-                </Notice>
-              </div>
-            )}
-            <form
-              id="company-profile-form"
-              onSubmit={(e) => void handleProfileSubmit(e)}
-            >
-              <fieldset disabled={!canManage || savingProfile}>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FormField
-                    label="Nama"
-                    required
-                    errorText={profileErrors.name}
-                  >
-                    <TextInput
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="cth: Toko Maju Jaya"
-                    />
-                  </FormField>
-                  <FormField
-                    label="Nama Legal"
-                    errorText={profileErrors.legalName}
-                  >
-                    <TextInput
-                      value={legalName}
-                      onChange={(e) => setLegalName(e.target.value)}
-                      placeholder="cth: PT Maju Jaya Abadi"
-                    />
-                  </FormField>
-                  <FormField label="Kota" errorText={profileErrors.city}>
-                    <TextInput
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="Telepon" errorText={profileErrors.phone}>
-                    <TextInput
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="Email" errorText={profileErrors.email}>
-                    <TextInput
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="NPWP" errorText={profileErrors.taxId}>
-                    <TextInput
-                      value={taxId}
-                      onChange={(e) => setTaxId(e.target.value)}
-                      placeholder="Nomor Pokok Wajib Pajak"
-                    />
-                  </FormField>
-                </div>
-                <div className="mt-4">
-                  <FormField label="Alamat" errorText={profileErrors.address}>
-                    <TextArea
-                      rows={2}
-                      value={address}
-                      onChange={(e) => setAddress(e.target.value)}
-                    />
-                  </FormField>
-                </div>
-              </fieldset>
-              {canManage && (
-                <div className="mt-6 flex justify-end border-t border-hairline pt-5">
-                  <Button
-                    type="submit"
-                    form="company-profile-form"
-                    disabled={savingProfile}
-                  >
-                    {savingProfile ? "Menyimpan…" : "Simpan Profil"}
-                  </Button>
-                </div>
-              )}
-            </form>
-          </SectionCard>
+        <div className="grid items-start gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
+          <nav aria-label="Seksi pengaturan" className="flex gap-1 overflow-x-auto lg:sticky lg:top-20 lg:flex-col">
+            {SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => goTo(s.id)}
+                aria-current={activeSection === s.id ? "true" : undefined}
+                className={cn(
+                  "rounded-md px-3 py-2 text-left text-sm font-medium whitespace-nowrap transition-colors hover:bg-muted",
+                  activeSection === s.id ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+                )}
+              >
+                {s.label}
+              </button>
+            ))}
+          </nav>
 
-          <DocumentProfileForm
-            raw={rows.find((r) => r.key === "document_profile")?.value}
-            canManage={canManage}
-            onSaved={() => void reloadSettings()}
-          />
+          <div className="min-w-0 divide-y divide-border rounded-xl border border-border bg-card px-6">
+            <CompanyProfileForm initial={data.profile} canManage={canManage} />
 
-          <SectionCard
-            title="Pengaturan"
-            description="Pasangan kunci-nilai operasional. Penyimpanan menggabungkan (merge) dengan yang sudah ada."
-            actions={
-              canManage ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={addRow}
-                  disabled={savingSettings}
-                >
-                  Tambah Baris
-                </Button>
-              ) : undefined
-            }
-          >
-            {settingsError && (
-              <div className="mb-4">
-                <Notice tone="danger" title="Pengaturan belum tersimpan">
-                  {settingsError}
-                </Notice>
-              </div>
-            )}
-            {rows.length === 0 ? (
-              <p className="text-muted text-sm">
-                Belum ada pengaturan. Tambah baris baru untuk mulai.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {rows.map((row) => (
-                  <div
-                    key={row.localId}
-                    className="grid items-end gap-3 md:grid-cols-[1fr_1fr_auto]"
-                  >
-                    <FormField label="Kunci">
-                      <TextInput
-                        value={row.key}
-                        onChange={(e) =>
-                          updateRow(row.localId, { key: e.target.value })
-                        }
-                        placeholder="cth: pos.receipt_footer"
-                        disabled={!canManage || savingSettings}
-                      />
-                    </FormField>
-                    <FormField label="Nilai">
-                      <TextInput
-                        value={row.value}
-                        onChange={(e) =>
-                          updateRow(row.localId, { value: e.target.value })
-                        }
-                        placeholder="Nilai pengaturan"
-                        disabled={!canManage || savingSettings}
-                      />
-                    </FormField>
-                    {canManage && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeRow(row.localId)}
-                        disabled={savingSettings}
-                      >
-                        Hapus
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {canManage && rows.length > 0 && (
-              <div className="mt-6 flex justify-end border-t border-hairline pt-5">
-                <Button
-                  onClick={() => void handleSettingsSave()}
-                  disabled={savingSettings}
-                >
-                  {savingSettings ? "Menyimpan…" : "Simpan Pengaturan"}
-                </Button>
-              </div>
-            )}
-          </SectionCard>
+            <DocumentProfileForm raw={settings.document_profile} canManage={canManage} onSaved={() => void reloadSettings()} />
+
+            <div id="operasional" className="scroll-mt-20 divide-y divide-border">
+              <OperationalSettingsForm
+                key={`op-${settingsVersion}`}
+                definitions={definitions}
+                settings={settings}
+                canManage={canManage}
+                onSaved={applySettings}
+              />
+              <OtherSettingsForm
+                key={`other-${settingsVersion}`}
+                settings={settings}
+                registeredKeys={definitions.map((d) => d.key)}
+                canManage={canManage}
+                onSaved={applySettings}
+              />
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </Page>
   );
 }

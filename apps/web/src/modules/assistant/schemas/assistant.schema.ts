@@ -30,6 +30,18 @@ export const assistantConfigSchema = z.object({
 
 export type AssistantConfigValues = z.infer<typeof assistantConfigSchema>;
 
+export const simulateSchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .regex(/^[0-9]{8,15}$/, "Nomor telepon harus 8-15 digit angka"),
+  message: z
+    .string()
+    .trim()
+    .min(1, "Pesan wajib diisi")
+    .max(2000, "Pesan maksimal 2000 karakter"),
+});
+
 export const chatMessageSchema = z.object({
   message: z
     .string()

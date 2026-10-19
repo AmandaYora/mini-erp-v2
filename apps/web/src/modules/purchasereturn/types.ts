@@ -30,9 +30,14 @@
 //   id, code, name}]} (service.go: ReturnContext; remaining =
 //   diterima−diretur).
 // - Settlement: POST /:id/settlements {type!, date?, amount!, paymentMethod?,
-//   referenceNumber?, notes?} → full returnView. Syarat: retur confirmed;
-//   total settlement TIDAK boleh melebihi total retur (server 409).
-//   type ∈ collect_payment | reduce_receivable | refund | customer_credit.
+//   referenceNumber?, notes?} → full returnView. Syarat: retur confirmed.
+//   K-04b: kamus PEMBELIAN — type ∈ refund | supplier_credit (manual);
+//   reduce_payable = offset otomatis saat konfirmasi, tidak bisa dicatat
+//   manual. Nominal <= externalRemaining (nilai retur − pengurang utang −
+//   yang sudah diselesaikan); server 409 bila lebih / tak ada kelebihan.
+// - K-04c/d: view membawa externalRemaining + allowedSettlementTypes (jenis yang
+//   masih sah); preview membawa orderOutstanding, payableReduction,
+//   externalRemaining, allowedSettlementTypes (angka sama dengan hasil konfirmasi).
 
 export interface PurchaseReturnItem {
   id: number;
@@ -77,6 +82,14 @@ export interface PurchaseReturn {
   total: number;
   status: string;
   notes: string;
+  /** Alasan retur (wajib saat buat, <= 255). */
+  reason: string;
+  /** Bagian nilai retur yang otomatis mengurangi utang (offset). */
+  payableReduction: number;
+  /** Kelebihan yang masih bisa direfund / dijadikan saldo supplier (0 bila tak ada). */
+  externalRemaining: number;
+  /** Jenis penyelesaian manual yang masih sah ([] bila tak ada kelebihan). */
+  allowedSettlementTypes: string[];
   items: PurchaseReturnItem[];
   settlements: PurchaseReturnSettlement[];
   settledTotal: number;
@@ -96,6 +109,8 @@ export interface PurchaseReturnPayload {
   purchaseOrderId: number;
   returnDate?: string;
   notes?: string;
+  /** Wajib non-kosong (server menolak alasan kosong). */
+  reason: string;
   items: PurchaseReturnLinePayload[];
 }
 
@@ -140,6 +155,8 @@ export interface PurchaseReturnContextLine {
   received: number;
   returned: number;
   remaining: number;
+  /** Lokasi penerimaan terbaru barang ini — lokasi asal bawaan retur (RT-04). */
+  defaultLocationId?: number;
 }
 
 export interface PurchaseReturnContextLocation {
@@ -153,6 +170,8 @@ export interface PurchaseReturnContext {
   purchaseOrderId: number;
   orderNumber: string;
   status: string;
+  /** Tanggal penerimaan terposting paling awal ("YYYY-MM-DD HH:MM:SS"), kosong bila belum ada. */
+  firstReceivedAt?: string;
   lines: PurchaseReturnContextLine[];
   locations: PurchaseReturnContextLocation[];
 }
@@ -181,6 +200,13 @@ export interface PurchaseReturnPreview {
   taxTotal: number;
   total: number;
   items: PurchaseReturnPreviewItem[];
+  /** Sisa utang order sebelum retur ini. */
+  orderOutstanding: number;
+  /** Bagian retur yang otomatis mengurangi utang saat dikonfirmasi. */
+  payableReduction: number;
+  /** Kelebihan di atas sisa utang: bisa direfund / dijadikan saldo supplier. */
+  externalRemaining: number;
+  allowedSettlementTypes: string[];
 }
 
 export interface PurchaseReturnPreviewPayload {
@@ -202,11 +228,11 @@ export const PURCHASE_RETURN_STATUSES = ["draft", "confirmed", "cancelled"] as c
 
 export type PurchaseReturnStatus = (typeof PURCHASE_RETURN_STATUSES)[number];
 
+/** Kamus penyelesaian retur PEMBELIAN (K-04b); bukan kamus penjualan. */
 export const PURCHASE_RETURN_SETTLEMENT_TYPES = [
-  "collect_payment",
-  "reduce_receivable",
+  "reduce_payable",
   "refund",
-  "customer_credit",
+  "supplier_credit",
 ] as const;
 
 export type PurchaseReturnSettlementType =
@@ -215,15 +241,35 @@ export type PurchaseReturnSettlementType =
 /** Label Indonesia untuk jenis penyelesaian (sisi supplier). */
 export function purchaseSettlementTypeLabel(type: string | null | undefined): string {
   switch (type) {
-    case "collect_payment":
-      return "Terima pembayaran";
-    case "reduce_receivable":
-      return "Kurangi utang";
+    case "reduce_payable":
+      return "Kurangi hutang";
     case "refund":
-      return "Refund";
-    case "customer_credit":
+      return "Refund dari supplier";
+    case "supplier_credit":
       return "Kredit supplier";
     default:
       return type ?? "-";
   }
+}
+
+/**
+ * Baris-baris "apa yang akan terjadi pada nilai retur ini" untuk langkah Tinjau
+ * (K-04d). Angka datang dari server (preview memakai aturan & helper offset
+ * yang sama dengan konfirmasi) — fungsi ini hanya memformat.
+ */
+export function purchaseSettlementOutlook(
+  p: Pick<PurchaseReturnPreview, "orderOutstanding" | "payableReduction" | "externalRemaining" | "allowedSettlementTypes">,
+  formatMoney: (n: number) => string,
+): string[] {
+  const out: string[] = [`Sisa hutang order sebelum retur: ${formatMoney(p.orderOutstanding)}`];
+  if (p.payableReduction > 0) {
+    out.push(`Mengurangi hutang otomatis saat dikonfirmasi: ${formatMoney(p.payableReduction)}`);
+  }
+  if (p.externalRemaining > 0) {
+    const labels = p.allowedSettlementTypes.map((t) => purchaseSettlementTypeLabel(t).toLowerCase()).join(" atau ");
+    out.push(`Kelebihan ${formatMoney(p.externalRemaining)} dapat diselesaikan sebagai ${labels}`);
+  } else {
+    out.push("Seluruh nilai retur mengurangi hutang: tidak ada yang perlu direfund atau dijadikan saldo supplier");
+  }
+  return out;
 }

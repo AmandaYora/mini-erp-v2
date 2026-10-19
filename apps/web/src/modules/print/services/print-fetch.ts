@@ -5,6 +5,7 @@
 import { deliveryService } from "@/modules/delivery/services/delivery.service";
 import { salesService } from "@/modules/sales/services/sales.service";
 import { paymentService } from "@/modules/payment/services/payment.service";
+import { purchaseOrderService } from "@/modules/purchasing/services/purchase-order.service";
 import type { DeliveryNote } from "@/modules/delivery/types";
 import type { SalesOrder } from "@/modules/sales/types";
 import type { Payment } from "@/modules/payment/types";
@@ -38,6 +39,46 @@ export function fetchSalesOrderForPrint(id: number): Promise<SalesOrder> {
 /** Kwitansi: paymentView + alokasinya. */
 export function fetchPaymentForPrint(id: number): Promise<Payment> {
   return paymentService.get(id);
+}
+
+export interface AllocationBilling {
+  total: number;
+  paid: number;
+  outstanding: number;
+}
+
+/**
+ * Ringkasan tagihan tiap order yang dialokasi kwitansi (kunci "tipe:id").
+ * Best-effort: tanpa izin/galat, order itu dilewati dan kwitansi tetap tercetak.
+ */
+export async function fetchAllocationBilling(
+  allocs: { orderType: string; orderId: number }[],
+): Promise<Record<string, AllocationBilling>> {
+  const out: Record<string, AllocationBilling> = {};
+  await Promise.all(
+    allocs.slice(0, 10).map(async (a) => {
+      try {
+        if (a.orderType === "sales") {
+          const o = await salesService.get(a.orderId);
+          out[`sales:${a.orderId}`] = {
+            total: o.grandTotal,
+            paid: o.paidAmount ?? 0,
+            outstanding: o.outstandingAmount ?? 0,
+          };
+        } else if (a.orderType === "purchase") {
+          const o = await purchaseOrderService.get(a.orderId);
+          out[`purchase:${a.orderId}`] = {
+            total: o.grandTotal,
+            paid: o.paidAmount ?? 0,
+            outstanding: o.outstandingAmount ?? 0,
+          };
+        }
+      } catch {
+        // dilewati
+      }
+    }),
+  );
+  return out;
 }
 
 export type { DeliveryNote, Payment, SalesOrder };

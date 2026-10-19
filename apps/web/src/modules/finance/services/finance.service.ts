@@ -2,7 +2,7 @@
 // dari backend (apps/api/internal/modules/finance/presentation/handler.go +
 // RegisterRoutes):
 // - GET /api/v1/finance/posting/preview?docType&docId → entryView+lines
-//   (perm finance.post; docType valid: goods_receipt|delivery|payment|
+//   (perm finance.posting.post; docType valid: goods_receipt|delivery|payment|
 //   sales_return|purchase_return — builders.go).
 // - POST /api/v1/finance/posting/post {docType, docId} → entryView+lines.
 // - GET /api/v1/finance/journals?from&to&accountId&page&limit → paginasi
@@ -32,22 +32,49 @@ import {
   apiPage,
   apiPostFull,
   apiPutFull,
+  apiUploadFull,
 } from "@/shared/services/http-client";
 import type {
   Account,
   AccountMappings,
+  BatchItem,
   BatchPostResult,
+  CloseDayResult,
+  CutoverMap,
+  DailyOverview,
   Expense,
   FiscalPeriod,
+  IntegrityReport,
   JournalEntry,
+  OpeningInventory,
+  OpeningPreview,
   PeriodReadiness,
   PostingSource,
+  TaxAdjustment,
+  TaxAdjustmentFile,
+  UncostedItem,
 } from "@/modules/finance/types";
 
 export interface JournalListParams {
   from?: string;
   to?: string;
   accountId?: number;
+  q?: string;
+  sourceType?: string;
+  status?: string;
+  page: number;
+  limit: number;
+}
+
+export interface ExpenseListParams {
+  /** Pihak lawan (FN-10). */
+  partyId?: number;
+  q?: string;
+  from?: string;
+  to?: string;
+  status?: string;
+  expenseAccountId?: number;
+  payAccountId?: number;
   page: number;
   limit: number;
 }
@@ -57,6 +84,9 @@ function journalListParams(p: JournalListParams): Record<string, unknown> {
     from: p.from ? p.from : undefined,
     to: p.to ? p.to : undefined,
     accountId: p.accountId && p.accountId > 0 ? p.accountId : undefined,
+    q: p.q?.trim() ? p.q.trim() : undefined,
+    sourceType: p.sourceType ? p.sourceType : undefined,
+    status: p.status ? p.status : undefined,
     page: p.page,
     limit: p.limit,
   };
@@ -74,6 +104,11 @@ export interface ExpenseCreatePayload {
   amount: number;
   date?: string;
   notes?: string;
+  partyId?: number;
+}
+
+export interface ReopenPeriodPayload extends PeriodPayload {
+  reason: string;
 }
 
 export interface PeriodPayload {
@@ -132,8 +167,19 @@ export const financeService = {
   setMapping: (key: string, accountId: number) =>
     apiPutFull<unknown>("/api/v1/finance/account-mappings", { key, accountId }),
 
-  expenses: (page: number, limit: number) =>
-    apiPage<Expense>("/api/v1/finance/expenses", { page, limit }),
+  expenses: (p: ExpenseListParams) =>
+    apiPage<Expense>("/api/v1/finance/expenses", {
+      q: p.q?.trim() ? p.q.trim() : undefined,
+      from: p.from ? p.from : undefined,
+      to: p.to ? p.to : undefined,
+      status: p.status ? p.status : undefined,
+      expenseAccountId:
+        p.expenseAccountId && p.expenseAccountId > 0 ? p.expenseAccountId : undefined,
+      payAccountId: p.payAccountId && p.payAccountId > 0 ? p.payAccountId : undefined,
+      partyId: p.partyId && p.partyId > 0 ? p.partyId : undefined,
+      page: p.page,
+      limit: p.limit,
+    }),
 
   expense: (id: number) =>
     apiGet<Expense>(`/api/v1/finance/expenses/${id}`),
@@ -141,16 +187,17 @@ export const financeService = {
   createExpense: (body: ExpenseCreatePayload) =>
     apiPostFull<Expense>("/api/v1/finance/expenses", body),
 
-  // Tanpa body — backend hanya butuh :id (handler.go: CancelExpense).
-  cancelExpense: (id: number) =>
-    apiPostFull<Expense>(`/api/v1/finance/expenses/${id}/cancel`),
+  // Alasan wajib (maks 255) — handler.go: CancelExpense {reason}.
+  cancelExpense: (id: number, reason: string) =>
+    apiPostFull<Expense>(`/api/v1/finance/expenses/${id}/cancel`, { reason }),
 
   periods: () => apiGet<FiscalPeriod[]>("/api/v1/finance/periods"),
 
   closePeriod: (body: PeriodPayload) =>
     apiPostFull<unknown>("/api/v1/finance/periods/close", body),
 
-  reopenPeriod: (body: PeriodPayload) =>
+  // Buka kembali wajib beralasan (FN-05): alasan masuk diff audit.
+  reopenPeriod: (body: ReopenPeriodPayload) =>
     apiPostFull<unknown>("/api/v1/finance/periods/reopen", body),
 
   taxPeriods: () => apiGet<FiscalPeriod[]>("/api/v1/finance/tax-periods"),
@@ -158,7 +205,7 @@ export const financeService = {
   closeTaxPeriod: (body: PeriodPayload) =>
     apiPostFull<unknown>("/api/v1/finance/tax-periods/close", body),
 
-  reopenTaxPeriod: (body: PeriodPayload) =>
+  reopenTaxPeriod: (body: ReopenPeriodPayload) =>
     apiPostFull<unknown>("/api/v1/finance/tax-periods/reopen", body),
 
   // GET /api/v1/finance/posting-sources — antrian turunan: dokumen
@@ -166,7 +213,20 @@ export const financeService = {
   postingSources: () =>
     apiGet<PostingSource[]>("/api/v1/finance/posting-sources"),
 
-  postBatch: (items: { docType: string; docId: number }[]) =>
+  // GET /finance/posting/overview?date= — ikhtisar tutup hari (FN-02).
+  dailyOverview: (date?: string) =>
+    apiGet<DailyOverview>("/api/v1/finance/posting/overview", { date: date || undefined }),
+
+  // FN-01: abaikan dokumen macet (alasan wajib) / pulihkan ke antrian.
+  ignorePosting: (docType: string, docId: number, reason: string) =>
+    apiPostFull<PostingSource>("/api/v1/finance/posting/ignore", { docType, docId, reason }),
+
+  restorePosting: (docType: string, docId: number) =>
+    apiPostFull<unknown>("/api/v1/finance/posting/restore", { docType, docId }),
+
+  // Item membawa action "post" (default) atau "reverse" (jurnal yatim);
+  // maksimal 50 per panggilan, kegagalan satu item tidak menghentikan lainnya.
+  postBatch: (items: BatchItem[]) =>
     apiPostFull<BatchPostResult[]>("/api/v1/finance/posting/post-batch", {
       items,
     }),
@@ -174,9 +234,29 @@ export const financeService = {
   // POST /api/v1/finance/posting/close-day {date} — posting semua antrean
   // tertanggal ≤ date (tutup harian).
   closeDay: (date: string) =>
-    apiPostFull<BatchPostResult[]>("/api/v1/finance/posting/close-day", {
+    apiPostFull<CloseDayResult>("/api/v1/finance/posting/close-day", {
       date,
     }),
+
+  // GET /api/v1/finance/posting/orphans — jurnal hidup milik dokumen yang
+  // sudah dibatalkan (perlu dibalik via postBatch action "reverse").
+  orphans: () => apiGet<PostingSource[]>("/api/v1/finance/posting/orphans"),
+
+  // GET/PUT /api/v1/finance/cutover — batas per jenis dokumen: dokumen dengan
+  // id <= coveredThroughId dianggap sudah dijurnal di tempat lain.
+  cutover: () => apiGet<CutoverMap>("/api/v1/finance/cutover"),
+
+  setCutover: (docType: string, coveredThroughId: number) =>
+    apiPutFull<unknown>("/api/v1/finance/cutover", {
+      docType,
+      coveredThroughId,
+    }),
+
+  // Biaya (harga modal): produk yang belum berbiaya + sinkronisasi ledger.
+  uncosted: () =>
+    apiGet<UncostedItem[]>("/api/v1/finance/costing/uncosted"),
+
+  costingSync: () => apiPostFull<unknown>("/api/v1/finance/costing/sync"),
 
   // Saldo awal = satu jurnal cutover per cabang (tanpa tabel saldo awal).
   openingStatus: () =>
@@ -186,7 +266,16 @@ export const financeService = {
     date?: string;
     memo?: string;
     lines: ManualLinePayload[];
-  }) => apiPostFull<JournalEntry>("/api/v1/finance/opening/preview", body),
+  }) => apiPostFull<OpeningPreview>("/api/v1/finance/opening/preview", body),
+
+  // Persediaan saldo awal dihitung server dari stok awal x harga modal.
+  openingInventory: () =>
+    apiGet<OpeningInventory>("/api/v1/finance/opening/inventory"),
+
+  // Lengkapi harga modal produk berstok setelah saldo awal dikunci.
+  completeOpening: (body: {
+    items: { productId: number; variantId: number; unitCost?: number }[];
+  }) => apiPostFull<JournalEntry & { total: number }>("/api/v1/finance/opening/complete", body),
 
   postOpening: (body: {
     date?: string;
@@ -196,13 +285,32 @@ export const financeService = {
 
   // Koreksi fiskal = jurnal bertipe (tanpa tabel worksheet).
   taxAdjustments: () =>
-    apiGet<JournalEntry[]>("/api/v1/finance/tax-adjustments"),
+    apiGet<TaxAdjustment[]>("/api/v1/finance/tax-adjustments"),
 
   createTaxAdjustment: (body: {
     date?: string;
     memo: string;
     lines: ManualLinePayload[];
-  }) => apiPostFull<JournalEntry>("/api/v1/finance/tax-adjustments", body),
+    classification: string;
+    note?: string;
+  }) => apiPostFull<TaxAdjustment>("/api/v1/finance/tax-adjustments", body),
+
+  // FN-07: lampiran (gambar) koreksi fiskal.
+  taxAdjustmentFiles: (id: number) =>
+    apiGet<TaxAdjustmentFile[]>(`/api/v1/finance/tax-adjustments/${id}/attachments`),
+
+  attachTaxAdjustment: (id: number, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiUploadFull<TaxAdjustmentFile>(`/api/v1/finance/tax-adjustments/${id}/attachments`, form);
+  },
+
+  // GET /finance/integrity — rollup vs baris jurnal (perm finance.manage).
+  integrity: () => apiGet<IntegrityReport>("/api/v1/finance/integrity"),
+
+  // POST /finance/integrity/rebuild — hitung ulang rollup harian.
+  rebuildIntegrity: () =>
+    apiPostFull<unknown>("/api/v1/finance/integrity/rebuild"),
 
   readiness: (year: number, month: number) =>
     apiGet<PeriodReadiness>("/api/v1/finance/close/readiness", {

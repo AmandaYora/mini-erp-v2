@@ -17,7 +17,7 @@ export function ActionRow({
 }) {
   return (
     <div
-      className={`mt-6 flex gap-3 border-t border-hairline pt-5 ${JUSTIFY[align]}`}
+      className={`mt-6 flex flex-wrap items-center gap-2 border-t border-border pt-5 ${JUSTIFY[align]}`}
     >
       {children}
     </div>

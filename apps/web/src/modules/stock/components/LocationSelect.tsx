@@ -13,6 +13,13 @@ interface LocationSelectProps {
   allowClear?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  /**
+   * Cabang pemilik lokasi (K-06). Kosong = cabang sesi. Saat berubah daftar
+   * dimuat ulang; memilih cabang tanpa id (null) menonaktifkan pemuatan.
+   */
+  branchId?: number | null;
+  /** Tunda pemuatan sampai cabang dipilih (mis. cabang tujuan transfer). */
+  requireBranch?: boolean;
 }
 
 function toId(v: string | number | null): number | null {
@@ -24,7 +31,7 @@ function toId(v: string | number | null): number | null {
   return null;
 }
 
-/** Dropdown lokasi cabang aktif (GET /api/v1/stock/locations). */
+/** Dropdown lokasi cabang aktif, atau cabang `branchId` (GET /api/v1/stock/locations). */
 export function LocationSelect({
   label = "Lokasi",
   value,
@@ -33,15 +40,22 @@ export function LocationSelect({
   allowClear,
   disabled,
   placeholder = "Pilih lokasi…",
+  branchId,
+  requireBranch,
 }: LocationSelectProps) {
-  const [locations, setLocations] = useState<StockLocation[]>([]);
+  // Hasil dikunci ke cabang yang diminta: ganti cabang tak menampilkan daftar lama.
+  const [loaded, setLoaded] = useState<{ key: number | null; rows: StockLocation[] }>({ key: null, rows: [] });
+  const waiting = requireBranch && !branchId;
+  const key = branchId ?? 0;
+  const locations = !waiting && loaded.key === key ? loaded.rows : [];
 
   useEffect(() => {
+    if (waiting) return;
     let alive = true;
     stockService
-      .listLocations()
+      .listLocations(undefined, branchId)
       .then((rows) => {
-        if (alive) setLocations(rows);
+        if (alive) setLoaded({ key, rows });
       })
       .catch((err) => {
         if (alive) toast.danger("Gagal memuat lokasi", toApiError(err).message);
@@ -49,7 +63,7 @@ export function LocationSelect({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [branchId, waiting, key]);
 
   return (
     <FormField label={label} required={required}>
@@ -61,7 +75,7 @@ export function LocationSelect({
         value={value}
         placeholder={placeholder}
         allowClear={allowClear}
-        disabled={disabled}
+        disabled={disabled || waiting}
         onChange={(v) => onChange(toId(v))}
       />
     </FormField>

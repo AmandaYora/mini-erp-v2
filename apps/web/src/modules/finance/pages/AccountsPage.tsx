@@ -1,57 +1,55 @@
 import { useState } from "react";
+import { ChevronDown, ChevronRight, Archive, Pencil } from "lucide-react";
 import {
   Badge,
   Button,
   ConfirmDialog,
   DataTable,
+  FormField,
   PageHeader,
+  SearchInput,
   SectionCard,
+  SelectInput,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
 } from "@/shared/components/ui";
+import { ActionMenu, Page, Toolbar, useUrlTab } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { statusLabel, statusTone } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { financeService } from "@/modules/finance/services/finance.service";
-import type {
-  AccountCreateValues,
-  AccountEditValues,
-} from "@/modules/finance/schemas/finance.schema";
-import {
-  MAPPING_KEYS,
-  accountTypeLabel,
-  mappingKeyLabel,
-} from "@/modules/finance/types";
+import type { AccountCreateValues, AccountEditValues } from "@/modules/finance/schemas/finance.schema";
+import { buildAccountTree, filterAccounts } from "@/modules/finance/lib/account-tree";
+import type { AccountTreeRow } from "@/modules/finance/lib/account-tree";
+import { MAPPING_KEYS, mappingKeyLabel, missingMappingKeys } from "@/modules/finance/types";
 import type { Account } from "@/modules/finance/types";
-import { AccountFormModal } from "@/modules/finance/components/AccountFormModal";
-import { MappingModal } from "@/modules/finance/components/MappingModal";
+import { AccountFormSheet } from "@/modules/finance/components/AccountFormSheet";
+import { MappingSheet } from "@/modules/finance/components/MappingSheet";
 
-// Akun + pemetaan. Gate finance.manage (seluruh halaman di balik menu
-// "Akun" ber-perm finance.manage; tombol juga dicek via can()).
+const TABS = ["bagan", "pemetaan"] as const;
+
+// Akun + pemetaan (T4). Bagan akun = pohon golongan (tipe) → akun; Ubah/Arsipkan lewat menu baris.
+// Gate finance.manage (halaman di balik menu "Akun"; tombol juga dicek via can()).
 export default function AccountsPage() {
   const can = useAuthStore((s) => s.can);
   const canManage = can("finance.manage");
 
   const { data, loading, error, reload } = useAsyncData(
-    () =>
-      Promise.all([
-        financeService.accounts(),
-        financeService.mappings(),
-      ])
-        .then(([accs, maps]) => ({
-          accounts: accs,
-          mappings: maps ?? {},
-        }))
-        .catch((err) => {
-          const apiErr = toApiError(err);
-          toast.danger("Gagal memuat akun", apiErr.message);
-          throw err;
-        }),
+    () => Promise.all([financeService.accounts(), financeService.mappings()]).then(([accs, maps]) => ({ accounts: accs ?? [], mappings: maps ?? {} })),
     [],
   );
   const accounts = data?.accounts ?? [];
   const mappings = data?.mappings ?? {};
+
+  const [tab, setTab] = useUrlTab(TABS, "bagan");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "active" | "archived">("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const [modalMode, setModalMode] = useState<"create" | "edit" | null>(null);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -63,28 +61,30 @@ export default function AccountsPage() {
   const [mappingSubmitting, setMappingSubmitting] = useState(false);
   const [mappingError, setMappingError] = useState<string | null>(null);
 
-  async function handleAccountSubmit(
-    values: AccountCreateValues | AccountEditValues,
-  ) {
+  const filtered = filterAccounts(accounts, query, statusFilter);
+  const treeRows = buildAccountTree(filtered, collapsed, query.trim() !== "");
+  const hasFilter = query.trim() !== "" || statusFilter !== "";
+
+  function toggleGroup(type: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }
+
+  async function handleAccountSubmit(values: AccountCreateValues | AccountEditValues) {
     setSubmitting(true);
     setServerError(null);
     try {
       if (modalMode === "create") {
         const v = values as AccountCreateValues;
-        const res = await financeService.createAccount({
-          code: v.code,
-          name: v.name,
-          type: v.type,
-          isCash: v.isCash,
-        });
+        const res = await financeService.createAccount({ code: v.code, name: v.name, type: v.type, isCash: v.isCash });
         toast.fromServer(res.message, "Akun dibuat", res.data.code);
       } else if (editing) {
         const v = values as AccountEditValues;
-        const res = await financeService.updateAccount(editing.id, {
-          name: v.name,
-          type: v.type,
-          isCash: v.isCash,
-        });
+        const res = await financeService.updateAccount(editing.id, { name: v.name, type: v.type, isCash: v.isCash });
         toast.fromServer(res.message, "Akun disimpan", res.data.code);
       }
       setModalMode(null);
@@ -125,10 +125,11 @@ export default function AccountsPage() {
     }
   }
 
+  const missing = missingMappingKeys(mappings);
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Keuangan"
         title="Akun"
         description="Bagan akun dan pemetaan akun otomatis untuk posting."
         actions={
@@ -140,135 +141,154 @@ export default function AccountsPage() {
                 setModalMode("create");
               }}
             >
-              Tambah Akun
+              Tambah akun
             </Button>
           ) : undefined
         }
       />
 
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title={error}>
-            <button
-              type="button"
-              onClick={() => reload()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
-            >
-              Coba lagi
-            </button>
-          </Notice>
-        </div>
-      )}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as (typeof TABS)[number])} className="gap-6">
+        <TabsList variant="line">
+          <TabsTrigger value="bagan">Bagan akun</TabsTrigger>
+          <TabsTrigger value="pemetaan">
+            Pemetaan {missing.length > 0 && <Badge tone="warning">{missing.length}</Badge>}
+          </TabsTrigger>
+        </TabsList>
 
-      <SectionCard title="Bagan Akun">
-        {loading && accounts.length === 0 ? (
-          <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-        ) : (
-          <DataTable<Account>
-            rows={accounts}
-            rowKey={(r) => r.id}
-            emptyTitle="Belum ada akun"
-            columns={[
-              { header: "Kode", render: (r) => r.code },
-              { header: "Nama", render: (r) => r.name },
-              { header: "Tipe", render: (r) => accountTypeLabel(r.type) },
-              {
-                header: "Kas",
-                render: (r) =>
-                  r.isCash ? (
-                    <Badge tone="info">Kas</Badge>
-                  ) : (
-                    <span className="text-muted">-</span>
-                  ),
-              },
-              {
-                header: "Status",
-                render: (r) => (
-                  <Badge tone={statusTone(r.status)}>
-                    {statusLabel(r.status)}
-                  </Badge>
-                ),
-              },
-              {
-                header: "Aksi",
-                align: "right",
-                render: (r) =>
-                  canManage && r.status === "active" ? (
-                    <span className="flex justify-end gap-3">
+        <TabsContent value="bagan" className="flex flex-col gap-6">
+          <Toolbar
+            search={<SearchInput aria-label="Cari akun" value={query} onSearch={setQuery} placeholder="Kode atau nama akun…" />}
+            primary={
+              <FormField label="Status">
+                <SelectInput aria-label="Status akun" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
+                  <option value="">Semua</option>
+                  <option value="active">Aktif</option>
+                  <option value="archived">Diarsipkan</option>
+                </SelectInput>
+              </FormField>
+            }
+            active={statusFilter ? [{ key: "status", label: `Status: ${statusFilter === "active" ? "Aktif" : "Diarsipkan"}`, onRemove: () => setStatusFilter("") }] : []}
+            onClearAll={() => {
+              setQuery("");
+              setStatusFilter("");
+            }}
+          />
+          <SectionCard flush title="Bagan akun" description="Dikelompokkan menurut tipe akun; klik golongan untuk melipat.">
+            <DataTable<AccountTreeRow>
+              caption="Bagan akun"
+              rows={treeRows}
+              rowKey={(r) => r.id}
+              loading={loading}
+              error={error}
+              onRetry={reload}
+              onRowClick={(r) => {
+                if (r.kind === "group") toggleGroup(r.type);
+              }}
+              emptyTitle={hasFilter ? "Tidak ada akun yang cocok" : "Belum ada akun"}
+              emptyDescription={hasFilter ? "Ubah kata kunci atau filter status." : "Tambah akun pertama untuk menyusun bagan akun."}
+              columns={[
+                {
+                  header: "Akun",
+                  render: (r) =>
+                    r.kind === "group" ? (
                       <button
                         type="button"
+                        onClick={() => toggleGroup(r.type)}
+                        aria-expanded={r.expanded}
+                        className="inline-flex items-center gap-2 font-semibold text-foreground"
+                      >
+                        {r.expanded ? <ChevronDown size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
+                        {r.label}
+                        <span className="tabular text-xs font-normal text-muted-foreground">({r.count})</span>
+                      </button>
+                    ) : (
+                      <span className="pl-6">
+                        <span className="font-mono text-xs">{r.account.code}</span> {r.account.name}
+                      </span>
+                    ),
+                },
+                { header: "Kas", render: (r) => (r.kind === "account" && r.account.isCash ? <Badge tone="info">Kas</Badge> : null) },
+                { header: "Status", render: (r) => (r.kind === "account" ? <StatusBadge status={r.account.status} /> : null) },
+                {
+                  header: "",
+                  align: "right",
+                  render: (r) =>
+                    r.kind === "account" && canManage && r.account.status === "active" ? (
+                      <ActionMenu
+                        label={`Aksi untuk akun ${r.account.code}`}
+                        variant="ghost"
+                        items={[
+                          {
+                            key: "edit",
+                            label: "Ubah",
+                            icon: <Pencil aria-hidden />,
+                            onSelect: () => {
+                              setEditing(r.account);
+                              setServerError(null);
+                              setModalMode("edit");
+                            },
+                          },
+                          { key: "archive", label: "Arsipkan", icon: <Archive aria-hidden />, destructive: true, onSelect: () => setArchiveTarget(r.account) },
+                        ]}
+                      />
+                    ) : null,
+                },
+              ]}
+            />
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="pemetaan" className="flex flex-col gap-6">
+          {missing.length > 0 && (
+            <Notice tone="warning" title={`${missing.length} pemetaan belum diatur`}>
+              Pemetaan lengkap wajib sebelum periode bisa ditutup aman: {missing.map(mappingKeyLabel).join(", ")}.
+            </Notice>
+          )}
+          <SectionCard flush title="Pemetaan akun" description="Akun otomatis yang dipakai builder posting per kejadian (18 kunci).">
+            <DataTable<string>
+              caption="Pemetaan akun"
+              rows={[...MAPPING_KEYS]}
+              rowKey={(k) => k}
+              loading={loading}
+              error={error}
+              onRetry={reload}
+              emptyTitle="Tidak ada kunci pemetaan"
+              columns={[
+                { header: "Kunci", render: (k) => mappingKeyLabel(k) },
+                {
+                  header: "Akun",
+                  render: (k) => {
+                    const a = mappings[k];
+                    return a ? `${a.code} — ${a.name}` : <Badge tone="warning">Belum diatur</Badge>;
+                  },
+                },
+                {
+                  header: "",
+                  align: "right",
+                  render: (k) =>
+                    canManage ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Ubah pemetaan ${mappingKeyLabel(k)}`}
                         onClick={() => {
-                          setEditing(r);
-                          setServerError(null);
-                          setModalMode("edit");
+                          setMappingError(null);
+                          setMappingKey(k);
                         }}
-                        className="cursor-pointer font-medium text-brand hover:underline"
                       >
                         Ubah
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setArchiveTarget(r)}
-                        className="cursor-pointer font-medium text-bad hover:underline"
-                      >
-                        Arsipkan
-                      </button>
-                    </span>
-                  ) : (
-                    <span className="text-muted">-</span>
-                  ),
-              },
-            ]}
-          />
-        )}
-      </SectionCard>
-
-      <div className="mt-4">
-        <SectionCard
-          title="Pemetaan Akun"
-          description="Akun otomatis yang dipakai builder posting per kejadian."
-        >
-          <DataTable<string>
-            rows={[...MAPPING_KEYS]}
-            rowKey={(k) => k}
-            emptyTitle="Tidak ada kunci pemetaan"
-            columns={[
-              { header: "Kunci", render: (k) => mappingKeyLabel(k) },
-              {
-                header: "Akun",
-                render: (k) => {
-                  const a = mappings[k];
-                  return a ? `${a.code} — ${a.name}` : "-";
+                      </Button>
+                    ) : null,
                 },
-              },
-              {
-                header: "Aksi",
-                align: "right",
-                render: (k) =>
-                  canManage ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMappingError(null);
-                        setMappingKey(k);
-                      }}
-                      className="cursor-pointer font-medium text-brand hover:underline"
-                    >
-                      Ubah
-                    </button>
-                  ) : (
-                    <span className="text-muted">-</span>
-                  ),
-              },
-            ]}
-          />
-        </SectionCard>
-      </div>
+              ]}
+            />
+          </SectionCard>
+        </TabsContent>
+      </Tabs>
 
       {modalMode && (
-        <AccountFormModal
+        <AccountFormSheet
           key={modalMode === "edit" ? editing?.id : "create"}
-          open
           mode={modalMode}
           initial={editing}
           submitting={submitting}
@@ -283,7 +303,7 @@ export default function AccountsPage() {
 
       <ConfirmDialog
         open={archiveTarget !== null}
-        title="Arsipkan Akun?"
+        title="Arsipkan akun?"
         message={`Akun ${archiveTarget?.code ?? ""} (${archiveTarget?.name ?? ""}) akan diarsipkan. Akun berjurnal atau terpetakan ditolak backend. Lanjutkan?`}
         confirmLabel="Arsipkan"
         onConfirm={() => void handleArchive()}
@@ -291,8 +311,7 @@ export default function AccountsPage() {
       />
 
       {mappingKey && (
-        <MappingModal
-          open
+        <MappingSheet
           mappingKey={mappingKey}
           currentAccountId={mappings[mappingKey]?.id ?? null}
           accounts={accounts}
@@ -302,6 +321,6 @@ export default function AccountsPage() {
           onSubmit={(v) => void handleMappingSubmit(v)}
         />
       )}
-    </div>
+    </Page>
   );
 }

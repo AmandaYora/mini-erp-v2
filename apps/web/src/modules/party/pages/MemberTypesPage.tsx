@@ -1,29 +1,37 @@
-import { useState } from "react";
-import type { FormEvent } from "react";
+import { useMemo, useState } from "react";
+import { Archive, ArchiveRestore, SquarePen } from "lucide-react";
 import {
-  Badge,
   Button,
   ConfirmDialog,
   DataTable,
-  FilterBar,
-  FormField,
   PageHeader,
+  Pagination,
+  SearchInput,
   SectionCard,
-  SelectInput,
-  TextInput,
+  StatusBadge,
 } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
-import { formatIDR, statusLabel, statusTone } from "@/shared/lib/format";
+import { ActionMenu, ArchiveViewToggle, DocNumber, Page, Toolbar } from "@/shared/components/patterns";
+import type { ActiveFilter } from "@/shared/components/patterns";
+import { formatIDR } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
+import { archiveConfirmMessage } from "@/modules/party/lib/member-type-impact";
 import { memberTypeService } from "@/modules/party/services/party.service";
 import { MemberTypeFormModal } from "@/modules/party/components/MemberTypeFormModal";
+import { PartyStatusFilter } from "@/modules/party/components/PartyFormModal";
+import {
+  PARTY_LIST_DEFAULTS,
+  partyListFilterSchema,
+  partyStatusLabel,
+  partyStatusParam,
+} from "@/modules/party/schemas/party-list-filter.schema";
 import {
   basisOptions,
   optionLabel,
-  roundingModeOptions,
+  roundingSummary,
 } from "@/modules/party/schemas/member-type.schema";
 import type {
   MemberTypeCreateValues,
@@ -31,20 +39,21 @@ import type {
 } from "@/modules/party/schemas/member-type.schema";
 import type { MemberType } from "@/modules/party/types";
 
-/** Ringkasan aturan untuk kolom tabel, mis. "−10% dari Harga jual · Terdekat 100". */
+const LIMIT = 20;
+
+/** Ringkasan aturan untuk kolom tabel, mis. "−10% dari Harga jual · Terdekat 100"
+ *  (plus boleh di atas 100%, mis. "+150% dari Harga beli"). */
 function ruleSummary(m: MemberType): string {
   const dir = m.direction === "plus" ? "+" : "−";
   const val = m.type === "percent" ? `${m.value}%` : formatIDR(m.value);
-  return `${dir}${val} dari ${optionLabel(basisOptions, m.basis)} · ${optionLabel(roundingModeOptions, m.roundingMode)}`;
+  return `${dir}${val} dari ${optionLabel(basisOptions, m.basis)} · ${roundingSummary(m.roundingMode, m.roundingStep)}`;
 }
 
 export default function MemberTypesPage() {
   const can = useAuthStore((s) => s.can);
   const canManage = can("member_types.manage");
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  const { filters, setFilters } = useUrlFilters(partyListFilterSchema, PARTY_LIST_DEFAULTS);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MemberType | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -53,15 +62,24 @@ export default function MemberTypesPage() {
   const [busy, setBusy] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(
-    () => memberTypeService.list(search, status),
-    [search, status],
+    () => memberTypeService.list(filters.search, partyStatusParam(filters.status)),
+    [filters.search, filters.status],
   );
-  const items = data ?? [];
 
-  function applySearch(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSearch(searchInput);
-  }
+  // Dampak arsip (D3): jumlah pelanggan aktif dimuat saat dialog arsip dibuka.
+  const impact = useAsyncData(
+    () =>
+      confirm?.action === "archive"
+        ? memberTypeService.customerCount(confirm.target.id)
+        : Promise.resolve(null),
+    [confirm?.action, confirm?.target.id],
+  );
+
+  // Endpoint mengembalikan seluruh tipe (bukan paginasi): halaman dipotong di klien.
+  const all = useMemo(() => data ?? [], [data]);
+  const totalPages = Math.max(1, Math.ceil(all.length / LIMIT));
+  const page = Math.min(filters.page, totalPages);
+  const rows = data === null ? null : all.slice((page - 1) * LIMIT, page * LIMIT);
 
   function openCreate() {
     setEditing(null);
@@ -139,111 +157,105 @@ export default function MemberTypesPage() {
     }
   }
 
+  const active: ActiveFilter[] = [];
+  if (filters.status !== PARTY_LIST_DEFAULTS.status)
+    active.push({
+      key: "status",
+      label: `Status: ${partyStatusLabel(filters.status)}`,
+      onRemove: () => setFilters({ status: PARTY_LIST_DEFAULTS.status }),
+    });
+  const filtered = active.length > 0 || filters.search !== "";
+  const addButton = canManage ? <Button onClick={openCreate}>Tambah Tipe Member</Button> : undefined;
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Master"
-        title="Tipe Member"
+        title="Tipe member"
         description="Aturan harga member — basis, penyesuaian, dan pembulatan."
-        actions={
-          canManage ? <Button onClick={openCreate}>Tambah Tipe Member</Button> : undefined
-        }
+        actions={addButton}
       />
 
-      <FilterBar>
-        <form onSubmit={applySearch} className="flex flex-wrap items-end gap-4">
-          <div className="min-w-52 flex-1">
-            <FormField label="Cari">
-              <TextInput
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Kode / nama…"
-              />
-            </FormField>
-          </div>
-          <FormField label="Status">
-            <SelectInput value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">Semua status</option>
-              <option value="active">Aktif</option>
-              <option value="archived">Diarsipkan</option>
-            </SelectInput>
-          </FormField>
-          <Button type="submit" variant="secondary">
-            Cari
-          </Button>
-        </form>
-      </FilterBar>
-
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title={error}>
-            <button
-              type="button"
-              onClick={() => reload()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
-            >
-              Coba lagi
-            </button>
-          </Notice>
-        </div>
-      )}
-
-      <SectionCard>
-        {loading && items.length === 0 ? (
-          <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-        ) : (
-          <DataTable<MemberType>
-            rows={items}
-            rowKey={(r) => r.id}
-            emptyTitle="Belum ada tipe member"
-            emptyDescription="Tambah tipe member baru atau ubah kata kunci pencarian."
-            columns={[
-              { header: "Kode", render: (r) => <span className="font-medium">{r.code}</span> },
-              { header: "Nama", render: (r) => r.name },
-              { header: "Aturan", render: (r) => ruleSummary(r) },
-              {
-                header: "Status",
-                render: (r) => <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>,
-              },
-              ...(canManage
-                ? [
-                    {
-                      header: "Aksi",
-                      align: "right" as const,
-                      render: (r: MemberType) => (
-                        <span className="flex justify-end gap-3">
-                          <button
-                            type="button"
-                            onClick={() => openEdit(r)}
-                            className="cursor-pointer font-medium text-brand hover:underline"
-                          >
-                            Ubah
-                          </button>
-                          {r.status === "archived" ? (
-                            <button
-                              type="button"
-                              onClick={() => setConfirm({ target: r, action: "restore" })}
-                              className="cursor-pointer font-medium text-brand hover:underline"
-                            >
-                              Pulihkan
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirm({ target: r, action: "archive" })}
-                              className="cursor-pointer font-medium text-bad hover:underline"
-                            >
-                              Arsipkan
-                            </button>
-                          )}
-                        </span>
-                      ),
-                    },
-                  ]
-                : []),
-            ]}
+      <Toolbar
+        search={
+          <SearchInput
+            aria-label="Cari tipe member"
+            placeholder="Cari kode atau nama…"
+            value={filters.search}
+            onSearch={(v) => setFilters({ search: v })}
           />
-        )}
+        }
+        primary={<PartyStatusFilter value={filters.status} onChange={(v) => setFilters({ status: v })} />}
+        right={
+          <ArchiveViewToggle
+            showingArchive={filters.status === "archived"}
+            onChange={(show) => setFilters({ status: show ? "archived" : "active" })}
+          />
+        }
+        active={active}
+        onClearAll={() => setFilters(PARTY_LIST_DEFAULTS)}
+      />
+
+      <SectionCard flush>
+        <DataTable<MemberType>
+          rows={rows}
+          rowKey={(r) => r.id}
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          caption="Daftar tipe member"
+          emptyTitle={filtered ? "Tidak ada tipe member yang cocok dengan filter ini" : "Belum ada tipe member"}
+          emptyDescription={
+            filtered ? "Ubah kata kunci atau hapus filter." : "Buat tipe member pertama untuk aturan harga member."
+          }
+          emptyAction={
+            filtered ? (
+              <Button variant="secondary" onClick={() => setFilters(PARTY_LIST_DEFAULTS)}>
+                Hapus filter
+              </Button>
+            ) : (
+              addButton
+            )
+          }
+          columns={[
+            { header: "Kode", render: (r) => <DocNumber value={r.code} /> },
+            { header: "Nama", render: (r) => <span className="font-medium">{r.name}</span> },
+            { header: "Aturan", render: (r) => ruleSummary(r) },
+            { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
+            ...(canManage
+              ? [
+                  {
+                    header: "Aksi",
+                    width: 56,
+                    align: "right" as const,
+                    render: (r: MemberType) => (
+                      <ActionMenu
+                        variant="ghost"
+                        label={`Aksi untuk ${r.name}`}
+                        items={[
+                          { key: "edit", label: "Ubah", icon: <SquarePen aria-hidden />, onSelect: () => openEdit(r) },
+                          r.status === "archived"
+                            ? {
+                                key: "restore",
+                                label: "Pulihkan",
+                                icon: <ArchiveRestore aria-hidden />,
+                                onSelect: () => setConfirm({ target: r, action: "restore" }),
+                              }
+                            : {
+                                key: "archive",
+                                label: "Arsipkan",
+                                icon: <Archive aria-hidden />,
+                                destructive: true,
+                                onSelect: () => setConfirm({ target: r, action: "archive" }),
+                              },
+                        ]}
+                      />
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+        />
+        {!error && <Pagination page={page} limit={LIMIT} total={all.length} onPageChange={(p) => setFilters({ page: p })} />}
       </SectionCard>
 
       {modalOpen && (
@@ -265,7 +277,11 @@ export default function MemberTypesPage() {
         title={confirm?.action === "archive" ? "Arsipkan tipe member?" : "Pulihkan tipe member?"}
         message={
           confirm?.action === "archive"
-            ? `Tipe ${confirm?.target.code} akan diarsipkan. Riwayat tetap menunjuk ke tipe ini, tetapi customer baru tidak dapat memakainya.`
+            ? archiveConfirmMessage(confirm.target.code, {
+                loading: impact.loading,
+                error: impact.error,
+                activeCustomers: impact.data?.activeCustomers ?? null,
+              })
             : `Tipe ${confirm?.target.code} akan aktif kembali.`
         }
         confirmLabel={confirm?.action === "archive" ? "Arsipkan" : "Pulihkan"}
@@ -275,6 +291,6 @@ export default function MemberTypesPage() {
         }}
         onCancel={() => setConfirm(null)}
       />
-    </div>
+    </Page>
   );
 }

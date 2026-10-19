@@ -14,6 +14,11 @@ export default defineConfig({
         target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8080",
         changeOrigin: true,
       },
+      // Locally stored photos and proofs: signed URLs under /media/ come from the API.
+      "/media": {
+        target: process.env.VITE_DEV_API_TARGET ?? "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
 });

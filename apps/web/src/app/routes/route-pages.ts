@@ -1,4 +1,5 @@
-import { lazy } from "react";
+// OP-01: semua halaman lazy lewat lazyWithRetry (chunk basi pasca-deploy → reload sekali).
+import { lazyWithRetry as lazy } from "@/shared/lib/chunk-recovery";
 
 /**
  * Definisi halaman lazy untuk tabel rute. File sendiri yang HANYA mengekspor
@@ -27,7 +28,9 @@ export const MODULE_PAGES: Record<string, React.LazyExoticComponent<React.Compon
   "/suppliers/:id": lazy(() => import("@/modules/party/pages/SupplierDetailPage")),
   "/member-types": lazy(() => import("@/modules/party/pages/MemberTypesPage")),
   "/stock": lazy(() => import("@/modules/stock/pages/StockPage")),
+  "/stock/balances": lazy(() => import("@/modules/stock/pages/BalancesPage")),
   "/stock/transfers": lazy(() => import("@/modules/stock/pages/TransfersPage")),
+  "/stock/transfers/new": lazy(() => import("@/modules/stock/pages/TransferNewPage")),
   "/stock/transfers/:id": lazy(() => import("@/modules/stock/pages/TransferDetailPage")),
   "/stock/adjustments": lazy(() => import("@/modules/stock/pages/AdjustmentsPage")),
   "/stock/damaged": lazy(() => import("@/modules/stock/pages/DamagedPage")),
@@ -44,15 +47,19 @@ export const MODULE_PAGES: Record<string, React.LazyExoticComponent<React.Compon
   "/sales-orders/:id": lazy(() => import("@/modules/sales/pages/SalesOrderDetailPage")),
   "/sales-orders/:id/edit": lazy(() => import("@/modules/sales/pages/SalesOrderFormPage")),
   "/goods-receipts": lazy(() => import("@/modules/goodsreceipt/pages/GoodsReceiptsPage")),
+  "/goods-receipts/new": lazy(() => import("@/modules/goodsreceipt/pages/GoodsReceiptFormPage")),
   "/goods-receipts/:id": lazy(() => import("@/modules/goodsreceipt/pages/GoodsReceiptDetailPage")),
   "/deliveries": lazy(() => import("@/modules/delivery/pages/DeliveriesPage")),
   "/deliveries/queue": lazy(() => import("@/modules/delivery/pages/QueuePage")),
+  "/deliveries/new": lazy(() => import("@/modules/delivery/pages/CreateDeliveryPage")),
   "/deliveries/:id": lazy(() => import("@/modules/delivery/pages/DeliveryDetailPage")),
   "/payments": lazy(() => import("@/modules/payment/pages/PaymentsPage")),
   "/payments/:id": lazy(() => import("@/modules/payment/pages/PaymentDetailPage")),
   "/sales-returns": lazy(() => import("@/modules/salesreturn/pages/SalesReturnsPage")),
+  "/sales-returns/new": lazy(() => import("@/modules/salesreturn/pages/SalesReturnCreatePage")),
   "/sales-returns/:id": lazy(() => import("@/modules/salesreturn/pages/SalesReturnDetailPage")),
   "/purchase-returns": lazy(() => import("@/modules/purchasereturn/pages/PurchaseReturnsPage")),
+  "/purchase-returns/new": lazy(() => import("@/modules/purchasereturn/pages/PurchaseReturnCreatePage")),
   "/purchase-returns/:id": lazy(() => import("@/modules/purchasereturn/pages/PurchaseReturnDetailPage")),
   "/finance/posting": lazy(() => import("@/modules/finance/pages/PostingPage")),
   "/finance/journals": lazy(() => import("@/modules/finance/pages/JournalsPage")),
@@ -65,16 +72,22 @@ export const MODULE_PAGES: Record<string, React.LazyExoticComponent<React.Compon
   "/finance/tax-adjustments": lazy(
     () => import("@/modules/finance/pages/TaxAdjustmentsPage"),
   ),
-  "/finance/reports/trial-balance": lazy(() => import("@/modules/finance/pages/ReportsPage")),
-  "/finance/reports/profit-loss": lazy(() => import("@/modules/finance/pages/ReportsPage")),
-  "/finance/reports/balance-sheet": lazy(() => import("@/modules/finance/pages/ReportsPage")),
-  "/finance/reports/tax-summary": lazy(() => import("@/modules/finance/pages/ReportsPage")),
-  "/finance/reports/inventory-value": lazy(() => import("@/modules/finance/pages/ReportsPage")),
-  "/finance/reports/margin": lazy(() => import("@/modules/finance/pages/ReportsPage")),
-  "/finance/reports/receivables-payables": lazy(() => import("@/modules/finance/pages/ReportsPage")),
+  "/finance/reports/trial-balance": lazy(() => import("@/modules/finance/pages/reports/TrialBalancePage")),
+  "/finance/reports/profit-loss": lazy(() => import("@/modules/finance/pages/reports/ProfitLossPage")),
+  "/finance/reports/balance-sheet": lazy(() => import("@/modules/finance/pages/reports/BalanceSheetPage")),
+  "/finance/reports/tax-summary": lazy(() => import("@/modules/finance/pages/reports/TaxSummaryPage")),
+  "/finance/reports/inventory-value": lazy(() => import("@/modules/finance/pages/reports/InventoryValuePage")),
+  "/finance/reports/margin": lazy(() => import("@/modules/finance/pages/reports/MarginPage")),
+  "/finance/reports/receivables-payables": lazy(() => import("@/modules/finance/pages/reports/ReceivablesPayablesPage")),
+  "/finance/reports/cash": lazy(() => import("@/modules/finance/pages/reports/CashPage")),
+  "/finance/journals/new": lazy(() => import("@/modules/finance/pages/JournalFormPage")),
   "/finance/general-ledger": lazy(() => import("@/modules/finance/pages/GeneralLedgerPage")),
   "/finance/reports/tax-detail": lazy(() => import("@/modules/finance/pages/TaxDetailPage")),
   "/reporting": lazy(() => import("@/modules/reporting/pages/ReportingPage")),
+  "/reporting/orders": lazy(() => import("@/modules/reporting/pages/OrdersReportPage")),
+  "/reporting/stock": lazy(() => import("@/modules/reporting/pages/StockReportPage")),
+  "/finance/integrity": lazy(() => import("@/modules/finance/pages/IntegrityPage")),
+  "/ops/integrity": lazy(() => import("@/modules/ops/pages/OpsIntegrityPage")),
   "/audit-logs": lazy(() => import("@/modules/audit/pages/AuditPage")),
   "/assistant/setup": lazy(() => import("@/modules/assistant/pages/SetupPage")),
   "/assistant/config": lazy(() => import("@/modules/assistant/pages/ConfigPage")),
@@ -96,10 +109,16 @@ export const SelectBranchPage = lazy(
 
 export const ForbiddenPage = lazy(() => import("@/modules/auth/pages/ForbiddenPage"));
 
-// Halaman dokumen cetak (Tahap E): standalone TANPA AppLayout agar sidebar /
+export const NotFoundPage = lazy(() => import("@/modules/auth/pages/NotFoundPage"));
+
+// Halaman dokumen cetak (Tahap E): standalone TANPA AppShell agar sidebar /
 // topbar tidak ikut tercetak.
 export const DeliveryNotePrintPage = lazy(
   () => import("@/modules/print/pages/DeliveryNotePrintPage"),
+);
+
+export const StockTransferPrintPage = lazy(
+  () => import("@/modules/print/pages/StockTransferPrintPage"),
 );
 
 export const SalesInvoicePrintPage = lazy(

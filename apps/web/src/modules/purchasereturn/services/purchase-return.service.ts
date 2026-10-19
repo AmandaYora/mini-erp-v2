@@ -2,7 +2,7 @@
 // apiPost). Bentuk respons terverifikasi dari backend:
 // - GET /api/v1/purchase-returns?purchaseOrderId&status&page&limit →
 //   paginasi returnView[] (purchasereturn/presentation/handler.go: List).
-//   TIDAK ada param search — pencarian nomor difilter sisi klien.
+//   Filter di server: search (nomor/catatan), status CSV, purchaseOrderId, from, to.
 // - GET /api/v1/purchase-returns/:id → returnView (Get).
 // - POST /api/v1/purchase-returns {purchaseOrderId, returnDate?, notes?,
 //   items[]} → 201 returnView (Create).
@@ -25,6 +25,7 @@
 //   409 bila melebihi sisa).
 
 import { apiGet, apiPage, apiPostFull } from "@/shared/services/http-client";
+import { compactParams, positiveId } from "@/shared/lib/list-query";
 import type {
   LocationOption,
   PurchaseReturn,
@@ -36,23 +37,38 @@ import type {
   SourcePurchaseOrder,
 } from "@/modules/purchasereturn/types";
 
-export interface PurchaseReturnListParams {
+export interface PurchaseReturnFilterParams {
+  /** Nomor retur atau catatan. */
+  search?: string;
+  /** CSV: "draft,confirmed". */
   status?: string;
+  /** Filter dokumen sumber (purchaseOrderId backend). */
+  purchaseOrderId?: number;
+  /** YYYY-MM-DD (WIB), inklusif. */
+  from?: string;
+  to?: string;
+}
+
+export interface PurchaseReturnListParams extends PurchaseReturnFilterParams {
   page: number;
   limit: number;
 }
 
-function cleanParams(p: PurchaseReturnListParams): Record<string, unknown> {
-  return {
-    status: p.status ? p.status : undefined,
+export function buildPurchaseReturnListQuery(p: PurchaseReturnListParams): Record<string, unknown> {
+  return compactParams({
+    search: p.search,
+    status: p.status,
+    purchaseOrderId: positiveId(p.purchaseOrderId),
+    from: p.from,
+    to: p.to,
     page: p.page,
     limit: p.limit,
-  };
+  });
 }
 
 export const purchaseReturnService = {
-  list: (p: PurchaseReturnListParams) =>
-    apiPage<PurchaseReturn>("/api/v1/purchase-returns", cleanParams(p)),
+  list: (p: PurchaseReturnListParams, signal?: AbortSignal) =>
+    apiPage<PurchaseReturn>("/api/v1/purchase-returns", buildPurchaseReturnListQuery(p), signal),
 
   get: (id: number) => apiGet<PurchaseReturn>(`/api/v1/purchase-returns/${id}`),
 
@@ -82,23 +98,6 @@ export const purchaseReturnService = {
 };
 
 export const purchaseReturnLookupService = {
-  /** PO terkonfirmasi + selesai untuk dropdown sumber (maks 50 per status). */
-  sourceOrders: async (): Promise<SourcePurchaseOrder[]> => {
-    const [confirmed, completed] = await Promise.all([
-      apiPage<SourcePurchaseOrder>("/api/v1/purchase-orders", {
-        status: "confirmed",
-        page: 1,
-        limit: 50,
-      }),
-      apiPage<SourcePurchaseOrder>("/api/v1/purchase-orders", {
-        status: "completed",
-        page: 1,
-        limit: 50,
-      }),
-    ]);
-    return [...confirmed.items, ...completed.items];
-  },
-
   /** Detail PO untuk inisialisasi baris retur (qty di-clamp ke qty order). */
   sourceOrderDetail: (id: number) =>
     apiGet<SourcePurchaseOrder>(`/api/v1/purchase-orders/${id}`),

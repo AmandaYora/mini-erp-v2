@@ -1,242 +1,164 @@
 import { useMemo, useState } from "react";
 import {
+  CardSkeleton,
   DataTable,
   DateInput,
-  FilterBar,
+  ErrorState,
   FormField,
   PageHeader,
+  Pagination,
   SectionCard,
   SummaryCard,
 } from "@/shared/components/ui";
+import { Money, Page, Qty, Toolbar } from "@/shared/components/patterns";
+import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { Notice } from "@/shared/components/feedback/notice";
-import {
-  formatDate,
-  formatIDR,
-  formatNumber,
-  monthStartWIB,
-  todayWIB,
-} from "@/shared/lib/format";
+import { formatDate, formatIDR, monthStartWIB, todayWIB } from "@/shared/lib/format";
 import { reportingService } from "@/modules/reporting/services/reporting.service";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
-import type {
-  InventoryPosition,
-  TrendPoint,
-} from "@/modules/reporting/types";
+import { TrendChart } from "@/modules/reporting/components/TrendChart";
+import { paginate, sumTrend, trendRangeError } from "@/modules/reporting/lib/trend";
+import type { InventoryPosition, TrendPoint } from "@/modules/reporting/types";
 
-/** Jumlah hari inklusif antara dua tanggal YYYY-MM-DD. */
-function diffDays(from: string, to: string): number {
-  const a = new Date(`${from}T00:00:00Z`).getTime();
-  const b = new Date(`${to}T00:00:00Z`).getTime();
-  return Math.round((b - a) / 86400000) + 1;
-}
+const TREND_LIMIT = 31;
+const INVENTORY_LIMIT = 25;
 
 export default function ReportingPage() {
   const [from, setFrom] = useState(monthStartWIB());
   const [to, setTo] = useState(todayWIB());
-  const {
-    data: trendData,
-    loading: trendLoading,
-    error: trendError,
-    reload: reloadTrend,
-  } = useAsyncData(
-    () => {
-      if (!from || !to || from > to || diffDays(from, to) > 366) {
-        return Promise.resolve([]);
-      }
-      return reportingService.salesTrend(from, to);
-    },
+  const [trendPage, setTrendPage] = useState(1);
+  const [invPage, setInvPage] = useState(1);
+  const rangeError = trendRangeError(from, to);
+
+  const trend = useAsyncData(
+    () => (rangeError ? Promise.resolve([] as TrendPoint[]) : reportingService.salesTrend(from, to)),
     [from, to],
   );
-  const trend = useMemo(() => trendData ?? [], [trendData]);
-  const {
-    data: inventory,
-    loading: invLoading,
-    error: invError,
-    reload: reloadInventory,
-  } = useAsyncData(() => reportingService.inventory(), []);
+  const inventory = useAsyncData(() => reportingService.inventory(), []);
 
+  const points = useMemo(() => trend.data ?? [], [trend.data]);
+  const totals = useMemo(() => sumTrend(points), [points]);
+  const positions = useMemo(() => inventory.data?.positions ?? [], [inventory.data]);
   const today = todayWIB();
-
-  const rangeError =
-    !from || !to
-      ? "Pilih tanggal mulai dan tanggal akhir."
-      : from > to
-        ? "Tanggal akhir sebelum tanggal awal."
-        : diffDays(from, to) > 366
-          ? "Rentang maksimal 366 hari."
-          : null;
-
-  const totals = useMemo(
-    () =>
-      trend.reduce(
-        (acc, p) => ({
-          revenue: acc.revenue + p.revenue,
-          expense: acc.expense + p.expense,
-          profit: acc.profit + p.profit,
-        }),
-        { revenue: 0, expense: 0, profit: 0 },
-      ),
-    [trend],
-  );
+  const hasSales = points.some((p) => p.revenue !== 0 || p.expense !== 0 || p.profit !== 0);
 
   return (
-    <div>
-      <PageHeader
-        eyebrow="Laporan"
-        title="Tren & Stok"
-        description="Tren penjualan harian dan nilai persediaan cabang aktif."
+    <Page>
+      <PageHeader title="Tren & Stok" description="Tren penjualan harian dan nilai persediaan cabang aktif." />
+
+      <Toolbar
+        primary={
+          <>
+            <FormField label="Dari tanggal">
+              <DateInput
+                aria-label="Dari tanggal"
+                value={from}
+                max={today}
+                onChange={(e) => {
+                  setFrom(e.target.value);
+                  setTrendPage(1);
+                }}
+              />
+            </FormField>
+            <FormField label="Sampai tanggal" helperText="Rentang maksimal 366 hari.">
+              <DateInput
+                aria-label="Sampai tanggal"
+                value={to}
+                max={today}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setTrendPage(1);
+                }}
+              />
+            </FormField>
+          </>
+        }
       />
 
-      <FilterBar>
-        <FormField label="Dari">
-          <DateInput
-            value={from}
-            max={today}
-            onChange={(e) => setFrom(e.target.value)}
-          />
-        </FormField>
-        <FormField label="Sampai" helperText="Rentang maksimal 366 hari.">
-          <DateInput
-            value={to}
-            max={today}
-            onChange={(e) => setTo(e.target.value)}
-          />
-        </FormField>
-      </FilterBar>
+      {rangeError ? (
+        <Notice tone="warning" title="Rentang tanggal tidak valid">
+          {rangeError}
+        </Notice>
+      ) : trend.error ? (
+        <ErrorState title="Gagal memuat tren penjualan" message={trend.error} onRetry={trend.reload} />
+      ) : trend.loading && !trend.data ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {Array.from({ length: 3 }, (_, i) => (
+            <CardSkeleton key={i} />
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <SummaryCard label="Total omzet" value={formatIDR(totals.revenue)} />
+            <SummaryCard label="Total beban" value={formatIDR(totals.expense)} tone="warning" />
+            <SummaryCard label="Total laba" value={formatIDR(totals.profit)} tone={totals.profit < 0 ? "danger" : "success"} />
+          </div>
 
-      <SectionCard
-        title="Tren Penjualan"
-        description={
-          rangeError
-            ? "Perbaiki rentang tanggal untuk memuat data."
-            : `Periode ${formatDate(from)} – ${formatDate(to)}.`
-        }
-      >
-        {rangeError ? (
-          <Notice tone="warning" title="Rentang tanggal tidak valid">
-            {rangeError}
-          </Notice>
-        ) : trendError ? (
-          <Notice tone="danger" title="Gagal memuat tren penjualan">
-            {trendError}{" "}
-            <button
-              type="button"
-              onClick={() => reloadTrend()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
-            >
-              Coba lagi
-            </button>
-          </Notice>
-        ) : trendLoading ? (
-          <p className="text-muted px-1 py-6 text-sm">Memuat tren…</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <SummaryCard
-                label="Total Omzet"
-                value={formatIDR(totals.revenue)}
+          <SectionCard title="Tren penjualan" description={`Periode ${formatDate(from)} – ${formatDate(to)}.`}>
+            {hasSales ? (
+              <TrendChart
+                data={points}
+                summary={`Grafik tren omzet dan laba harian ${formatDate(from)} sampai ${formatDate(to)}; total omzet ${formatIDR(totals.revenue)}, total laba ${formatIDR(totals.profit)}.`}
               />
-              <SummaryCard
-                label="Total Beban"
-                value={formatIDR(totals.expense)}
-              />
-              <SummaryCard
-                label="Total Laba"
-                value={formatIDR(totals.profit)}
-                tone="success"
-              />
-            </div>
+            ) : (
+              <EmptyState title="Belum ada penjualan" description="Tidak ada transaksi pada rentang tanggal ini." />
+            )}
+          </SectionCard>
+
+          <SectionCard title="Rincian harian" description="Angka per hari dari pembukuan." flush>
             <DataTable<TrendPoint>
-              columns={[
-                {
-                  header: "Tanggal",
-                  render: (r) => formatDate(r.date),
-                },
-                {
-                  header: "Omzet",
-                  align: "right",
-                  render: (r) => formatIDR(r.revenue),
-                },
-                {
-                  header: "Beban",
-                  align: "right",
-                  render: (r) => formatIDR(r.expense),
-                },
-                {
-                  header: "Laba",
-                  align: "right",
-                  render: (r) => formatIDR(r.profit),
-                },
-              ]}
-              rows={trend}
+              caption="Rincian tren penjualan harian"
+              rows={paginate(points, trendPage, TREND_LIMIT)}
               rowKey={(r) => r.date}
               emptyTitle="Belum ada penjualan"
               emptyDescription="Tidak ada transaksi pada rentang tanggal ini."
+              columns={[
+                { header: "Tanggal", render: (r) => formatDate(r.date) },
+                { header: "Omzet", align: "right", render: (r) => <Money value={r.revenue} /> },
+                { header: "Beban", align: "right", render: (r) => <Money value={r.expense} /> },
+                { header: "Laba", align: "right", render: (r) => <Money value={r.profit} accounting /> },
+              ]}
             />
-          </div>
-        )}
-      </SectionCard>
+            {points.length > TREND_LIMIT && (
+              <Pagination page={trendPage} limit={TREND_LIMIT} total={points.length} onPageChange={setTrendPage} />
+            )}
+          </SectionCard>
+        </>
+      )}
 
-      <div className="mt-6">
-        <SectionCard
-          title="Persediaan"
-          description="Posisi stok dinilai dengan moving average."
-        >
-          {invError ? (
-            <Notice tone="danger" title="Gagal memuat persediaan">
-              {invError}{" "}
-              <button
-                type="button"
-                onClick={() => reloadInventory()}
-                className="cursor-pointer font-semibold text-brand hover:underline"
-              >
-                Coba lagi
-              </button>
-            </Notice>
-          ) : invLoading ? (
-            <p className="text-muted px-1 py-6 text-sm">Memuat persediaan…</p>
-          ) : inventory ? (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <SummaryCard
-                  label="Total Nilai Persediaan"
-                  value={formatIDR(inventory.total)}
-                />
+      <SectionCard title="Persediaan" description="Posisi stok dinilai dengan moving average." flush>
+        {inventory.error ? (
+          <ErrorState title="Gagal memuat persediaan" message={inventory.error} onRetry={inventory.reload} className="m-4" />
+        ) : inventory.loading && !inventory.data ? (
+          <CardSkeleton className="m-4" />
+        ) : inventory.data ? (
+          <>
+            <div className="border-b border-border p-4">
+              <div className="max-w-sm">
+                <SummaryCard label="Total nilai persediaan" value={formatIDR(inventory.data.total)} />
               </div>
-              <DataTable<InventoryPosition>
-                columns={[
-                  {
-                    header: "Kode",
-                    render: (r) => (
-                      <span className="font-medium">{r.productCode}</span>
-                    ),
-                  },
-                  { header: "Produk", render: (r) => r.productName },
-                  {
-                    header: "Qty",
-                    align: "right",
-                    render: (r) => formatNumber(r.qty),
-                  },
-                  {
-                    header: "HPP Rata-rata",
-                    align: "right",
-                    render: (r) => formatIDR(r.avgCost),
-                  },
-                  {
-                    header: "Nilai",
-                    align: "right",
-                    render: (r) => formatIDR(r.value),
-                  },
-                ]}
-                rows={inventory.positions}
-                rowKey={(r) => `${r.productId}-${r.variantId}`}
-                emptyTitle="Belum ada persediaan"
-                emptyDescription="Belum ada posisi stok bernilai di cabang ini."
-              />
             </div>
-          ) : null}
-        </SectionCard>
-      </div>
-    </div>
+            <DataTable<InventoryPosition>
+              caption="Posisi stok bernilai"
+              rows={paginate(positions, invPage, INVENTORY_LIMIT)}
+              rowKey={(r) => `${r.productId}-${r.variantId}`}
+              emptyTitle="Belum ada persediaan"
+              emptyDescription="Belum ada posisi stok bernilai di cabang ini."
+              columns={[
+                { header: "Kode", render: (r) => <span className="font-mono">{r.productCode}</span> },
+                { header: "Produk", render: (r) => r.productName },
+                { header: "Qty", align: "right", render: (r) => <Qty value={r.qty} /> },
+                { header: "HPP rata-rata", align: "right", render: (r) => <Money value={r.avgCost} /> },
+                { header: "Nilai", align: "right", render: (r) => <Money value={r.value} /> },
+              ]}
+            />
+            {positions.length > INVENTORY_LIMIT && (
+              <Pagination page={invPage} limit={INVENTORY_LIMIT} total={positions.length} onPageChange={setInvPage} />
+            )}
+          </>
+        ) : null}
+      </SectionCard>
+    </Page>
   );
 }

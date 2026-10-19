@@ -15,6 +15,18 @@ import {
   type ContinuousPaperProfile,
 } from "@/modules/print/paper";
 
+/**
+ * Default browser yang dipakai layout cetak sejak preflight Tailwind dimatikan, dipulihkan
+ * setelah DS v2 menyalakannya (PLAN U1-8): ukuran heading UA, <img> inline, <hr> UA.
+ * Sengaja TANPA @layer agar menang atas preflight; kertas fisik tidak boleh bergeser (U12).
+ */
+export const LEGACY_UA_CSS = `
+  h1 { font-size: 2em; } h2 { font-size: 1.5em; } h3 { font-size: 1.17em; }
+  h4 { font-size: 1em; } h5 { font-size: .83em; } h6 { font-size: .67em; }
+  img { display: inline; vertical-align: baseline; }
+  hr { height: auto; border-style: inset; border-width: 1px; color: gray; }
+`;
+
 const TOOLBAR_CSS = `
   .print-toolbar { background: #f3f4f6; border-bottom: 1px solid #d1d5db; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; padding: 12px; }
   .print-toolbar button { background: #fff; border: 1px solid #111827; border-radius: 6px; color: #111827; cursor: pointer; font-weight: 700; padding: 8px 14px; }

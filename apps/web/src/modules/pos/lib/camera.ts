@@ -37,3 +37,10 @@ export function cameraFallbackMessage(reason: CameraUnavailableReason): string {
   }
   return "Kamera tidak tersedia — gunakan ketik manual / scanner USB di bawah.";
 }
+
+/** Pilih kamera belakang: label berbau "belakang" bila ada, selain itu yang terakhir
+ * (perilaku lama: tablet/ponsel biasanya mendaftar kamera belakang di urutan akhir). */
+export function pickRearCamera<T extends { deviceId: string; label: string }>(devices: T[]): T | undefined {
+  const byLabel = devices.find((d) => /back|rear|belakang|environment/i.test(d.label));
+  return byLabel ?? devices[devices.length - 1] ?? devices[0];
+}

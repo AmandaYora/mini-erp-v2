@@ -15,5 +15,10 @@ export default defineConfig({
     // setiap test yang me-render komponen gagal dengan
     // "React.act is not a function" — bukan karena kodenya salah.
     env: { NODE_ENV: "development" },
+    // Tes halaman besar (userEvent + jsdom) menyentuh ~5 dtk saat ratusan berkas
+    // berjalan paralel di mesin yang sibuk; tes yang sama lulus sendirian. Batas
+    // 5 dtk bawaan membuat gerbang flaky, bukan menangkap bug — longgarkan.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 });

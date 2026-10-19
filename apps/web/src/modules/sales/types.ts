@@ -1,7 +1,8 @@
 // Cerminan 1:1 dari view backend (sales/presentation/handler.go: orderView +
 // orderPayload/linePayload). Semua kunci JSON camelCase.
 // Uang integer rupiah, qty float (mendukung pecahan), tanggal YYYY-MM-DD.
-// Harga dihitung server (member/katalog) — klien TIDAK mengirim unitPrice.
+// Harga: aturan member menang, lalu harga manual (unitPrice opsional di
+// payload), lalu katalog. Klem harga minimum berlaku untuk manual/katalog.
 //
 // Hasil verifikasi Tahap C (JANGAN ditebak ulang):
 // - orderView membawa shipToAddressId (0 = tanpa alamat kirim), shipToLabel,
@@ -23,6 +24,28 @@ export interface SalesOrderItem {
   discountPct: number;
   discountNominal: number;
   lineTotal: number;
+  // Snapshot baris (F2a-7/10: orderView items).
+  stockTracked: boolean;
+  itemType: string;
+  variantName: string;
+  variantCode: string;
+  baseUom: string;
+  pricingSource: SalesPricingSource | string;
+  basePrice: number;
+  discountReason: string;
+  note: string;
+  taxable: boolean;
+  taxBase: number;
+  taxAmount: number;
+}
+
+export type SalesPricingSource = "catalog" | "member_rule" | "manual";
+
+export function pricingSourceLabel(src: string | null | undefined): string {
+  if (src === "member_rule") return "Harga member";
+  if (src === "manual") return "Harga manual";
+  if (src === "catalog") return "Harga katalog";
+  return "-";
 }
 
 export interface SalesOrder {
@@ -51,6 +74,42 @@ export interface SalesOrder {
   shipToAddress: string;
   taxInvoiceNumber: string;
   taxInvoiceDate: string;
+  /** UUID klien (idempotensi/POS); kosong bila order dibuat tanpa clientRef. */
+  clientRef?: string;
+  /** true hanya pada respons replay create (HTTP 200). */
+  replayed?: boolean;
+  // Ringkasan pembayaran — hanya ada di list/get (payment_view.go), tidak di
+  // respons create/update/confirm/cancel/approve-credit: muat ulang detailnya.
+  paidAmount?: number;
+  outstandingAmount?: number;
+  /** unpaid | partial | paid */
+  paymentStatus?: string;
+  effectiveDueDate?: string;
+  isOverdue?: boolean;
+  // Ringkasan setelah retur (SL-03): total bersih = total order + penyesuaian retur.
+  originalTotal?: number;
+  returnAdjustment?: number;
+  netTotal?: number;
+  returnOffset?: number;
+  returnRefunded?: number;
+  returnCredit?: number;
+  /** Kelebihan bayar yang harus dikembalikan ke pelanggan. */
+  refundDue?: number;
+  /** Selisih tukar lebih mahal yang belum dipungut. */
+  exchangeChargeDue?: number;
+  /** settled | overdue | partial | open */
+  financialStatus?: string;
+  // Siapa di balik order (SL-09, SL-10); nama hanya bila pengguna dikenal.
+  createdAt?: string;
+  createdBy?: number;
+  createdByName?: string;
+  assignedUserId?: number;
+  assignedUserName?: string;
+  creditApprovedBy?: number;
+  creditApprovedByName?: string;
+  creditApprovedAt?: string;
+  /** Hanya di detail: pencatat pembayaran (kasir struk). */
+  cashierName?: string;
   items: SalesOrderItem[];
 }
 
@@ -62,6 +121,12 @@ export interface SalesOrderLinePayload {
   qty: number;
   discountPct?: number;
   discountNominal?: number;
+  /** Harga manual per satuan (rupiah bulat). Dihilangkan = server memberi harga. */
+  unitPrice?: number;
+  discountReason?: string;
+  note?: string;
+  /** false = baris tidak kena pajak order. Dihilangkan = kena pajak. */
+  taxable?: boolean;
 }
 
 /** Body POST/PUT — kunci persis orderPayload backend. */
@@ -76,8 +141,17 @@ export interface SalesOrderPayload {
   notes?: string;
   /** 0 = tanpa alamat kirim. */
   shipToAddressId?: number;
+  /** Alamat kirim sekali pakai (SL-01), dipakai bila shipToAddressId 0: snapshot ke order saja. */
+  shipToLabel?: string;
+  shipToRecipient?: string;
+  shipToPhone?: string;
+  shipToAddress?: string;
+  /** Penanggung jawab order (SL-09); 0/dihilangkan = tidak ada. */
+  assignedUserId?: number;
   taxInvoiceNumber?: string;
   taxInvoiceDate?: string;
+  /** UUID per percobaan simpan; create diulang dengan clientRef sama = replay. */
+  clientRef?: string;
   items: SalesOrderLinePayload[];
 }
 
@@ -89,6 +163,10 @@ export interface ProductOption {
   name: string;
   sellingPrice: number;
 }
+
+export const PAYMENT_TERMS = ["cod", "net", "prepaid"] as const;
+
+export type PaymentTerms = (typeof PAYMENT_TERMS)[number];
 
 export const SALES_CHANNELS = ["regular", "pos"] as const;
 
@@ -103,5 +181,23 @@ export function channelLabel(channel: string | null | undefined): string {
 export function paymentTermsLabel(terms: string | null | undefined): string {
   if (terms === "net") return "Net / Tempo";
   if (terms === "cod") return "COD / Tunai";
+  if (terms === "prepaid") return "Prabayar (bayar dulu)";
   return terms ?? "-";
+}
+
+export type SalesNextStep =
+  | "confirm"
+  | "create_delivery"
+  | "confirm_delivery"
+  | "pay"
+  | "done"
+  | "cancelled";
+
+/** GET /api/v1/sales-orders/by-client-ref/{ref}/state (handler.State). */
+export interface SalesClientRefState {
+  order: SalesOrder;
+  deliveries: { id: number; number: string; status: string }[];
+  paidAmount: number;
+  outstanding: number;
+  nextStep: SalesNextStep;
 }

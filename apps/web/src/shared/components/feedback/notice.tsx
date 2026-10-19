@@ -1,35 +1,57 @@
 import type { ReactNode } from "react";
+import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import type { Tone } from "@/shared/lib/format";
+import { cn } from "@/shared/lib/cn";
 
 const WRAPPER: Record<Tone, string> = {
-  success: "bg-ok-soft border-l-ok",
-  warning: "bg-warn-soft border-l-warn",
-  danger: "bg-bad-soft border-l-bad",
-  info: "bg-brand/10 border-l-brand",
-  neutral: "bg-surface-sunken border-l-hairline",
+  success: "bg-success-soft border-success/25",
+  warning: "bg-warning-soft border-warning/25",
+  danger: "bg-destructive-soft border-destructive/25",
+  info: "bg-accent border-primary/15",
+  neutral: "bg-muted border-border",
+  muted: "bg-muted border-border",
 };
 
 const TITLE: Record<Tone, string> = {
-  success: "text-ok",
-  warning: "text-warn",
-  danger: "text-bad",
-  info: "text-brand",
-  neutral: "text-heading",
+  success: "text-success",
+  warning: "text-warning",
+  danger: "text-destructive",
+  info: "text-accent-foreground",
+  neutral: "text-foreground",
+  muted: "text-muted-foreground",
 };
+
+const ICON = {
+  success: CheckCircle2,
+  warning: AlertTriangle,
+  danger: XCircle,
+  info: Info,
+  neutral: Info,
+  muted: Info,
+} as const;
 
 export function Notice({
   tone,
   title,
   children,
+  className,
 }: {
   tone: Tone;
   title: string;
   children?: ReactNode;
+  className?: string;
 }) {
+  const Icon = ICON[tone];
   return (
-    <div className={`rounded-md border-l-4 p-4 ${WRAPPER[tone]}`}>
-      <p className={`text-sm font-semibold ${TITLE[tone]}`}>{title}</p>
-      {children && <div className="mt-1 text-sm text-ink">{children}</div>}
+    <div
+      role={tone === "danger" ? "alert" : undefined}
+      className={cn("flex gap-3 rounded-lg border p-3.5", WRAPPER[tone], className)}
+    >
+      <Icon size={18} aria-hidden className={cn("mt-px flex-none", TITLE[tone])} />
+      <div className="min-w-0">
+        <p className={cn("text-sm font-semibold", TITLE[tone])}>{title}</p>
+        {children && <div className="mt-0.5 text-sm text-foreground">{children}</div>}
+      </div>
     </div>
   );
 }

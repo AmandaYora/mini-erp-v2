@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { productsService } from "@/modules/products/services/products.service";
 import { expandLabelTargets } from "@/modules/print/lib/labels";
+import { LEGACY_UA_CSS } from "@/modules/print/styles";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 
 interface LabelRow {
@@ -79,7 +80,7 @@ export default function ProductLabelsPrintPage() {
 
   return (
     <>
-      <style>{LABEL_CSS}</style>
+      <style>{LEGACY_UA_CSS + LABEL_CSS}</style>
       <div className="no-print print-toolbar">
         <span className="hint">
           {loading ? "Memuat label…" : `${rows.length} label — potong mengikuti garis putus-putus.`}

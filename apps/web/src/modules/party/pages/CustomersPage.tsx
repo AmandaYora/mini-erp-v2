@@ -1,52 +1,56 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  Badge,
   Button,
   DataTable,
-  FilterBar,
-  FormField,
   PageHeader,
   Pagination,
+  SearchInput,
   SectionCard,
-  TextInput,
+  StatusBadge,
 } from "@/shared/components/ui";
 import type { SearchSelectOption } from "@/shared/components/ui";
-import { Notice } from "@/shared/components/feedback/notice";
-import { statusLabel, statusTone } from "@/shared/lib/format";
+import { ArchiveViewToggle, DocNumber, Page, Toolbar } from "@/shared/components/patterns";
+import type { ActiveFilter } from "@/shared/components/patterns";
+import { formatDate } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { customerService, memberTypeService } from "@/modules/party/services/party.service";
 import { PartyFormModal, PartyStatusFilter } from "@/modules/party/components/PartyFormModal";
+import {
+  PARTY_LIST_DEFAULTS,
+  partyListFilterSchema,
+  partyStatusLabel,
+  partyStatusParam,
+} from "@/modules/party/schemas/party-list-filter.schema";
 import type { PartyFormValues } from "@/modules/party/schemas/party.schema";
+import { rowsToAttrs } from "@/shared/lib/key-value";
 import type { Customer } from "@/modules/party/types";
 
 const LIMIT = 20;
 
 export default function CustomersPage() {
+  const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const canCreate = can("customers.create");
 
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
-  const [page, setPage] = useState(1);
+  const { filters, setFilters } = useUrlFilters(partyListFilterSchema, PARTY_LIST_DEFAULTS);
   const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsyncData(
-    () =>
+    (signal) =>
       customerService
-        .list({ search, status, page, limit: LIMIT })
+        .list({ search: filters.search, status: partyStatusParam(filters.status), page: filters.page, limit: LIMIT }, signal)
         .then((res) => ({ items: res.items, total: res.meta.total })),
-    [search, status, page],
+    [filters.search, filters.status, filters.page],
   );
-  const items = data?.items ?? [];
+  const items = data?.items ?? null;
   const total = data?.total ?? 0;
 
   // Opsi member untuk form buat. Gagal muat (mis. tanpa permission
@@ -69,12 +73,6 @@ export default function CustomersPage() {
   const memberOptions: SearchSelectOption[] = memberData?.options ?? [];
   const memberLoadOk = memberData?.ok ?? false;
 
-  function applySearch(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSearch(searchInput);
-    setPage(1);
-  }
-
   function openCreate() {
     setModalError(null);
     setModalOpen(true);
@@ -92,10 +90,11 @@ export default function CustomersPage() {
         address: values.address === "" ? undefined : values.address,
         notes: values.notes === "" ? undefined : values.notes,
         memberTypeId: values.memberTypeId ?? undefined,
+        attributes: rowsToAttrs(values.attrs),
       });
       toast.fromServer(res.message, "Customer dibuat");
       setModalOpen(false);
-      if (page !== 1) setPage(1);
+      if (filters.page !== 1) setFilters({ page: 1 });
       else reload();
     } catch (err) {
       setModalError(toApiError(err).message);
@@ -104,105 +103,87 @@ export default function CustomersPage() {
     }
   }
 
+  const active: ActiveFilter[] = [];
+  if (filters.status !== PARTY_LIST_DEFAULTS.status)
+    active.push({
+      key: "status",
+      label: `Status: ${partyStatusLabel(filters.status)}`,
+      onRemove: () => setFilters({ status: PARTY_LIST_DEFAULTS.status }),
+    });
+  const filtered = active.length > 0 || filters.search !== "";
+  const addButton = canCreate ? <Button onClick={openCreate}>Tambah Customer</Button> : undefined;
+
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Master"
         title="Pelanggan"
-        description="Daftar customer — klik nama untuk melihat detail dan buku alamat."
-        actions={
-          canCreate ? <Button onClick={openCreate}>Tambah Customer</Button> : undefined
-        }
+        description="Daftar customer — klik baris untuk melihat detail dan buku alamat."
+        actions={addButton}
       />
 
-      <FilterBar>
-        <form onSubmit={applySearch} className="flex flex-wrap items-end gap-4">
-          <div className="min-w-52 flex-1">
-            <FormField label="Cari">
-              <TextInput
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Kode / nama / telepon…"
-              />
-            </FormField>
-          </div>
-          <PartyStatusFilter
-            value={status}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-            }}
+      <Toolbar
+        search={
+          <SearchInput
+            aria-label="Cari pelanggan"
+            placeholder="Cari kode, nama, atau telepon…"
+            value={filters.search}
+            onSearch={(v) => setFilters({ search: v })}
           />
-          <Button type="submit" variant="secondary">
-            Cari
-          </Button>
-        </form>
-      </FilterBar>
+        }
+        primary={<PartyStatusFilter value={filters.status} onChange={(v) => setFilters({ status: v })} />}
+        right={
+          <ArchiveViewToggle
+            showingArchive={filters.status === "archived"}
+            onChange={(show) => setFilters({ status: show ? "archived" : "active" })}
+          />
+        }
+        active={active}
+        onClearAll={() => setFilters(PARTY_LIST_DEFAULTS)}
+      />
 
-      {error && (
-        <div className="mb-4">
-          <Notice tone="danger" title={error}>
-            <button
-              type="button"
-              onClick={() => reload()}
-              className="cursor-pointer font-semibold text-brand hover:underline"
-            >
-              Coba lagi
-            </button>
-          </Notice>
-        </div>
-      )}
-
-      <SectionCard>
-        {loading && items.length === 0 ? (
-          <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-        ) : (
-          <>
-            <DataTable<Customer>
-              rows={items}
-              rowKey={(r) => r.id}
-              emptyTitle="Belum ada customer"
-              emptyDescription="Tambah customer baru atau ubah kata kunci pencarian."
-              columns={[
-                { header: "Kode", render: (r) => <span className="font-medium">{r.code}</span> },
-                {
-                  header: "Nama",
-                  render: (r) => (
-                    <Link
-                      to={`${ROUTE_PATHS.customers}/${r.id}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      {r.name}
-                    </Link>
-                  ),
-                },
-                { header: "Telepon", render: (r) => r.phone || "-" },
-                { header: "Member", render: (r) => r.member?.code ?? "-" },
-                {
-                  header: "Status",
-                  render: (r) => <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>,
-                },
-                {
-                  header: "Aksi",
-                  align: "right",
-                  render: (r) => (
-                    <Link
-                      to={`${ROUTE_PATHS.customers}/${r.id}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      Detail
-                    </Link>
-                  ),
-                },
-              ]}
-            />
-            <Pagination
-              page={page}
-              limit={LIMIT}
-              total={total}
-              onPageChange={(p) => setPage(p)}
-            />
-          </>
+      <SectionCard flush>
+        <DataTable<Customer>
+          rows={items}
+          rowKey={(r) => r.id}
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          caption="Daftar pelanggan"
+          onRowClick={(r) => navigate(`${ROUTE_PATHS.customers}/${r.id}`)}
+          emptyTitle={filtered ? "Tidak ada customer yang cocok dengan filter ini" : "Belum ada customer"}
+          emptyDescription={
+            filtered ? "Ubah kata kunci atau hapus filter." : "Tambah customer pertama untuk mulai berjualan."
+          }
+          emptyAction={
+            filtered ? (
+              <Button variant="secondary" onClick={() => setFilters(PARTY_LIST_DEFAULTS)}>
+                Hapus filter
+              </Button>
+            ) : (
+              addButton
+            )
+          }
+          columns={[
+            { header: "Kode", render: (r) => <DocNumber value={r.code} /> },
+            {
+              header: "Nama",
+              render: (r) => (
+                <Link to={`${ROUTE_PATHS.customers}/${r.id}`} className="font-medium text-primary hover:underline">
+                  {r.name}
+                </Link>
+              ),
+            },
+            { header: "Telepon", render: (r) => r.phone || "–" },
+            { header: "Member", render: (r) => r.member?.code ?? "–" },
+            { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
+            // Kolom tanggal arsip hanya di tampilan yang memuat arsip.
+            ...(filters.status !== "active"
+              ? [{ header: "Diarsipkan pada", render: (r: Customer) => (r.archivedAt ? formatDate(r.archivedAt) : "–") }]
+              : []),
+          ]}
+        />
+        {!error && (
+          <Pagination page={filters.page} limit={LIMIT} total={total} onPageChange={(p) => setFilters({ page: p })} />
         )}
       </SectionCard>
 
@@ -210,7 +191,7 @@ export default function CustomersPage() {
         <PartyFormModal
           open
           title="Tambah Customer"
-          description="Kode opsional — kosongkan untuk kode otomatis (PLG-…)."
+          description="Kode opsional — kosongkan untuk kode otomatis (CUS-001, berurutan)."
           initial={null}
           withMember
           memberLoadOk={memberLoadOk}
@@ -221,6 +202,6 @@ export default function CustomersPage() {
           onSubmit={(v) => void handleCreate(v)}
         />
       )}
-    </div>
+    </Page>
   );
 }

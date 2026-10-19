@@ -13,6 +13,24 @@ describe("estimateLine", () => {
   });
 });
 
+describe("estimateLine manual price", () => {
+  it("uses manual price over catalog", () => {
+    expect(
+      estimateLine({ qty: 2, catalogPrice: 15000, manualPrice: 12000, discountPct: 0, discountNominal: 0 }),
+    ).toBe(24000);
+  });
+  it("treats null manual price as catalog", () => {
+    expect(
+      estimateLine({ qty: 2, catalogPrice: 15000, manualPrice: null, discountPct: 0, discountNominal: 0 }),
+    ).toBe(30000);
+  });
+  it("allows a manual price of zero", () => {
+    expect(
+      estimateLine({ qty: 2, catalogPrice: 15000, manualPrice: 0, discountPct: 0, discountNominal: 0 }),
+    ).toBe(0);
+  });
+});
+
 describe("estimateTotal", () => {
   it("sums lines", () => {
     expect(

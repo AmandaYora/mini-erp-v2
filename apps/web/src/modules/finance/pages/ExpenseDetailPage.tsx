@@ -1,94 +1,69 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import {
-  Badge,
-  Button,
-  ConfirmDialog,
-  PageHeader,
-  SectionCard,
-} from "@/shared/components/ui";
+import { Ban } from "lucide-react";
+import { Button, DetailSkeleton, PageHeader, SectionCard, StatusBadge } from "@/shared/components/ui";
+import { ActionMenu, DescriptionList, DocNumber, DocumentRail, Money, Page } from "@/shared/components/patterns";
+import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
-import { EmptyState } from "@/shared/components/feedback/empty-state";
-import {
-  formatDate,
-  formatIDR,
-  statusLabel,
-  statusTone,
-} from "@/shared/lib/format";
+import { NotFoundState } from "@/shared/components/feedback/not-found-state";
+import { formatDate } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { financeService } from "@/modules/finance/services/finance.service";
+import { EXPENSE_RAIL_STEPS, expenseRailCurrent, expenseRelated } from "@/modules/finance/lib/document-rails";
+import { CancelExpenseModal } from "@/modules/finance/components/CancelExpenseModal";
 
-// Detail biaya: GET /expenses/:id + Batalkan (POST /:id/cancel tanpa body,
-// hanya saat posted, gate finance.post). Menautkan jurnal otomatisnya.
+// Detail biaya (T2): GET /expenses/:id. Batalkan (POST /:id/cancel {reason}) hanya saat posted
+// dan berizin finance.expense.cancel; jurnal otomatisnya tertaut di Rel Dokumen.
 export default function ExpenseDetailPage() {
   const { id } = useParams();
   const expenseId = Number(id);
   const can = useAuthStore((s) => s.can);
-  const canPost = can("finance.post");
+  const canCancel = can("finance.expense.cancel");
 
-  const { data, loading, error, reload } = useAsyncData(
-    () => {
-      if (!Number.isFinite(expenseId) || expenseId <= 0) {
-        return Promise.reject(new Error("ID biaya tidak valid"));
-      }
-      return Promise.all([
-        financeService.expense(expenseId),
-        financeService.accounts("active"),
-      ])
-        .then(([res, accs]) => ({ expense: res, accounts: accs }))
-        .catch((err) => {
-          const apiErr = toApiError(err);
-          toast.danger("Gagal memuat biaya", apiErr.message);
-          throw err;
-        });
-    },
-    [expenseId],
-  );
+  const { data, loading, error, errorStatus, reload } = useAsyncData(() => {
+    if (!Number.isFinite(expenseId) || expenseId <= 0) return Promise.reject(new Error("ID biaya tidak valid"));
+    return Promise.all([financeService.expense(expenseId), financeService.accounts("active")]).then(([res, accs]) => ({
+      expense: res,
+      accounts: accs ?? [],
+    }));
+  }, [expenseId]);
   const expense = data?.expense ?? null;
   const accounts = data?.accounts ?? [];
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  usePageCrumb(expense?.number);
 
-  async function handleCancel() {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  async function handleCancel(reason: string) {
     if (!expense) return;
+    setCancelling(true);
     try {
-      const res = await financeService.cancelExpense(expense.id);
+      const res = await financeService.cancelExpense(expense.id, reason);
       toast.fromServer(res.message, "Biaya dibatalkan", res.data.number);
       setConfirmOpen(false);
       reload();
     } catch (err) {
       toast.danger("Gagal membatalkan biaya", toApiError(err).message);
+    } finally {
+      setCancelling(false);
     }
   }
 
-  if (loading && !expense) {
-    return (
-      <div>
-        <PageHeader eyebrow="Keuangan" title="Detail Biaya" />
-        <p className="text-muted py-8 text-center text-sm">Memuat…</p>
-      </div>
-    );
+  if (loading && !expense) return <DetailSkeleton />;
+  if (errorStatus === 404 || (!error && !expense)) {
+    return <NotFoundState title="Biaya tidak ditemukan" message="Biaya ini tidak ada atau sudah dihapus." backTo={ROUTE_PATHS.financeExpenses} backLabel="Ke daftar biaya" />;
   }
-
   if (error || !expense) {
     return (
-      <div>
-        <PageHeader eyebrow="Keuangan" title="Detail Biaya" />
-        <EmptyState
-          title={error ?? "Biaya tidak ditemukan"}
-          action={
-            <Link
-              to={ROUTE_PATHS.financeExpenses}
-              className="font-medium text-brand hover:underline"
-            >
-              Kembali ke Biaya
-            </Link>
-          }
-        />
-      </div>
+      <Page>
+        <PageHeader title="Detail biaya" />
+        <ErrorState message={error ?? "Biaya tidak dapat dimuat"} onRetry={reload} />
+      </Page>
     );
   }
 
@@ -96,90 +71,57 @@ export default function ExpenseDetailPage() {
     const a = accounts.find((x) => x.id === accId);
     return a ? `${a.code} — ${a.name}` : `#${accId}`;
   };
-  const cancellable = canPost && expense.status === "posted";
+  const cancelled = expense.status === "cancelled";
+  const cancellable = canCancel && expense.status === "posted";
 
   return (
-    <div>
+    <Page>
       <PageHeader
-        eyebrow="Keuangan"
         title={expense.number}
-        description={`${accountName(expense.expenseAccountId)} · ${formatDate(expense.date)}`}
+        meta={<StatusBadge status={expense.status} />}
+        subtitle={`${accountName(expense.expenseAccountId)} · ${formatDate(expense.date)}`}
         actions={
-          cancellable ? (
-            <Button variant="danger" onClick={() => setConfirmOpen(true)}>
-              Batalkan Biaya
-            </Button>
-          ) : undefined
-        }
-      />
-
-      {expense.status === "cancelled" && (
-        <div className="mb-4">
-          <Notice tone="danger" title="Biaya ini sudah dibatalkan" />
-        </div>
-      )}
-
-      <SectionCard
-        title="Informasi"
-        actions={
-          <Badge tone={statusTone(expense.status)}>
-            {statusLabel(expense.status)}
-          </Badge>
+          <>
+            {expense.journalEntryId > 0 && (
+              <Button asChild variant="secondary" size="sm">
+                <Link to={`${ROUTE_PATHS.financeJournals}/${expense.journalEntryId}`}>Buka jurnal</Link>
+              </Button>
+            )}
+            {cancellable && (
+              <ActionMenu
+                items={[{ key: "cancel", label: "Batalkan biaya", icon: <Ban aria-hidden />, destructive: true, onSelect: () => setConfirmOpen(true) }]}
+              />
+            )}
+          </>
         }
       >
-        <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-muted">Tanggal</dt>
-            <dd className="font-medium text-ink">{formatDate(expense.date)}</dd>
-          </div>
-          <div>
-            <dt className="text-muted">Akun Beban</dt>
-            <dd className="font-medium text-ink">
-              {accountName(expense.expenseAccountId)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-muted">Dibayar Dari</dt>
-            <dd className="font-medium text-ink">
-              {accountName(expense.payAccountId)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-muted">Nominal</dt>
-            <dd className="font-medium text-ink">
-              {formatIDR(expense.amount)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-muted">Catatan</dt>
-            <dd className="font-medium text-ink">{expense.notes || "-"}</dd>
-          </div>
-          <div>
-            <dt className="text-muted">Jurnal</dt>
-            <dd className="font-medium text-ink">
-              {expense.journalEntryId > 0 ? (
-                <Link
-                  to={`${ROUTE_PATHS.financeJournals}/${expense.journalEntryId}`}
-                  className="text-brand hover:underline"
-                >
-                  Buka jurnal
-                </Link>
-              ) : (
-                "-"
-              )}
-            </dd>
-          </div>
-        </dl>
+        <DocumentRail steps={EXPENSE_RAIL_STEPS} current={expenseRailCurrent(expense)} stopped={cancelled} related={expenseRelated(expense)} />
+      </PageHeader>
+
+      {cancelled && (
+        <Notice tone="info" title="Biaya ini sudah dibatalkan">
+          {expense.cancelReason ? `Alasan: ${expense.cancelReason}` : "Jurnalnya sudah dibalik."}
+        </Notice>
+      )}
+
+      <SectionCard title="Informasi">
+        <DescriptionList
+          columns={3}
+          items={[
+            { label: "Nomor", value: <DocNumber value={expense.number} copyable /> },
+            { label: "Tanggal", value: formatDate(expense.date) },
+            { label: "Nominal", value: <Money value={expense.amount} className="font-medium" /> },
+            { label: "Akun beban", value: accountName(expense.expenseAccountId) },
+            { label: "Pihak lawan", value: expense.partyName || "-" },
+            { label: "Dibayar dari", value: accountName(expense.payAccountId) },
+            { label: "Catatan", value: expense.notes, wide: true },
+          ]}
+        />
       </SectionCard>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Batalkan Biaya?"
-        message={`Biaya ${expense.number} akan dibatalkan dan jurnalnya dibalik. Lanjutkan?`}
-        confirmLabel="Batalkan"
-        onConfirm={() => void handleCancel()}
-        onCancel={() => setConfirmOpen(false)}
-      />
-    </div>
+      {confirmOpen && (
+        <CancelExpenseModal number={expense.number} submitting={cancelling} onClose={() => setConfirmOpen(false)} onSubmit={(r) => void handleCancel(r)} />
+      )}
+    </Page>
   );
 }

@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 // Batasan tervalidasi dari backend (apps/api/internal/modules/finance):
-// - posting docType hanya goods_receipt|delivery|payment|sales_return|
-//   purchase_return (builders.go: buildLines).
+// - posting docType hanya goods_receipt|delivery|payment|sales_return|stock_movement|
+//   purchase_return | sales_return_settlement | purchase_return_settlement
+//   (builders.go: buildLines; K-04a: saldo customer/supplier dari retur).
 // - manual: memo wajib; lines ≥1; tiap baris TEPAT satu sisi >0 dan total
 //   debit == kredit > 0 (posting.go: insertEntry + Manual; akun dicari by
 //   CODE, huruf besar otomatis).
@@ -17,7 +18,16 @@ import { z } from "zod";
 
 export const postingFormSchema = z.object({
   docType: z.enum(
-    ["goods_receipt", "delivery", "payment", "sales_return", "purchase_return"],
+    [
+      "goods_receipt",
+      "delivery",
+      "payment",
+      "sales_return",
+      "purchase_return",
+      "sales_return_settlement",
+      "purchase_return_settlement",
+      "stock_movement",
+    ],
     {
       required_error: "Pilih tipe dokumen",
       invalid_type_error: "Pilih tipe dokumen",
@@ -112,6 +122,7 @@ export const expenseFormSchema = z
       .positive("Nominal harus lebih dari 0"),
     date: dateField,
     notes: z.string().max(500, "Catatan maksimal 500 karakter").optional(),
+    partyId: z.number().int().positive().optional(),
   })
   .superRefine((v, ctx) => {
     if (v.expenseAccountId === v.payAccountId) {
@@ -158,3 +169,44 @@ export const periodSchema = z.object({
 });
 
 export type PeriodValues = z.infer<typeof periodSchema>;
+
+export const cutoverSchema = z.object({
+  docType: z.string().min(1, "Pilih jenis dokumen"),
+  coveredThroughId: z.coerce
+    .number({ invalid_type_error: "ID harus angka" })
+    .int("ID harus bilangan bulat")
+    .min(0, "ID tidak boleh negatif"),
+});
+
+export type CutoverValues = z.infer<typeof cutoverSchema>;
+
+// Batal biaya: alasan wajib, maks 255 karakter (application/expenses.go).
+export const cancelExpenseSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Alasan pembatalan wajib diisi")
+    .max(255, "Alasan maksimal 255 karakter"),
+});
+
+export type CancelExpenseValues = z.infer<typeof cancelExpenseSchema>;
+
+// Buka kembali periode (fiskal & pajak): alasan wajib, maks 255 (finance reopenReason, FN-05).
+export const reopenPeriodSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Alasan membuka kembali periode wajib diisi")
+    .max(255, "Alasan maksimal 255 karakter"),
+});
+
+export type ReopenPeriodValues = z.infer<typeof reopenPeriodSchema>;
+
+// Abaikan dokumen dari antrian posting: alasan wajib, maks 255 (FN-01).
+export const ignorePostingSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Alasan wajib diisi")
+    .max(255, "Alasan maksimal 255 karakter"),
+});

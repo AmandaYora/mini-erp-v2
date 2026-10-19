@@ -19,6 +19,7 @@ import {
   withPaperModeParam,
   type PrintPaperMode,
 } from "@/modules/print/paper";
+import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import {
   fetchDeliveryPrint,
@@ -40,7 +41,7 @@ export default function DeliveryNotePrintPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const { identity, paper, corrupt, loading: profileLoading } = usePrintProfile();
+  const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
 
   // Catatan bebas sebelum cetak — hanya hasil cetak, TIDAK disimpan ke API.
   const [printNotes, setPrintNotes] = useState("");
@@ -114,13 +115,7 @@ export default function DeliveryNotePrintPage() {
         onChange: (hidden) =>
           setSearchParams(withHideLetterheadParam(searchParams, hidden), { replace: true }),
       }}
-      notice={
-        corrupt ? (
-          <div className="no-print print-warning">
-            Profil kertas tersimpan rusak — memakai default 241,3 × 139,7 mm. Perbaiki di kalibrasi kertas.
-          </div>
-        ) : undefined
-      }
+      notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
       extraToolbar={
         <label className="print-toolbar-option" style={{ alignItems: "flex-start" }}>
           <span>Notes (opsional, hanya di hasil cetak):</span>

@@ -1,28 +1,34 @@
+import { cva } from "class-variance-authority";
 import type { ButtonSize, ButtonVariant } from "./button";
 
 /**
- * Kelas tombol bersama. File sendiri (tanpa komponen) agar button.tsx hanya
+ * Kelas tombol bersama (DS v2). File sendiri (tanpa komponen) agar button.tsx hanya
  * mengekspor komponen — nol peringatan react-refresh/only-export-components.
- * Di-re-export lewat shared/components/ui agar import lama tetap jalan.
+ * Dipakai juga untuk <Link> bergaya tombol: lebih baik `<Button asChild><Link/></Button>`.
  */
-const BASE =
-  "inline-flex cursor-pointer items-center justify-center rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+const buttonVariants = cva(
+  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-[background-color,border-color,color,box-shadow] duration-150 select-none active:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  {
+    variants: {
+      variant: {
+        primary: "bg-primary text-primary-foreground hover:bg-primary-hover",
+        secondary:
+          "border border-input bg-card text-foreground shadow-[var(--shadow-card)] hover:bg-accent hover:text-accent-foreground",
+        ghost: "text-primary hover:bg-accent",
+        danger: "bg-destructive text-white hover:brightness-95",
+      },
+      size: {
+        sm: "h-8 px-3 text-sm",
+        md: "h-9 px-4 text-sm",
+        lg: "h-11 px-5 text-base",
+        icon: "size-9",
+        "icon-sm": "size-8",
+      },
+    },
+    defaultVariants: { variant: "primary", size: "md" },
+  },
+);
 
-const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-brand text-white hover:bg-brand-hover",
-  secondary: "border border-hairline bg-surface text-ink hover:bg-surface-subtle",
-  ghost: "text-brand hover:bg-brand/10",
-  danger: "bg-bad text-white hover:opacity-90",
-};
-
-const SIZES: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-sm",
-  md: "px-4 py-2 text-[0.95rem]",
-};
-
-export function buttonClass(
-  variant: ButtonVariant = "primary",
-  size: ButtonSize = "md",
-): string {
-  return `${BASE} ${VARIANTS[variant]} ${SIZES[size]}`;
+export function buttonClass(variant: ButtonVariant = "primary", size: ButtonSize = "md"): string {
+  return buttonVariants({ variant, size });
 }

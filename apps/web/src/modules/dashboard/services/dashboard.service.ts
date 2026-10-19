@@ -9,7 +9,18 @@ import type {
   TopSeller,
 } from "@/modules/dashboard/types";
 
+// Status kanal WhatsApp asisten (DB-01) — izin assistant.view, bukan dashboard.view.
+export interface WhatsAppChannel {
+  connected: boolean;
+  phone?: string;
+  qrDataUrl?: string;
+  lastError?: string;
+}
+
 export const dashboardService = {
+  // GET /api/v1/assistant/channel — terhubung / menghubungkan (ada QR) / belum.
+  whatsappChannel: () => apiGet<WhatsAppChannel>("/api/v1/assistant/channel"),
+
   // GET /api/v1/dashboard/summary — snapshot operasional cabang aktif.
   summary: () => apiGet<DashboardSummary>("/api/v1/dashboard/summary"),
 

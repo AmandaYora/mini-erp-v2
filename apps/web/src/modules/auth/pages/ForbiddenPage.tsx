@@ -1,19 +1,19 @@
 import { Link } from "react-router-dom";
+import { ShieldOff } from "lucide-react";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
+import { buttonClass } from "@/shared/components/ui";
 
 export default function ForbiddenPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-subtle p-4">
-      <div className="w-full max-w-sm rounded-[10px] border border-hairline bg-surface p-8 text-center shadow-md">
-        <p className="text-4xl font-bold text-ink">403</p>
-        <h1 className="mt-2 font-semibold text-ink">Anda tidak memiliki akses</h1>
-        <p className="mt-1 text-sm text-muted">
-          Hubungi administrator jika Anda merasa ini keliru.
-        </p>
-        <Link
-          to={ROUTE_PATHS.dashboard}
-          className="mt-6 inline-block rounded-lg bg-brand px-4 py-2 font-semibold text-white hover:bg-brand-hover"
-        >
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <div className="flex w-full max-w-sm flex-col items-center rounded-xl border border-border bg-card p-8 text-center">
+        <span className="mb-3 flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <ShieldOff size={20} aria-hidden />
+        </span>
+        <p className="font-display text-3xl font-semibold text-foreground">403</p>
+        <h1 className="mt-1 text-lg font-semibold text-foreground">Anda tidak memiliki akses</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Hubungi administrator jika Anda merasa ini keliru.</p>
+        <Link to={ROUTE_PATHS.dashboard} className={`${buttonClass("primary", "md")} mt-6 hover:no-underline`}>
           Kembali ke Dashboard
         </Link>
       </div>

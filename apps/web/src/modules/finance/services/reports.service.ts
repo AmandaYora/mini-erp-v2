@@ -30,9 +30,11 @@
 // - GET /api/v1/finance/accounts[?status=] → ARRAY
 //   [{id,code,name,type,isCash,status}] (handler.go: ListAccounts).
 
-import { apiGet, httpClient } from "@/shared/services/http-client";
+import { apiGet, apiPage, httpClient } from "@/shared/services/http-client";
 import type {
   Account,
+  AgingReport,
+  CashFlowReport,
   BalanceSheetReport,
   CashSummaryReport,
   FiscalSummaryReport,
@@ -40,6 +42,7 @@ import type {
   ProductMarginRow,
   InventoryValueReport,
   LedgerLine,
+  LedgerOverview,
   MarginReport,
   ProfitLossReport,
   TaxDetailRow,
@@ -55,38 +58,83 @@ function fileNameFrom(header: unknown): string | null {
   return m ? m[1] : null;
 }
 
+/** ?branch= — kosong = cabang sesi; "all" atau id butuh finance.report.all_branches. */
+function branchParam(branch?: string): string | undefined {
+  return branch && branch !== "" ? branch : undefined;
+}
+
 export const financeReportsService = {
-  trialBalance: (year: number, month: number) =>
+  trialBalance: (year: number, month: number, branch?: string) =>
     apiGet<TrialBalanceReport>("/api/v1/finance/reports/trial-balance", {
       year,
       month,
+      branch: branchParam(branch),
     }),
 
-  profitLoss: (from: string, to: string) =>
+  /** Neraca saldo kumulatif sampai tanggal (?asOf=YYYY-MM-DD). */
+  trialBalanceAsOf: (asOf: string, branch?: string) =>
+    apiGet<TrialBalanceReport>("/api/v1/finance/reports/trial-balance", {
+      asOf,
+      branch: branchParam(branch),
+    }),
+
+  profitLoss: (from: string, to: string, branch?: string) =>
     apiGet<ProfitLossReport>("/api/v1/finance/reports/profit-loss", {
       from,
       to,
+      branch: branchParam(branch),
     }),
 
-  balanceSheet: (date: string) =>
+  balanceSheet: (date: string, branch?: string) =>
     apiGet<BalanceSheetReport>("/api/v1/finance/reports/balance-sheet", {
       date,
+      branch: branchParam(branch),
     }),
 
-  generalLedger: (account: string, from: string, to: string) =>
-    apiGet<LedgerLine[]>("/api/v1/finance/reports/general-ledger", {
+  /** Buku besar berpaginasi {items, meta}; halaman 1 memuat baris Saldo awal. */
+  generalLedger: (
+    account: string,
+    from: string,
+    to: string,
+    page = 1,
+    limit = 200,
+    branch?: string,
+  ) =>
+    apiPage<LedgerLine>("/api/v1/finance/reports/general-ledger", {
       account,
       from,
       to,
+      page,
+      limit,
+      branch: branchParam(branch),
     }),
 
-  taxSummary: (year: number, month: number) =>
-    apiGet<TaxSummary>("/api/v1/finance/reports/tax-summary", { year, month }),
-
-  taxDetail: (year: number, month: number) =>
-    apiGet<TaxDetailRow[]>("/api/v1/finance/reports/tax-detail", {
+  taxSummary: (year: number, month: number, branch?: string, page = 1, limit = 20) =>
+    apiGet<TaxSummary>("/api/v1/finance/reports/tax-summary", {
       year,
       month,
+      page,
+      limit,
+      branch: branchParam(branch),
+    }),
+
+  /** Buku besar semua akun (tanpa ?account=): saldo awal, mutasi, saldo akhir per akun (FN-08). */
+  generalLedgerOverview: async (from: string, to: string, page = 1, limit = 100, branch?: string) => {
+    const res = await httpClient.get<{
+      data: LedgerOverview;
+      meta: { page: number; limit: number; total: number; totalPages: number };
+    }>("/api/v1/finance/reports/general-ledger", { params: { from, to, page, limit, branch: branchParam(branch) } });
+    return { ...res.data.data, meta: res.data.meta };
+  },
+
+  /** Rincian PPN berpaginasi (kind sales | sales_return | purchase). */
+  taxDetail: (year: number, month: number, page = 1, limit = 200, branch?: string) =>
+    apiPage<TaxDetailRow>("/api/v1/finance/reports/tax-detail", {
+      year,
+      month,
+      page,
+      limit,
+      branch: branchParam(branch),
     }),
 
   /** Unduh kertas kerja SPT — CSV mentah (?format=csv), bukan envelope JSON. */
@@ -106,34 +154,63 @@ export const financeReportsService = {
     URL.revokeObjectURL(url);
   },
 
-  inventoryValue: () =>
-    apiGet<InventoryValueReport>("/api/v1/finance/reports/inventory-value"),
+  inventoryValue: (branch?: string) =>
+    apiGet<InventoryValueReport>("/api/v1/finance/reports/inventory-value", { branch: branchParam(branch) }),
 
-  margin: (from: string, to: string) =>
-    apiGet<MarginReport>("/api/v1/finance/reports/margin", { from, to }),
+  margin: (from: string, to: string, branch?: string) =>
+    apiGet<MarginReport>("/api/v1/finance/reports/margin", {
+      from,
+      to,
+      branch: branchParam(branch),
+    }),
 
-  marginByProduct: (from: string, to: string, limit?: number) =>
+  marginByProduct: (from: string, to: string, limit?: number, branch?: string) =>
     apiGet<ProductMarginRow[]>("/api/v1/finance/reports/margin-by-product", {
       from,
       to,
       limit: limit && limit > 0 ? limit : undefined,
+      branch: branchParam(branch),
     }),
 
-  receivables: (asOf?: string) =>
+  receivables: (asOf?: string, branch?: string) =>
     apiGet<PartyBalanceReport>("/api/v1/finance/reports/receivables", {
       asOf: asOf ? asOf : undefined,
+      branch: branchParam(branch),
     }),
 
-  payables: (asOf?: string) =>
+  payables: (asOf?: string, branch?: string) =>
     apiGet<PartyBalanceReport>("/api/v1/finance/reports/payables", {
       asOf: asOf ? asOf : undefined,
+      branch: branchParam(branch),
+    }),
+
+  /** Umur per dokumen (?view=documents) — cabang sesi saja. */
+  receivableDocuments: (asOf?: string) =>
+    apiGet<AgingReport>("/api/v1/finance/reports/receivables", {
+      view: "documents",
+      asOf: asOf ? asOf : undefined,
+    }),
+
+  payableDocuments: (asOf?: string) =>
+    apiGet<AgingReport>("/api/v1/finance/reports/payables", {
+      view: "documents",
+      asOf: asOf ? asOf : undefined,
+    }),
+
+  /** Laporan kas rentang: saldo awal, masuk, keluar, akhir per rekening. */
+  cashFlow: (from: string, to: string, branch?: string) =>
+    apiGet<CashFlowReport>("/api/v1/finance/reports/cash-summary", {
+      from,
+      to,
+      branch: branchParam(branch),
     }),
 
   /** Ringkasan kas — posisi per rekening is_cash (tanpa tabel kas). */
-  cashSummary: (year: number, month: number) =>
+  cashSummary: (year: number, month: number, branch?: string) =>
     apiGet<CashSummaryReport>("/api/v1/finance/reports/cash-summary", {
       year,
       month,
+      branch: branchParam(branch),
     }),
 
   /** Rekonsiliasi fiskal — laba komersil → laba fiskal per rentang. */
@@ -156,9 +233,10 @@ export const financeReportsService = {
     year: number,
     month: number,
     variant: "actual" | "capped" = "actual",
+    branch?: string,
   ): Promise<void> => {
     const res = await httpClient.get("/api/v1/finance/export/tax-package", {
-      params: { year, month, variant },
+      params: { year, month, variant, branch: branchParam(branch) },
       responseType: "blob",
     });
     const blob = new Blob([res.data], {
@@ -169,6 +247,30 @@ export const financeReportsService = {
     a.href = url;
     a.download = fileNameFrom(res.headers["content-disposition"])
       ?? `paket-pajak-${year}-${String(month).padStart(2, "0")}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
+  /** Paket pajak untuk rentang tanggal bebas (FN-04); varian "capped" harus dalam satu tahun pajak. */
+  downloadTaxPackageRange: async (
+    from: string,
+    to: string,
+    variant: "actual" | "capped" = "actual",
+    branch?: string,
+  ): Promise<void> => {
+    const res = await httpClient.get("/api/v1/finance/export/tax-package", {
+      params: { from, to, variant, branch: branchParam(branch) },
+      responseType: "blob",
+    });
+    const blob = new Blob([res.data], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileNameFrom(res.headers["content-disposition"]) ?? `paket-pajak-${from}_${to}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
