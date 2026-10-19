@@ -40,10 +40,12 @@ npm run dev:web          # Vite dev server
 npm run dev:api          # Go API via air
 ```
 
-Seed a development dataset (owner role, head branch, chart of accounts):
+Seed a development dataset (catalog, system roles, chart, head branch):
 
 ```bash
-cd apps/api && go run ./cmd/seed
+cd apps/api && go run ./cmd/seed init   # idempotent
+go run ./cmd/seed admin                 # first owner user (prints a generated
+                                        # password once, or set BOOTSTRAP_ADMIN_PASSWORD)
 ```
 
 ## Verification

@@ -1,8 +1,11 @@
 # Database Schema — Mini ERP (Revamp)
 
-Status: **kontrak kepemilikan tabel yang sudah terkunci** — 56 tabel nyata di
-`apps/api/migrations/` (000001–000018), turun dari 70 entity sistem lama.
-Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi tiap tabel warisan.
+Status: **kontrak kepemilikan tabel yang sudah terkunci** — 65 tabel nyata: 18 berkas baseline per
+modul, `apps/api/migrations/` (`000001_user` … `000018_assistant`), ditambah migrasi bernomor
+sesudah baseline (`000019`–`000023`, `000031`; nomor 000024–000030 sengaja kosong) — turun dari 70
+entity sistem lama. Daftar tabel di §3 dibangkitkan dari berkas itu (`node scripts/db-schema-doc.mjs`;
+`--check` dijalankan CI/verify). Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi
+tiap tabel warisan; **riwayat migrasi bernomor (kolom/tabel baru sesudah baseline) ada di §8**.
 
 ## 1. Aturan Wajib
 
@@ -20,9 +23,10 @@ Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi tiap tabel wa
    didesain).
 5. **Timestamp `DATETIME(6)` UTC di kolom**, dikonversi ke `Asia/Jakarta` di lapisan aplikasi saat
    ditampilkan/difilter — bukan disimpan sudah dalam waktu lokal seperti sebagian sistem lama.
-6. Migrasi lewat `golang-migrate`, **bernomor & terlacak** (`apps/api/migrations/NNNNNN_*.up.sql` /
-   `.down.sql`) — ada tabel versi migrasi bawaan, tidak seperti runner sistem lama yang menjalankan
-   ulang seluruh migrasi tiap start.
+6. Migrasi lewat `golang-migrate`, **bernomor & terlacak** (`apps/api/migrations/NNNNNN_<modul>[_<perubahan>].up.sql` /
+   `.down.sql`, satu berkas = satu modul) — ada tabel versi migrasi bawaan, tidak seperti runner sistem
+   lama yang menjalankan ulang seluruh migrasi tiap start. Nama berkas = pemilik tabel (arch-check Rule T/F);
+   cara menambah migrasi: [BACKEND_GUIDE](../knowledge/BACKEND_GUIDE.md).
 7. **Tanpa scoping perusahaan** (lihat ADR-0009): tidak ada kolom `company_id` di tabel mana pun,
    tidak ada unique constraint ber-scope perusahaan — keunikan bersifat global, atau per-cabang
    untuk entity yang terikat cabang (ditetapkan per modul).
@@ -41,13 +45,43 @@ Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi tiap tabel wa
 
 Disarikan dari ~70 entity sistem lama (
 [legacy-reference/00-overview.md](legacy-reference/00-overview.md) §1), dipetakan ke 20 modul
-baru. Nama tabel di bawah **dikunci** — cerminan migrasi 000001–000018 yang sudah terbit.
+baru. Nama tabel **dikunci** dan sumber kebenarannya adalah berkas migrasi per modul — daftar
+otomatis berikut dibangkitkan darinya; subbagian per modul sesudahnya adalah narasi tujuan tabel.
+
+<!-- BEGIN GENERATED: tables (scripts/db-schema-doc.mjs) -->
+Daftar di bawah DIBANGKITKAN dari berkas baseline (`node scripts/db-schema-doc.mjs`); jangan diedit manual.
+Kepemilikan tabel = nama berkas migrasi (`NNNNNN_<modul>.up.sql`) dan ditegakkan arch-check Rule T/F.
+Modul `dashboard` dan `reporting` tidak memiliki tabel.
+
+| Modul | Berkas migrasi | Tabel | Jumlah |
+|---|---|---|---|
+| `user` | `000001_user.up.sql` | `authz_seed_applied`, `permissions`, `roles`, `role_permissions`, `users`, `user_branch_access`, `user_roles` | 7 |
+| `auth` | `000002_auth.up.sql` | `user_sessions` | 1 |
+| `branch` | `000003_branch.up.sql` | `branches`, `branch_document_sequences` | 2 |
+| `company` | `000004_company.up.sql` | `company_profile`, `company_settings` | 2 |
+| `media` | `000005_media.up.sql` | `media_files` | 1 |
+| `product` | `000006_product.up.sql` | `product_categories`, `products`, `product_variants` | 3 |
+| `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
+| `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
+| `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql` | `purchase_orders`, `purchase_order_items` | 2 |
+| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
+| `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
+| `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
+| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql` | `payments`, `payment_allocations` | 2 |
+| `salesreturn` | `000014_salesreturn.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
+| `purchasereturn` | `000015_purchasereturn.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
+| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta` | 14 |
+| `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
+| `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
+| **Total** | 18 berkas modul | | **65** |
+<!-- END GENERATED: tables -->
 
 ### `audit` (L0)
 
 | Tabel | Untuk apa |
 |---|---|
-| `audit_logs` | `action_key` (`resource.action`), `entity_type`+`entity_id`, `branch_id` (NULL = event global), `actor_id`, `note` — ditulis semua modul penulis via `AuditClient.Log` **best-effort setelah komit** (tak pernah menggagalkan operasi); v1 mencatat aksi, bukan diff before/after. Dikunci migrasi `000017` (L8) |
+| `audit_logs` | `action_key` (`resource.action`), `entity_type`+`entity_id`, `branch_id` (NULL = event global), `actor_id`, `note` — ditulis modul penulis lewat `AuditClient` (jalur uang/stok: `LogTx` di DALAM transaksi yang sama, ADR-0011; jalur lain: `Log` best-effort setelah komit). Dikunci baseline `000017_audit` |
+| `audit_log_details` | Satu baris per `audit_logs` (FK dalam modul, `ON DELETE CASCADE`): `before_json`, `after_json`, `metadata_json` — diff sebelum/sesudah dan konteks yang tak muat di `note` |
 
 ### `assistant` (L9)
 
@@ -63,7 +97,7 @@ cryptostore whatsmeow — bukan MySQL). Tulis bot dikecualikan dari `audit_logs`
 | `assistant_threads` | Thread per nomor pengirim (branch opsional) |
 | `assistant_messages` | Pesan in/out per thread (status received/processed/failed, run_id) |
 | `assistant_runs` | Tiap eksekusi (intent, mode, status, answer, duration_ms, failure_reason) |
-| `assistant_tool_executions` | Tiap tool per run (seq, input/output JSON) |
+| `assistant_tool_executions` | Tiap tool per run (seq, input/output JSON, `status` success/failed, `error_text`; kolom status ditambah migrasi `000020_assistant_tool_status`, AS-02) |
 
 ### `media` (L0)
 
@@ -87,6 +121,7 @@ cryptostore whatsmeow — bukan MySQL). Tulis bot dikecualikan dari `audit_logs`
 | `role_permissions` | Pivot role↔permission |
 | `user_roles` | Pivot user↔role |
 | `user_branch_access` | Cabang mana yang boleh diakses tiap user + penanda default |
+| `authz_seed_applied` | Pelacak pasangan role→permission yang sudah pernah di-seed, supaya seed ulang tidak menghidupkan kembali izin yang sengaja dicabut |
 
 ### `company` (L1)
 
@@ -122,10 +157,10 @@ cryptostore whatsmeow — bukan MySQL). Tulis bot dikecualikan dari `audit_logs`
 
 | Tabel | Untuk apa |
 |---|---|
-| `stock_locations` | Lokasi/gudang, termasuk hierarki lokasi daun |
+| `stock_locations` | Lokasi/gudang, termasuk hierarki lokasi daun; atribut alokasi `is_picking_area`, `is_primary`, `sort_order` (migrasi `000021`, ST-01) |
 | `stock_balances` | Saldo per produk/varian per lokasi |
 | `stock_movements` | Setiap mutasi (in/out), selalu berpasangan dengan perubahan `stock_balances` (kontrak §7 SYSTEM_DESIGN) |
-| `stock_transfers` + `stock_transfer_items` | Transfer antar lokasi (dicatat sebagai dua `stock_movements`, bukan tipe `transfer` sendiri) |
+| `stock_transfers` + `stock_transfer_items` | Transfer antar lokasi (dicatat sebagai dua `stock_movements`, bukan tipe `transfer` sendiri); muka dokumen `driver_name`, `vehicle_plate`, `transfer_date` (WIB, migrasi `000021`, ST-02) |
 | `stock_reservations` | Reservasi stok (mis. saat order dibuat sebelum dikirim) |
 
 Saldo awal go-live dibukukan langsung sebagai mutasi `in` ber-referensi `opening`
@@ -138,14 +173,14 @@ cukup untuk penelusuran di bawah HPP moving-average (lihat §6).
 
 | Tabel | Untuk apa |
 |---|---|
-| `purchase_orders` | Header PO ke supplier (`party_id` primitif ke `party`) |
-| `purchase_order_items` | Baris PO — **snapshot** harga & nama produk saat itu (kontrak §7), bukan join ke `products` hidup |
+| `purchase_orders` | Header PO ke supplier (`party_id` primitif ke `party`). `000022_purchasing_tax_invoice`: `tax_invoice_number`/`tax_invoice_date` (faktur pajak supplier); `supplier_invoice_*` tetap sumber PPN Masukan; `assigned_user_id` = penanggung jawab (primitif ke `user`); `created_by` ditampilkan sebagai "Dibuat Oleh" |
+| `purchase_order_items` | Baris PO — **snapshot** harga & nama produk saat itu (kontrak §7), bukan join ke `products` hidup. `tax_rate` (`000022`, PO-03) = tarif pajak yang dipakai baris (tarif baris, atau tarif order; 0 bila bebas pajak); ETL memetakan `tax_rate_snapshot` legacy |
 
 ### `sales` (L4)
 
 | Tabel | Untuk apa |
 |---|---|
-| `sales_orders` | Header SO ke customer, termasuk `channel` (`regular`/`pos`) |
+| `sales_orders` | Header SO ke customer, termasuk `channel` (`regular`/`pos`); `assigned_user_id` = penanggung jawab; `credit_approved_by`/`credit_approved_at` (migrasi `000019_sales`, SL-09) = siapa/kapan kredit disetujui, diisi satu pernyataan dengan peralihan ke termin net; snapshot alamat kirim (`ship_to_*`) boleh berisi alamat sekali pakai dengan `ship_to_address_id` NULL (SL-01). ETL memetakan `id_assigned_user`, `credit_approved_by/at` |
 | `sales_order_items` | Baris SO — snapshot harga (termasuk harga member yang sudah dihitung saat itu) |
 
 ### `goodsreceipt` (L5)
@@ -169,7 +204,7 @@ Bukti kirim (foto/dokumen) dicatat langsung sebagai baris `media_files` ber-owne
 
 | Tabel | Untuk apa |
 |---|---|
-| `payments` | Pembayaran masuk/keluar, menunjuk order (primitif, lintas modul `purchasing`/`sales`) |
+| `payments` | Pembayaran masuk/keluar, menunjuk order (primitif, lintas modul `purchasing`/`sales`). `000023_payment_credit_source` (N-41): `credit_source_type`/`credit_source_id` = retur sumber saldo pada pasangan kaki **pakai saldo uang muka** (kaki retur method `offset`, kaki tagihan method `advance`); jumlah saldo terpakai sebuah retur = Σ alokasi aktif ke retur itu oleh kaki yang menyebutnya sebagai sumber. Legacy tak punya alur ini, ETL tidak menyentuh kolomnya |
 | `payment_allocations` | Alokasi satu pembayaran ke satu/lebih dokumen |
 
 ### `salesreturn` (L6)
@@ -177,19 +212,42 @@ Bukti kirim (foto/dokumen) dicatat langsung sebagai baris `media_files` ber-owne
 | Tabel | Untuk apa |
 |---|---|
 | `sales_returns` + `sales_return_items` | Retur customer, menunjuk `sales_order_id`/`delivery_note_id` |
+| `sales_return_replacement_items` | Baris barang pengganti pada retur jenis tukar barang (produk/varian/lokasi/qty/harga) |
+| `sales_return_settlements` | Catatan penyelesaian retur (jenis, tanggal, jumlah, metode) yang melekat pada dokumen retur |
 
-Penyelesaian retur (refund tunai/transfer, potong tagihan) dimodelkan sebagai `payments` +
-`payment_allocations` menunjuk dokumen retur — satu aliran uang (lihat §6). Tukar barang
-diselesaikan lewat surat jalan pengganti, tanpa uang.
+Aliran uangnya tetap satu: refund tunai/transfer dan potong tagihan dibukukan sebagai `payments` +
+`payment_allocations` menunjuk dokumen retur (lihat §6); baris `sales_return_settlements` adalah catatan
+di sisi retur. Tukar barang diselesaikan lewat surat jalan pengganti; selisih tukar yang lebih mahal
+ditagih sebagai `payments` ber-alokasi `sales_return` (jenis *charge*), bisa sekaligus saat SJ pengganti
+dikonfirmasi (K-04e).
+
+**Baris `customer_credit` BUKAN lagi memo (K-04a, 2026-10).** Nilai retur yang dijadikan saldo pelanggan
+adalah reklasifikasi yang dijurnal sendiri: `finance_journal_entries.source_doc_type =
+'sales_return_settlement'`, `source_doc_id` = `sales_return_settlements.id`, Dr Piutang / Cr Uang Muka
+Pelanggan (`customer_advance`, kewajiban) atas pelanggan order. Tanpa kolom/tabel baru: jenis penyelesaian
+tetap `varchar(30)`. Aturan jenis (K-04c): retur murni / tukar lebih murah → `refund` | `customer_credit`
+(≤ nilai terutang − `receivable_reduction` − yang sudah diselesaikan); tukar lebih mahal → `collect_payment`
+(≤ selisih); `reduce_receivable` hanya ditulis sistem (`auto = 1`, offset otomatis saat konfirmasi).
+Batal retur membalik jurnal setiap penyelesaian kredit; `finance_cutover` punya batas sendiri per jenis
+(`sales_return_settlement`, `purchase_return_settlement`) agar ETL tidak melipatgandakan jurnal legacy.
 
 ### `purchasereturn` (L6)
 
 | Tabel | Untuk apa |
 |---|---|
 | `purchase_returns` + `purchase_return_items` | Retur ke supplier, menunjuk `purchase_order_id`/`goods_receipt_id` |
+| `purchase_return_settlements` | Catatan penyelesaian retur di sisi retur pembelian |
 
 Penyelesaian retur pembelian memakai mekanisme yang sama: `payments` + `payment_allocations`
-menunjuk dokumen retur (lihat §6).
+menunjuk dokumen retur (lihat §6); `purchase_return_settlements` adalah catatan di sisi retur.
+
+**Kamus retur pembelian (K-04b):** `reduce_payable` (offset otomatis, ditulis sistem), `refund`,
+`supplier_credit` — bukan kamus penjualan. Nilai lama `customer_credit` / `reduce_receivable` yang
+pernah tersimpan di tabel ini dibaca sebagai `supplier_credit` / `reduce_payable` (tanpa migrasi data;
+sistem belum production). **Baris `supplier_credit` dijurnal** (K-04a): `source_doc_type =
+'purchase_return_settlement'`, `source_doc_id` = `purchase_return_settlements.id`, Dr Uang Muka Supplier
+(`supplier_advance`, aset) / Cr Hutang atas supplier PO. Aturan: hanya kelebihan nilai retur di atas sisa
+hutang (`payable_reduction`) yang bisa direfund atau dijadikan saldo supplier.
 
 ### `finance` (L7)
 
@@ -197,15 +255,20 @@ menunjuk dokumen retur (lihat §6).
 |---|---|
 | `finance_accounts` + `finance_account_mappings` | Chart of Accounts (kolom penanda kas menggantikan tabel kas terpisah) + pemetaan akun otomatis (mis. akun kas per metode bayar) |
 | `finance_journal_entries` + `finance_journal_lines` | Jurnal umum — **satu-satunya** sumber laporan keuangan; penyesuaian fiskal memakai tipe jurnal, bukan tabel tersendiri |
-| `finance_periods` | Periode akuntansi (buka/tutup) |
-| `finance_inventory_cost_movements` | HPP per mutasi stok — rata-rata berjalan = baris mutasi terakhir (tanpa tabel state; ledger adalah kebenarannya) |
+| `finance_account_daily` | Agregat harian per cabang/akun/lingkup (debit, kredit) yang dipelihara bersama jurnal — melayani footing dan tren tanpa memindai seluruh `finance_journal_lines` |
+| `finance_cutover` | Per cabang dan jenis dokumen: id dokumen terakhir yang sudah tercakup saldo awal/jurnal (batas antrean posting) |
+| `finance_periods` | Periode akuntansi (buka/tutup); alasan buka kembali periode dicatat di diff audit, bukan kolom (FN-05) |
+| `finance_posting_ignores` | Penanda dokumen yang sengaja diabaikan dari antrean posting (`branch_id`, `doc_type`, `doc_id`, `reason`, `ignored_by`, `ignored_at`; PK gabungan) — migrasi `000031_finance_fn`, FN-01 |
+| `finance_tax_adjustment_meta` | Klasifikasi (`positive`/`negative`/`final_income`/`non_object`) + catatan koreksi fiskal, 1:1 ke `finance_journal_entries` (FK dalam modul) — `000031`, FN-07 |
+| `finance_inventory_cost_movements` | HPP per mutasi stok — rata-rata berjalan = baris mutasi terakhir (tanpa tabel state; ledger adalah kebenarannya). K-05: baris biaya-saja (`ref_type=opening_cost`, qty 0) memakai `stock_movement_id` ≥ 2^62 agar tak bertabrakan dengan mutasi nyata; kursor costing mengabaikan rentang itu. Tanpa perubahan skema |
 | `finance_tax_periods` + `finance_tax_report_snapshots` | Snapshot laporan pajak per periode |
 | `finance_document_sequences` | Penomoran dokumen keuangan (beda dari nomor dokumen cabang) |
-| `business_expenses` | Biaya usaha di luar transaksi jual-beli |
+| `business_expenses` | Biaya usaha di luar transaksi jual-beli; `party_id` opsional = pihak lawan (`000031`, FN-10) |
 
-Tanpa antrean posting terpisah: status posting + pratinjau dihitung dari dokumen sumber
-(kolom status di dokumen, pratinjau dihitung on-the-fly). Tanpa tabel saldo awal keuangan:
-cutover memakai jurnal saldo awal. Detail alasan tiap
+Tanpa antrean posting terpisah: antrean dan pratinjau dihitung dari dokumen sumber on-the-fly;
+satu-satunya keadaan tersimpan adalah penanda abaikan `finance_posting_ignores` (FN-01). Tanpa tabel saldo awal
+keuangan: cutover memakai jurnal saldo awal (nilai Persediaan dihitung server dari ledger biaya, K-05). Koreksi biaya
+persediaan (`costrebuild`, OP-04) memposting satu jurnal `cost_restatement` tanpa tabel baru. Detail alasan tiap
 peniadaan ada di §6.
 
 ### `dashboard` / `reporting` (L8)
@@ -246,10 +309,11 @@ constraint database.
   produk yang benar-benar dijual dalam 3+ satuan; tabel rules harga bila perlu aturan per
   kategori/produk di luar satu-aturan-per-tipe. Keduanya reversibel dan murah ditambahkan belakangan.
 
-## 6. Disposisi Tabel Legacy (70 → 56)
+## 6. Disposisi Tabel Legacy (70 → 65)
 
-Realisasi di §3 total **56 tabel** (metrik harian tidak dipertahankan — KI-126 diputuskan
-hapus di L8; 7 tabel `assistant` L9 ikut terhitung), turun dari **70 entity** sistem lama.
+Realisasi di §3 total **65 tabel** (metrik harian tidak dipertahankan — KI-126 diputuskan
+hapus di L8; 7 tabel `assistant` L9 ikut terhitung; dua tabel kecil `finance_posting_ignores` dan
+`finance_tax_adjustment_meta` ditambah `000031` sebagai pengganti ringan, bukan memulihkan tabel legacy), turun dari **70 entity** sistem lama.
 Setiap tabel di bawah lolos uji kebutuhan — fakta yang wajib persisten, bukan struktur
 warisan. Mekanisme pengganti dicatat agar kemampuan user tidak hilang diam-diam:
 
@@ -259,14 +323,14 @@ warisan. Mekanisme pengganti dicatat agar kemampuan user tidak hilang diam-diam:
 | `company_features` | Dihapus — mati di 3 lapisan (KI-33) | Diputuskan |
 | `orders` (satu tabel dua jenis) | Dipecah jadi `purchase_orders` + `sales_orders` (batas modul milik skill) | Diputuskan (§3) |
 | `order_status_definitions`, `order_status_transitions`, `order_status_history` | Tanpa tabel — mesin status tetap di kode (status baru warisan lahir cacat/KI-35, tak pernah berfungsi penuh) | Diputuskan bersyarat — gugur bila pemilik butuh kelola status (KI-35) |
-| `finance_posting_sources` (antrean posting 2-fase) | Tanpa tabel — kolom status di dokumen sumber + pratinjau dihitung on-the-fly; abaikan/pulihkan = kolom + alasan | Diputuskan |
+| `finance_posting_sources` (antrean posting 2-fase) | Tanpa tabel antrean — pratinjau dihitung on-the-fly. Abaikan/pulihkan (FN-01) = tabel penanda kecil `finance_posting_ignores` milik finance (`branch_id`, `doc_type`, `doc_id`, `reason`, `ignored_by`, `ignored_at`; migrasi `000031`), bukan kolom di modul sumber (tanpa lintas-modul); pulihkan = hapus baris, jejaknya di audit | Diputuskan |
 | `finance_opening_balances`, `finance_opening_inventory_items` | Tanpa tabel — saldo awal stok = mutasi `in` ber-referensi `opening` (mutasinya sendiri catatannya, L3); saldo awal keuangan = jurnal saldo awal | Diputuskan |
 | `finance_cash_accounts` | Kolom penanda kas di `finance_accounts` (saldo kas = saldo akun) | Diputuskan |
 | `finance_inventory_cost_states` | Tanpa tabel — rata-rata berjalan = baris terakhir `finance_inventory_cost_movements` | Diputuskan |
-| `finance_tax_adjustments` | Tipe jurnal penyesuaian (tetap teraudit, tetap bisa dilaporkan) | Diputuskan |
+| `finance_tax_adjustments` | Tipe jurnal penyesuaian (tetap teraudit, tetap bisa dilaporkan). FN-07 (ADR-0018 D6): jenis koreksi + catatan disimpan di tabel pendamping `finance_tax_adjustment_meta` (1:1 ke jurnal, migrasi `000031`), lampiran di media (`owner_type=tax_adjustment`); model jurnal tidak berubah | Diputuskan |
 | `stock_issue_allocations` | Tanpa tabel — referensi dokumen+lokasi+qty+biaya di `stock_movements` (cukup di bawah HPP moving-average; saran petik FIFO tetap dihitung, bukan disimpan) | Diputuskan |
-| `sales_return_settlements`, `purchase_return_settlements` | `payments` + `payment_allocations` menunjuk dokumen retur — satu aliran uang untuk finance | Diputuskan |
-| `delivery_proofs` | Baris `media_files` ber-owner `delivery_notes` (warisan pun hanya simpan key storage) | Diputuskan |
+| `sales_return_settlements`, `purchase_return_settlements` | Dipertahankan sebagai catatan sisi retur; uangnya mengalir lewat `payments` + `payment_allocations` menunjuk dokumen retur — satu aliran uang untuk finance | Direvisi saat implementasi |
+| `delivery_proofs` | Baris `media_files`; tujuan bukti dibedakan lewat owner type `delivery_proof` (foto lokasi) dan `delivery_document` (scan SJ bertanda tangan) — DL-01, tanpa kolom `purpose`; ETL memetakan purpose legacy ke owner type | Diputuskan |
 | (aturan harga member — warisan di kolom `member_types`) | Kolom aturan di `member_types` (`member-type.entity.ts:27-43` membuktikan satu aturan per tipe melayani user; tanpa tabel rules spekulatif) | Diputuskan — pintu darurat di §5 bila perlu aturan per kategori |
 | `product_uom_conversions` (rencana awal, bukan warisan) | Kolom UOM tetap di `products` (`product.entity.ts:39-52` membuktikan 2 UOM + base melayani semua alur; line order membawa UOM-nya sendiri) | Diputuskan — pintu darurat di §5 bila ada produk 3+ satuan |
 | `daily_operational_metrics` | Dihapus — L8 `reporting`/`dashboard` membaca finance live (`NetProfit` per hari, `InventoryValue`) tanpa tabel agregasi/cron; nol SELECT warisan tetap nol tabel | Diputuskan (L8, KI-126) |
@@ -281,3 +345,23 @@ terpisah dari SJ (penerimaan/pengiriman parsial per baris adalah kebutuhan gudan
 - [legacy-reference/*/data-model-legacy.md](legacy-reference/) — struktur tabel asli per modul,
   dipakai sebagai pembanding saat menulis migrasi modul baru
 - `.claude/rules/database.md` — aturan boundary yang ditegakkan Claude Code saat menyunting migrasi
+
+## 8. Riwayat migrasi bernomor sesudah baseline
+
+Kebijakan: baseline per modul (`000001`–`000018`) tidak diedit; perubahan sesudahnya berupa migrasi bernomor maju bernama
+`NNNNNN_<modul>[_<perubahan>]` (arch-check Rule T/F membaca nama berkas sebagai pemilik tabel; `scripts/squash-baseline.mjs`).
+Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps/api/cmd/etl`). Nomor 000024–000030 kosong dan boleh dipakai berikutnya.
+
+| Migrasi | Tugas | Perubahan | ETL |
+|---|---|---|---|
+| `000019_sales` | SL-09 | `sales_orders.credit_approved_by`, `credit_approved_at` (nullable): siapa/kapan kredit disetujui | memetakan `credit_approved_*` dan `assigned_user_id` legacy |
+| `000020_assistant_tool_status` | AS-02 | `assistant_tool_executions.status` (default `success`), `error_text`: tool gagal tercatat per baris | tak terpengaruh |
+| `000021_stock_parity` | ST-01, ST-02 | `stock_locations.is_picking_area`, `is_primary`, `sort_order`; `stock_transfers.driver_name`, `vehicle_plate`, `transfer_date` (diisi hari WIB kirim/dibuat untuk dokumen lama) | spec load membawa `is_picking_area`/`is_primary`/`sort_order`, `driver_name`/`vehicle_number`/`transfer_date` |
+| `000022_purchasing_tax_invoice` | PO-03 | `purchase_orders.tax_invoice_number`, `tax_invoice_date`; `purchase_order_items.tax_rate` | memetakan `tax_rate_snapshot` legacy |
+| `000023_payment_credit_source` | N-41 | `payments.credit_source_type`, `credit_source_id` + indeks `ix_payments_credit_source` (retur sumber saldo uang muka pada pasangan kaki pakai-saldo) | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
+| `000031_finance_fn` | FN-01, FN-07, FN-10 | tabel baru `finance_posting_ignores` dan `finance_tax_adjustment_meta`; kolom `business_expenses.party_id` (+ `ix_business_expenses_party`): pihak lawan biaya | mengisi `party_id` dari `id_business_party` legacy bila pihak itu termigrasi |
+
+Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
+bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);
+`archivedAt` produk = `updated_at` baris berstatus arsip (PR-04); jurnal `opening_supplement`, `cost_restatement`, `sales_return_settlement`,
+`purchase_return_settlement` adalah sumber posting baru tanpa tabel baru.

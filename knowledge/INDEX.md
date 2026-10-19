@@ -9,9 +9,14 @@ Routing for the project knowledge base. Read the file relevant to your task befo
 - [MODULE_MAP.md](MODULE_MAP.md) — each module's responsibility + public contract
 - [../docs/PARITY_AUDIT.md](../docs/PARITY_AUDIT.md) — capability parity vs the legacy system:
   what is done, what is still missing (with evidence), and what was dropped on purpose
+- [../docs/plan/penyempurnaan-paritas/PLAN.md](../docs/plan/penyempurnaan-paritas/PLAN.md) — rencana menutup celah paritas hasil
+  [audit 2026-10-16](../docs/ANALISIS-PARITAS-2026-10-16.md), sekaligus checkpoint anti-terlewat (`npm run plan:check`)
 - [DOMAIN_GLOSSARY.md](DOMAIN_GLOSSARY.md) — shared terminology
 - [API_GUIDE.md](API_GUIDE.md) — API conventions for this project
 - [DATABASE_GUIDE.md](DATABASE_GUIDE.md) — table ownership, relations as IDs
-- [FRONTEND_GUIDE.md](FRONTEND_GUIDE.md) — frontend conventions
+- [FRONTEND_GUIDE.md](FRONTEND_GUIDE.md) — frontend conventions (termasuk Design System v2: kit, template halaman, aturan penempatan)
 - [BACKEND_GUIDE.md](BACKEND_GUIDE.md) — backend conventions
+- [PERFORMANCE_GUIDE.md](PERFORMANCE_GUIDE.md) — read/write cost rules: batch contracts, the two
+  in-process caches and how to invalidate them, index shapes, transport, frontend derived state
 - [decisions/](decisions/) — Architecture Decision Records
+  (parity-program owner decisions D1–D7: [ADR-0018](decisions/ADR-0018-keputusan-paritas.md))

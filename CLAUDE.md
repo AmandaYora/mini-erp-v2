@@ -5,9 +5,14 @@ stock/warehouse, sales & POS, delivery, payment, finance/tax, reporting) previou
 NestJS/TypeORM, now rebuilt as a Go modular monolith + MySQL. Backend: Go (`apps/api`). Frontend:
 React 19 + Tailwind 4 (`apps/web`).
 
-**Status: 20 backend modules implemented** (~30k lines Go non-test, 26 migrations) and 65+ frontend pages.
-Capability parity with the legacy system is **~98%** (100% endpoint coverage of the 205 target) — the remaining work is the program, not capability:
-legacy-data ETL (stage K), cutover rehearsal (stage L), E2E tests, and physical print verification.
+**Status: 20 backend modules implemented** (~60k lines Go in `internal/modules`, 244 routes, 18 per-module baseline
+migrations + numbered migrations 000019–000023/000031 / 65 tables) and 85 frontend pages. **sqlc: incremental migration
+(ADR-0012)** — 16 of 18 table-owning modules migrated (`finance`, `stock` still `pending`; `scripts/sqlc-migration-status.json`
+is the ratchet), hand-written `database/sql` remains only in `pending` modules or `scripts/raw-sql-allow.json` exceptions.
+Capability parity with the legacy system is **~98%** (100% endpoint coverage of the 205 target); the independent audit of
+2026-10-16 found deeper gaps and the parity-completion program (`docs/plan/penyempurnaan-paritas/PLAN.md`,
+`npm run plan:check`) has closed waves 1-3 — what is still open is listed in `docs/PARITY_AUDIT.md` §0A.2. The remaining work is
+the program, not capability: legacy-data ETL (stage K), cutover rehearsal (stage L), extra tests (PLAN T-01..T-05), and physical print verification.
 Finance P0/P1 landed via table-less revisions, and J2/J3/J4 (QR labels, delivery work queue, one-step
 location move) closed 2026-09-11. Stage 1 of the closing plan is done: journal lines
 carry product/party dimensions, and margin-per-product plus receivables/payables now report from
@@ -21,6 +26,8 @@ Module order and boundaries: `knowledge/MODULE_MAP.md`.
 ```bash
 npm run dev:web   # start frontend
 npm run dev:api   # start backend
+npm run arch:check && npm run contract:check   # architecture + FE<->router guards (npm run verify = everything)
+node scripts/test-db.mjs up   # pastikan MySQL + mini_erp_test sebelum verify/test
 ```
 
 ## Sebelum Mengerjakan Apa Pun

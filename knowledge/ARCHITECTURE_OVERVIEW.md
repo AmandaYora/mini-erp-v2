@@ -11,9 +11,16 @@ apps/web (React 19 + Tailwind 4)  →  /api/v1/*  →  apps/api (Go modular mono
 
 - Backend: Go modular monolith, 20 modul (+ `shared/` teknis). Setiap modul: `contracts/ ·
   application/ · domain/ · infrastructure/ · presentation/`. Hanya `contracts/` yang bisa diimpor
-  modul lain — ditegakkan compiler, bukan konvensi manual.
-- Database: MySQL 8 host-level (bukan container). Migrasi lewat `golang-migrate`, akses data lewat
-  `sqlc` (bukan GORM). Relasi lintas modul = primitive ID, tanpa FK fisik lintas modul.
+  modul lain — ditegakkan `scripts/arch-check.mjs` (aturan A/E/K/S/T/F, dibuktikan oleh
+  `--self-test`) dan review, bukan kompiler (Go sendiri tidak melarang impor paket lain).
+- Database: MySQL 8.4 host-level (bukan container). Migrasi lewat `golang-migrate`: 18 berkas baseline,
+  satu per modul (`000001_user` … `000018_assistant`). Akses data hari ini `database/sql` tulisan tangan di
+  `infrastructure/`; **sqlc adalah target** (terkonfigurasi di `sqlc.yaml`, belum dipakai — migrasi per modul
+  adalah fase terakhir, ADR-0012). Bukan GORM. Relasi lintas modul = primitive ID, tanpa FK fisik lintas modul
+  (dijaga Rule F/T arch-check).
+- Wiring: `internal/bootstrap.Wire` merakit semua modul dan diakhiri `Modules.Verify()`; setter yang
+  tersisa hanyalah siklus konstruksi nyata. Keputusan arsitektur: ADR-0010 (kernel uang) … ADR-0016
+  (atomisitas = idempotensi + CAS) di [decisions/](decisions/).
 - Deployment: satu container Docker (frontend statis + API Go), database tetap di host.
 - Locale/timezone/currency (`id-ID` / `Asia/Jakarta` / IDR) adalah **konstanta aplikasi**, bukan
   setelan yang bisa diubah pengguna — lihat

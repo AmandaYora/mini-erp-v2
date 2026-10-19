@@ -1,7 +1,8 @@
 # System Design — Mini ERP (Revamp)
 
-Status: **setup selesai, modul belum diimplementasikan**. Dokumen ini adalah rencana arsitektur
-yang mengikat untuk seluruh pekerjaan modul berikutnya. Lihat [PRD.md](PRD.md) untuk latar
+Status: **20 modul backend terimplementasi** (lihat [PARITY_AUDIT.md](PARITY_AUDIT.md) untuk keadaan
+terkini). Dokumen ini adalah rancangan arsitektur yang mengikat; bagian yang masih berupa target
+(sqlc, lihat §2) ditandai eksplisit. Lihat [PRD.md](PRD.md) untuk latar
 belakang produk dan [DB_SCHEMA.md](DB_SCHEMA.md) / [API_CONTRACT.md](API_CONTRACT.md) untuk detail
 turunannya.
 
@@ -12,7 +13,7 @@ apps/web  (React 19 + Tailwind 4, SPA)
     │  HTTP JSON  /api/v1/*
     ▼
 apps/api  (Go modular monolith)
-    │  database/sql + sqlc
+    │  database/sql (sqlc = target, belum dimigrasi)
     ▼
 MySQL 8 (host-level, satu database)
 ```
@@ -22,18 +23,18 @@ MySQL 8 (host-level, satu database)
   (JWT + lookup DB), **tidak pernah** dari body request. Tidak ada scope perusahaan:
   instalasi ini standalone single-tenant (lihat ADR-0009).
 - Tidak ada microservices, tidak ada message broker. Modul saling terisolasi lewat **package
-  boundary di dalam satu binary Go**, ditegakkan compiler (import ke luar `contracts/` gagal
-  build), bukan lewat jaringan.
+  boundary di dalam satu binary Go**, ditegakkan `scripts/arch-check.mjs` (import ke luar `contracts/`
+  gagal di CI), bukan lewat jaringan.
 
 ## 2. Stack Terkunci
 
 | Layer | Pilihan | Alasan |
 |---|---|---|
-| Backend | Go 1.21+, `net/http` + router minimal | Modular monolith standar Dimas |
-| DB access | `database/sql` + `sqlc` (bukan GORM) | Query eksplisit, type-safe, tanpa magic ORM |
-| Migrasi | `golang-migrate`, migrasi SQL bernomor | Ada tabel pelacak versi — memperbaiki KI migration-runner sistem lama |
+| Backend | Go 1.26 (`go.mod`: `go 1.26.0`, toolchain 1.26.7), `net/http` + router minimal | Modular monolith standar Dimas |
+| DB access | `database/sql` tulisan tangan sekarang; **target** `sqlc` v1.31.1 (terkonfigurasi, belum dimigrasi; ADR-0012). Bukan GORM | Query eksplisit, type-safe, tanpa magic ORM |
+| Migrasi | `golang-migrate`; 18 berkas baseline per modul (`000001_user` … `000018_assistant`), migrasi baru mulai `000019` | Ada tabel pelacak versi — memperbaiki KI migration-runner sistem lama |
 | Watcher dev | `air` | `npm run dev:api` |
-| Database | MySQL 8, host-level (bukan container) | Sesuai standar Docker Dimas |
+| Database | MySQL 8.4, host-level (bukan container) | Sesuai standar Docker Dimas |
 | Frontend | React 19 + Tailwind 4 + react-router-dom + Zustand + Zod + Axios | Standar Dimas, dikunci |
 | Auth | JWT access + refresh token, hash refresh token dirotasi tiap pakai | Properti keamanan yang **sudah benar** di sistem lama — dipertahankan |
 | Locale | `id-ID`, `Asia/Jakarta`, IDR — konstanta aplikasi | Lihat ADR-0006; bukan setelan yang bisa diubah pengguna |
@@ -64,7 +65,7 @@ sistem lama dengan batas yang eksplisit. Struktur folder tiap modul mengikuti
 | `purchasereturn` | Retur pembelian atas PO/penerimaan | `PurchaseReturnClient.GetByID` | 13 |
 | `finance` | COA, jurnal, HPP, laporan keuangan, tutup periode, ekspor pajak | *(konsumen terbesar — lihat §7)* | 17 |
 | `dashboard` | Ringkasan operasional cabang aktif (baca finance live, tanpa tabel) | `DashboardClient.Summary` | 18 |
-| `reporting` | Tren penjualan + nilai persediaan (baca finance live, tanpa agregasi terjadwal — KI-126) | `ReportingClient.SalesTrend/Inventory` | 19 |
+| `reporting` | Tren penjualan + laporan order/stok; `Inventory` hanyalah alias tipis atas `finance.InventoryValue` di bawah izin `reporting.view` (valuasi hanya ada di finance; F8-11) (baca finance live, tanpa agregasi terjadwal — KI-126) | `ReportingClient.SalesTrend/Inventory` | 19 |
 | `assistant` | Bot WA (whatsmeow) + 8 intent tooling read-only, whitelist nomor, tanpa RAG/AI | `AssistantClient.Ask` | 21 |
 
 **L9 terjadwal belakangan atas permintaan pemilik:** `assistant` (bot WhatsApp +
@@ -171,8 +172,9 @@ seberapa lengkap test yang dibutuhkan saat modul itu didesain:
   replay terdeteksi) — properti yang sudah benar di sistem lama, dipertahankan. Batas umur sesi
   mutlak 30 hari di atas refresh sliding 7 hari (OQ-A02). Kegagalan login dicatat dan endpoint
   login di-rate-limit (OQ-A03/A04, keputusan analis).
-- Otorisasi: permission di-resolve ulang dari DB tiap request (bukan di-cache di token) — perubahan
-  hak akses berlaku seketika tanpa perlu logout.
+- Otorisasi: permission tidak disimpan di token. Auth me-resolve sesi dari DB lalu men-cache-nya;
+  user dan branch mengumumkan setiap perubahan hak akses lewat `AuthzHub` sehingga cache dibuang dan
+  perubahan berlaku pada request berikutnya tanpa logout (TTL pendek sebagai batas atas).
 - Isolasi cabang: setiap query atas data terikat-cabang wajib difilter `branch_id` dari scope
   sesi. Tidak ada filter perusahaan — instalasi ini standalone single-tenant (lihat ADR-0009).
   Isolasi antar-cabang wajib ditegakkan konsisten di setiap query modul (bukan hanya disiplin
@@ -185,7 +187,8 @@ seberapa lengkap test yang dibutuhkan saat modul itu didesain:
 - Audit log (`audit` module) adalah dependensi L0 — dipanggil semua modul penulis data sejak awal,
   bukan ditambahkan belakangan.
 - Migrasi terlacak lewat `golang-migrate` (tabel versi bawaan) — dijalankan eksplisit via
-  `npm run migrate:up`, tidak otomatis re-run di setiap start seperti sistem lama.
+  `npm run migrate:up`, tidak otomatis re-run di setiap start seperti sistem lama. Cara menambah
+  migrasi dan membangun ulang DB dev/test: [../knowledge/BACKEND_GUIDE.md](../knowledge/BACKEND_GUIDE.md).
 
 ## 11. Referensi
 
