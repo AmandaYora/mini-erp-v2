@@ -1,11 +1,10 @@
 # API Contract — Mini ERP (Revamp)
 
-Status: **20 modul terimplementasi, 244 rute `/api/v1` terdaftar di router** (hitungan `node scripts/contract-check.mjs`:
-291 panggilan frontend, semuanya cocok; 22 rute backend memang tidak dipanggil web, dilihat dengan `--list`). Tabel §6
-mendaftar **setiap** rute di atas (ditambah probe `/healthz`, `/readyz`, `/api/v1/health*`, `/api/v1/metrics` yang dipasang
-`server.go`, dan `/media/*`); `contract-check` mencocokkan setiap panggilan frontend dengan router, dan rute baru wajib
-ditambahkan di sini bersama kodenya. Jangan menuliskan endpoint yang belum ada. Terakhir disinkronkan penuh dengan kode
-2026-10-19 (DOC-02, Gelombang 1–3): selisih rute backend vs tabel ini = nol.
+Tabel §6 mendaftar **setiap** rute `/api/v1` yang terdaftar di router (ditambah probe `/healthz`, `/readyz`,
+`/api/v1/health*`, `/api/v1/metrics` yang dipasang `server.go`, dan `/media/*`). `node scripts/contract-check.mjs`
+mencocokkan setiap panggilan frontend dan kode izin dengan router (`--list` menampilkan rute yang tidak dipanggil web);
+rute baru wajib ditambahkan di sini bersama kodenya. Jangan menuliskan endpoint yang belum ada. Jumlah rute terkini:
+[STATUS.md](STATUS.md). Terakhir disinkronkan penuh dengan kode 2026-10-19 (DOC-02): selisih rute backend vs tabel ini = nol.
 
 ## 1. Versioning
 

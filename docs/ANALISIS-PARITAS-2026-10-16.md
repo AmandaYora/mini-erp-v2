@@ -1,5 +1,7 @@
 # Analisis Paritas Fitur — Legacy `mini-erp` vs Revamp `mini-erp-revamp`
 
+> **RIWAYAT — beku.** Snapshot audit 2026-10-16. Seluruh temuannya sudah ditindaklanjuti oleh [plan/penyempurnaan-paritas](plan/penyempurnaan-paritas/PLAN.md) (selesai 2026-10-20, audit penutup `AUDIT-Z01.md`). Keadaan terkini: [STATUS.md](STATUS.md), [PARITY_AUDIT.md](PARITY_AUDIT.md) §0A.
+
 **Tanggal:** 2026-10-16 · **Metode:** audit independen, baca-saja, dari **kode** (bukan dokumen) oleh 8 auditor paralel
 (per kelompok modul legacy). Klaim `docs/PARITY_AUDIT.md` diuji **sesudah** enumerasi kode, bukan dipercaya.
 **Verifikasi tambahan:** 4 temuan berdampak tertinggi (F-01…F-04) saya periksa ulang langsung di kode revamp.

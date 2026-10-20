@@ -1,8 +1,7 @@
 # System Design — Mini ERP (Revamp)
 
-Status: **20 modul backend terimplementasi** (lihat [PARITY_AUDIT.md](PARITY_AUDIT.md) untuk keadaan
-terkini). Dokumen ini adalah rancangan arsitektur yang mengikat; bagian yang masih berupa target
-(sqlc, lihat §2) ditandai eksplisit. Lihat [PRD.md](PRD.md) untuk latar
+Dokumen ini adalah rancangan arsitektur yang mengikat; seluruh 20 modul sudah dibangun mengikutinya
+(status dan angka terkini: [STATUS.md](STATUS.md)). Lihat [PRD.md](PRD.md) untuk latar
 belakang produk dan [DB_SCHEMA.md](DB_SCHEMA.md) / [API_CONTRACT.md](API_CONTRACT.md) untuk detail
 turunannya.
 
@@ -13,9 +12,9 @@ apps/web  (React 19 + Tailwind 4, SPA)
     │  HTTP JSON  /api/v1/*
     ▼
 apps/api  (Go modular monolith)
-    │  database/sql (sqlc = target, belum dimigrasi)
+    │  sqlc + database/sql
     ▼
-MySQL 8 (host-level, satu database)
+MySQL 8.4 (host-level, satu database)
 ```
 
 - Satu perusahaan, multi-cabang. Setiap request terautentikasi membawa scope
@@ -31,8 +30,8 @@ MySQL 8 (host-level, satu database)
 | Layer | Pilihan | Alasan |
 |---|---|---|
 | Backend | Go 1.26 (`go.mod`: `go 1.26.0`, toolchain 1.26.7), `net/http` + router minimal | Modular monolith standar Dimas |
-| DB access | `database/sql` tulisan tangan sekarang; **target** `sqlc` v1.31.1 (terkonfigurasi, belum dimigrasi; ADR-0012). Bukan GORM | Query eksplisit, type-safe, tanpa magic ORM |
-| Migrasi | `golang-migrate`; 18 berkas baseline per modul (`000001_user` … `000018_assistant`), migrasi baru mulai `000019` | Ada tabel pelacak versi — memperbaiki KI migration-runner sistem lama |
+| DB access | `sqlc` v1.31.1, dimigrasi bertahap per modul; modul yang belum dimigrasi masih `database/sql` tulisan tangan (ADR-0012, ratchet `scripts/sqlc-migration-status.json`). Bukan GORM | Query eksplisit, type-safe, tanpa magic ORM |
+| Migrasi | `golang-migrate`; 18 berkas baseline per modul (`000001_user` … `000018_assistant`) + migrasi bernomor sesudahnya ([DB_SCHEMA.md](DB_SCHEMA.md) §8) | Ada tabel pelacak versi — memperbaiki KI migration-runner sistem lama |
 | Watcher dev | `air` | `npm run dev:api` |
 | Database | MySQL 8.4, host-level (bukan container) | Sesuai standar Docker Dimas |
 | Frontend | React 19 + Tailwind 4 + react-router-dom + Zustand + Zod + Axios | Standar Dimas, dikunci |
@@ -49,13 +48,13 @@ sistem lama dengan batas yang eksplisit. Struktur folder tiap modul mengikuti
 |---|---|---|---|
 | `audit` | Mencatat siapa mengubah apa, kapan, di semua modul | `AuditClient.Log(entry)` | 20 |
 | `media` | Penyimpanan file (driver lokal/S3) untuk foto produk, bukti bayar, bukti kirim | `MediaClient.Upload/GetURL` | storage (S1) |
-| `auth` | Login, sesi (JWT access/refresh), ganti role/cabang aktif, resolusi permission | `SessionClient.Verify`, `PermissionClient.Check` | 01 |
+| `auth` | Login, sesi (JWT access/refresh), ganti role/cabang aktif, resolusi permission | `SessionProvider.Verify`, `PermissionChecker.HasPermission`, `AuthzInvalidator`, `SessionFromContext` | 01 |
 | `user` | Akun pengguna, role, permission (RBAC) | `UserClient.GetByID`, `RoleClient.GetPermissions` | 02 |
 | `company` | Profil & pengaturan perusahaan (tunggal) | `CompanyClient.GetSettings` | 03 |
 | `branch` | Direktori cabang + penomoran dokumen per cabang | `BranchClient.GetByID`, `BranchClient.NextDocumentNumber(kind)` | 04 |
 | `product` | Katalog produk, kategori, varian, UOM & faktor konversi | `ProductClient.GetByID`, `ProductClient.ResolveUOM` | 05 |
 | `party` | Customer, supplier, alamat kirim, member type & harga member | `PartyClient.GetByID`, `PricingClient.Quote` | 06, 07 |
-| `stock` | Lokasi stok, saldo & mutasi, transfer, penyesuaian, saldo awal | `StockClient.GetBalance`, `StockClient.Reserve/Move` | 16 |
+| `stock` | Lokasi stok, saldo & mutasi, transfer, penyesuaian, saldo awal | `StockClient.GetBalance`, `StockClient.Post/Reverse`, `StockClient.Hold/Release/Consume`, `StockClient.Allocate` | 16 |
 | `purchasing` | Order pembelian ke supplier | `PurchaseOrderClient.GetByID` | 08 |
 | `sales` | Order penjualan ke customer (kanal reguler & POS) | `SalesOrderClient.GetByID` | 09, 15 (kanal) |
 | `goodsreceipt` | Penerimaan barang atas PO | `GoodsReceiptClient.GetByID` | 10 |
@@ -68,12 +67,8 @@ sistem lama dengan batas yang eksplisit. Struktur folder tiap modul mengikuti
 | `reporting` | Tren penjualan + laporan order/stok; `Inventory` hanyalah alias tipis atas `finance.InventoryValue` di bawah izin `reporting.view` (valuasi hanya ada di finance; F8-11) (baca finance live, tanpa agregasi terjadwal — KI-126) | `ReportingClient.SalesTrend/Inventory` | 19 |
 | `assistant` | Bot WA (whatsmeow) + 8 intent tooling read-only, whitelist nomor, tanpa RAG/AI | `AssistantClient.Ask` | 21 |
 
-**L9 terjadwal belakangan atas permintaan pemilik:** `assistant` (bot WhatsApp +
-tooling operasional, TANPA Knowledge/RAG/AI — keputusan skop L9). Lihat
-[PRD.md §3](PRD.md#3-cakupan-produk-peta-modul-bisnis).
-
-Semua 20 modul + `auth` sudah terisi penuh di `apps/api/internal/modules/`
-(masing-masing `contracts/` → `application/` → `domain/` → `infrastructure/` → `presentation/`).
+`assistant` (L9) dibangun belakangan atas permintaan pemilik: bot WhatsApp + tooling operasional,
+TANPA Knowledge/RAG/AI. Lihat [PRD.md §3](PRD.md#3-cakupan-produk-peta-modul-bisnis) dan ADR-0018 D1.
 
 **POS** sengaja tidak punya modul backend sendiri — ia adalah kanal frontend yang merakit
 `product`, `party`, `stock`, `sales`, `payment` lewat kontrak yang sama dipakai alur penjualan
@@ -100,7 +95,7 @@ Diturunkan dari [legacy-reference/module-dependency-map.md §4, §9](legacy-refe
 
 **Titik uji tervalidasi**: setelah L4–L6 selesai, alur POS end-to-end (jual produk bervarian +
 harga member → potong stok → catat pembayaran → cetak struk) harus berjalan benar sebelum
-`finance` mulai dibangun — ini bukti bahwa kontrak lintas modul di §9 sudah stabil.
+`finance` mulai dibangun — ini bukti bahwa kontrak lintas modul di §7 sudah stabil.
 
 ## 5. Aturan Batas Modul (ditegakkan, bukan konvensi)
 
@@ -150,7 +145,7 @@ keputusan modul tunggal.
 | 9 | Seluruh rentang tanggal & penomoran periode memakai zona `Asia/Jakarta` | `shared` (util tanggal) | Semua modul, terutama `finance` |
 | 10 | `AuditClient.Log` dipanggil di setiap operasi tulis dengan `action_key` `snake_case` `resource.action` | `audit` | Semua modul |
 | 11 | Setiap produk selalu punya minimal satu varian (varian default tersembunyi bila produk tidak dikonfigurasi bervarian) | `product` | `stock`, `sales` (kanal POS) |
-| 12 | Momen stok berkurang untuk penjualan (saat `delivery` dibuat vs saat SO dikonfirmasi) — **keputusan terbuka**, harus ditetapkan eksplisit saat mendesain modul `sales`/`delivery`, tidak boleh diasumsikan dari kebiasaan sistem lama | `sales`/`delivery` | `stock`, `finance` |
+| 12 | Momen stok berkurang untuk penjualan: saat surat jalan **dikonfirmasi** (bukan saat SJ draf dibuat, bukan saat SO dikonfirmasi); SJ draf hanya memberi peringatan ketersediaan, tanpa reservasi (ADR-0018 D2) | `delivery` | `stock`, `finance` |
 
 ## 8. Modul Paling Berisiko Diubah
 
@@ -188,7 +183,8 @@ seberapa lengkap test yang dibutuhkan saat modul itu didesain:
   bukan ditambahkan belakangan.
 - Migrasi terlacak lewat `golang-migrate` (tabel versi bawaan) — dijalankan eksplisit via
   `npm run migrate:up`, tidak otomatis re-run di setiap start seperti sistem lama. Cara menambah
-  migrasi dan membangun ulang DB dev/test: [../knowledge/BACKEND_GUIDE.md](../knowledge/BACKEND_GUIDE.md).
+  migrasi dan membangun ulang DB dev/test: [../knowledge/DATABASE_GUIDE.md](../knowledge/DATABASE_GUIDE.md).
+- Probe `/healthz`, `/readyz`, `/api/v1/health*`, `/api/v1/metrics` ([API_CONTRACT.md](API_CONTRACT.md) §6).
 
 ## 11. Referensi
 

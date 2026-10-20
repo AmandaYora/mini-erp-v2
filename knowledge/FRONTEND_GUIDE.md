@@ -5,13 +5,12 @@ Stack terkunci (React 19, Tailwind 4, react-router-dom, Zustand, Zod, Axios, `@/
 `references/frontend.md`, ditegakkan lewat `.claude/rules/frontend-react.md`. File ini hanya berisi
 hal yang **spesifik proyek ini**.
 
-## Rencana Modul Frontend (`apps/web/src/modules/`)
+## Modul Frontend (`apps/web/src/modules/`)
 
-Struktur modul frontend tidak wajib 1:1 dengan 20 modul backend (sistem lama juga tidak 1:1 — 17
-folder web memetakan ke 18 modul API). Saat sebuah modul backend mulai punya UI, buat folder
-modul frontend yang menaunginya, mengikuti pengelompokan alami produk:
+Folder modul frontend adalah pengelompokan UX, tidak wajib 1:1 dengan modul backend. Pemetaan
+saat ini:
 
-| Folder modul frontend (terbangun) | Menyentuh modul backend |
+| Folder modul frontend | Menyentuh modul backend |
 |---|---|
 | `auth` | `auth` |
 | `users` | `user` (pengguna + role) |
@@ -30,19 +29,12 @@ modul frontend yang menaunginya, mengikuti pengelompokan alami produk:
 | `finance` | `finance` (transaksi + laporan) |
 | `dashboard`, `reporting`, `audit` | `dashboard`, `reporting`, `audit` |
 | `assistant` | `assistant` (penyiapan WA + konfigurasi + konsol uji) |
+| `ops` | `GET /ops/integrity` (pemeriksaan integritas lintas modul, dirakit di `bootstrap`) |
+| `print` | Halaman cetak `/print/*` (lihat §"Pesan Server, Draf Form, dan Cetak") |
 
-**Catatan:** backend sengaja memecah `order/` lama menjadi 6 modul terpisah (`purchasing`,
-`sales`, `goodsreceipt`, `delivery`, `salesreturn`, `purchasereturn`) untuk memperbaiki masalah
-maintainability sistem lama. Frontend **boleh** tetap mengelompokkan halaman-halaman itu di bawah
-satu folder `orders/` bila alur UX-nya memang menyatu (mis. detail SO dan surat jalannya tampil di
-satu halaman) — folder frontend adalah pengelompokan UX, bukan cermin wajib dari boundary backend.
-Putuskan saat modul itu didesain, bukan sekarang.
-
-## POS
-
-POS bukan modul backend sendiri (lihat [../docs/SYSTEM_DESIGN.md §3](../docs/SYSTEM_DESIGN.md)) —
-ia adalah halaman frontend yang memanggil endpoint `sales` (dengan `channel: "pos"`), `party`,
-`product`, `stock`, dan `payment` langsung. Jangan menunggu modul backend "pos" — tidak akan ada.
+POS tidak punya modul backend ([ADR-0007](decisions/ADR-0007-pos-no-dedicated-module.md)): halaman
+`pos` memanggil endpoint `sales` (dengan `channel: "pos"`), `party`, `product`, `stock`, dan `payment`
+langsung.
 
 ## Hal yang Sudah Benar di Sistem Lama — Pertahankan Polanya
 
@@ -83,7 +75,7 @@ KI-43 di [../docs/legacy-reference/known-issues.md](../docs/legacy-reference/kno
 - Toast tulis memakai pesan server: `toast.fromServer(res.message, fallback, deskripsi)` (`shared/stores/toast.store.ts`) bersama varian service `api*Full` yang mempertahankan `{data, message}`; jangan menggantinya dengan teks generik.
 - Data async lewat `useAsyncData` (`shared/hooks/use-async-data.ts`); form panjang menyimpan draf di `localStorage` lewat `use-form-draft` + `shared/lib/draft-storage.ts` (kunci per pengguna, kedaluwarsa, dibersihkan saat logout, semua akses dibungkus try/catch).
 - Halaman cetak `/print/*` (SJ `print/deliveries/:id`, Surat Transfer `print/transfers/:id`, faktur `print/sales/:id`, kwitansi `print/payments/:id`, struk POS `print/pos/:orderId`, label QR `print/labels`, kalibrasi `print/calibration`) didaftarkan di `app/routes/protected.routes.tsx`. Toggle "Sembunyikan diskon" POS sampai ke struk/faktur lewat query `?hideDiscount=1` (`modules/pos/lib/receipt-links.ts`, SL-05). Rute baru wajib punya izin (`perm`) di registry; `app/routes/route-access.test.ts` menjaga kecocokan menu vs izin.
-- Pemindaian POS = `modules/pos/components/ScanDialog.tsx` (kamera `@zxing/browser`); POS tidak punya modul backend sendiri.
+- Pemindaian POS = `modules/pos/components/ScanDialog.tsx` (kamera `@zxing/browser`).
 
 ## Design System v2 "Bingkai Navy" (ADR-0017)
 

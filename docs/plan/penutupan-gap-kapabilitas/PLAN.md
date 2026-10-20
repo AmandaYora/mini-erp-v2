@@ -1,5 +1,7 @@
 # PLAN — Penutupan Gap Kapabilitas & Migrasi Data Produksi
 
+> **RIWAYAT — sebagian digantikan.** Tahap A–J selesai. Tahap K/L (ETL & cutover) tidak dikerjakan dari rencana ini; penerusnya [menuju-pengganti-production](../menuju-pengganti-production/PLAN.md) (ETL di `apps/api/cmd/etl`, prosedur di `docs/RUNBOOK.md` §5b). Keadaan terkini: [docs/STATUS.md](../../STATUS.md).
+
 **Proyek:** mini-erp revamp (`/dimasprasetio/SAAS/mini-erp-revamp`)
 **Sumber data lama:** `/dimasprasetio/SAAS/mini-erp` (NestJS + TypeORM, multi-tenant)
 **Tanggal:** 2026-09-10

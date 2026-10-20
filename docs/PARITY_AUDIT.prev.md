@@ -1,5 +1,7 @@
 # Audit Paritas Kapabilitas — Legacy vs Revamp
 
+> **RIWAYAT — beku.** Versi PARITY_AUDIT per 2026-09-10, digantikan [PARITY_AUDIT.md](PARITY_AUDIT.md). Jangan dijadikan acuan keadaan terkini ([STATUS.md](STATUS.md)).
+
 **Tanggal audit:** 2026-09-10 · **Diverifikasi ulang:** 2026-09-10 (lihat §0)
 **Sistem lama:** `H:/dimasprasetio/SAAS/mini-erp` (NestJS + TypeORM, multi-tenant)
 **Sistem baru:** `H:/dimasprasetio/SAAS/mini-erp-revamp` (Go modular monolith + MySQL, standalone)

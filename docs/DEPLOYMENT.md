@@ -9,7 +9,7 @@
 | MySQL | 8.4 | Berjalan di host/OS, **bukan** container (lihat §4). CI dan DB uji (`mini_erp_test`, Laragon) memakai 8.4.x |
 | `air` | terbaru | Watcher dev backend — `go install github.com/air-verse/air@latest` |
 | `migrate` (golang-migrate CLI) | terbaru | `go install -tags 'mysql' github.com/golang-migrate/migrate/v4/cmd/migrate@latest` |
-| `sqlc` | v1.31.1 (dipin) | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1` — dikonfigurasi, belum dipakai untuk akses data (ADR-0012) |
+| `sqlc` | v1.31.1 (dipin) | `go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1` — akses data modul `migrated` (ADR-0012); `npm run sqlc:generate` |
 | `golangci-lint` | v2.14.0 (dipin) | `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` |
 
 ## 2. Setup Awal
@@ -18,7 +18,7 @@
 cp .env.example .env      # isi kredensial lokal, jangan commit .env
 npm install                # root + apps/web (npm workspaces)
 mysql -u root -e "CREATE DATABASE IF NOT EXISTS mini_erp_db"
-npm run migrate:up         # 18 migrasi baseline per modul (000001_user … 000018_assistant)
+npm run migrate:up         # 18 baseline per modul + migrasi bernomor sesudahnya (DB_SCHEMA §8)
 ```
 
 Verifikasi dan DB uji:

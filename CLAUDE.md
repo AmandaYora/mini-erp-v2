@@ -1,65 +1,65 @@
 # mini-erp — Claude Code Gateway
 
-**mini-erp** — revamp of a single-company, multi-branch operational ERP (purchasing,
-stock/warehouse, sales & POS, delivery, payment, finance/tax, reporting) previously built in
-NestJS/TypeORM, now rebuilt as a Go modular monolith + MySQL. Backend: Go (`apps/api`). Frontend:
-React 19 + Tailwind 4 (`apps/web`).
+**mini-erp** is the revamp of a single-company, multi-branch operational ERP (purchasing,
+stock/warehouse, sales & POS, delivery, payment, finance/tax, reporting, WhatsApp bot). The legacy
+NestJS/TypeORM system is being replaced by a **Go modular monolith + MySQL** (`apps/api`) and a
+**React 19 + Tailwind 4** frontend (`apps/web`). All 20 backend modules are implemented; what
+remains is the cutover program (legacy-data ETL, rehearsal, physical print checks).
 
-**Status: 20 backend modules implemented** (~60k lines Go in `internal/modules`, 244 routes, 18 per-module baseline
-migrations + numbered migrations 000019–000023/000031 / 65 tables) and 85 frontend pages. **sqlc: incremental migration
-(ADR-0012)** — 16 of 18 table-owning modules migrated (`finance`, `stock` still `pending`; `scripts/sqlc-migration-status.json`
-is the ratchet), hand-written `database/sql` remains only in `pending` modules or `scripts/raw-sql-allow.json` exceptions.
-Capability parity with the legacy system is **~98%** (100% endpoint coverage of the 205 target); the independent audit of
-2026-10-16 found deeper gaps and the parity-completion program (`docs/plan/penyempurnaan-paritas/PLAN.md`,
-`npm run plan:check`) has closed waves 1-3 — what is still open is listed in `docs/PARITY_AUDIT.md` §0A.2. The remaining work is
-the program, not capability: legacy-data ETL (stage K), cutover rehearsal (stage L), extra tests (PLAN T-01..T-05), and physical print verification.
-Finance P0/P1 landed via table-less revisions, and J2/J3/J4 (QR labels, delivery work queue, one-step
-location move) closed 2026-09-11. Stage 1 of the closing plan is done: journal lines
-carry product/party dimensions, and margin-per-product plus receivables/payables now report from
-the books (three posting bugs were found and fixed on the way — see the audit's §10). All of it is listed with file:line evidence and a dependency-ordered closing plan in
-[`docs/PARITY_AUDIT.md`](docs/PARITY_AUDIT.md). Read that before assuming a feature is missing by
-design — several things that look absent are deliberate, and the figures above go stale fast.
-Module order and boundaries: `knowledge/MODULE_MAP.md`.
+Current figures, open work, and the active plans live in **one place only:
+[`docs/STATUS.md`](docs/STATUS.md)**. Do not copy figures (route/page/table/test counts, parity %)
+into any other file — they go stale.
 
-## Commands (run from root)
+## Commands (run from the repo root)
 
 ```bash
-npm run dev:web   # start frontend
-npm run dev:api   # start backend
-npm run arch:check && npm run contract:check   # architecture + FE<->router guards (npm run verify = everything)
-node scripts/test-db.mjs up   # pastikan MySQL + mini_erp_test sebelum verify/test
+npm run dev:web                    # frontend (Vite)
+npm run dev:api                    # backend (Go via air)
+node scripts/test-db.mjs up        # make sure MySQL + mini_erp_test exist before tests
+npm run verify                     # everything: go build/vet/test, tsc, eslint, vitest, arch/contract/schema checks
+npm run arch:check && npm run contract:check   # fast architecture + FE<->router guards
 ```
 
-## Sebelum Mengerjakan Apa Pun
+## Before working on anything
 
-1. Baca [`knowledge/INDEX.md`](knowledge/INDEX.md) — indeks lengkap dan routing task→domain.
-2. Baca [`.claude/rules/`](.claude/rules/) yang relevan — ditegakkan saat menyunting kode.
-3. Baca [`knowledge/MODULE_MAP.md`](knowledge/MODULE_MAP.md) untuk urutan pengerjaan modul dan
-   dokumen legacy yang relevan per modul.
-4. Sebelum mendesain sebuah modul: baca bagiannya di
-   [`docs/PRD.md` §5](docs/PRD.md#5-keputusan-bisnis-yang-perlu-dikonfirmasi-sebelumselagi-desain-modul)
-   (keputusan bisnis terbuka) dan `docs/legacy-reference/known-issues.md` (perbaiki vs replikasi).
+1. [`knowledge/INDEX.md`](knowledge/INDEX.md) — reading order per task and the **source-of-truth map**
+   (which file owns which fact).
+2. The relevant `.claude/rules/*.md` — loaded automatically for the paths they cover.
+3. [`knowledge/MODULE_MAP.md`](knowledge/MODULE_MAP.md) — module layers, boundaries, legacy docs per module.
+4. [`docs/PARITY_AUDIT.md`](docs/PARITY_AUDIT.md) §6 and `knowledge/decisions/` before assuming a
+   feature is missing — several absences are deliberate.
 
-## Critical architecture rules
+## Critical architecture rules (never break)
 
-- Backend is a **modular monolith**. A module exposes only `contracts/` to other modules.
-  No cross-module service/repository/domain imports, no cross-module DB joins or foreign keys.
-- Cross-module relations are stored as primitive IDs and resolved via module clients.
-- Session scope (`branchId`/`userId`/role/permission) always comes from the
-  authenticated session (`auth` module) — never from request body/query.
-  Standalone single-tenant: no `companyId` anywhere (see
-  `knowledge/decisions/ADR-0009-single-tenant-takeout-multitenancy.md`).
-- Money is stored as integer rupiah. Timezone/locale/currency (`Asia/Jakarta`/`id-ID`/IDR) are
-  locked application constants, not editable settings — see
-  `knowledge/decisions/ADR-0005-money-as-integer-rupiah.md` and
-  `knowledge/decisions/ADR-0006-locale-timezone-locked.md`.
-- API responses always use the `{success, message, data}` envelope; `message` is never discarded
-  by the frontend.
-- Frontend uses the `@/*` alias, lazy routes, Zustand, Zod, Axios. Theme color is centralized.
-- Docker = one app container; the database runs on the host.
+- **Modular monolith.** A module exposes only `contracts/`. No cross-module imports of
+  `application/`, `domain/`, `infrastructure/`; no cross-module SQL joins or foreign keys.
+  Cross-module relations are primitive IDs resolved through module clients.
+- **Session scope** (`branchId`/`userId`/role/permission) always comes from the `auth` session —
+  never from request body/query. Standalone single-tenant: no `companyId` anywhere (ADR-0009).
+- **Money is integer rupiah** (ADR-0005). Timezone/locale/currency `Asia/Jakarta`/`id-ID`/IDR are
+  locked constants, not settings (ADR-0006).
+- **API envelope** `{success, message, data}` under `/api/v1`; the frontend never discards `message`.
+- Frontend: `@/*` alias, lazy routes, Zustand, Zod, one Axios instance, theme tokens only.
+- Deployment: one app container; MySQL runs on the host.
 
-## Before changing code
+`scripts/arch-check.mjs` mechanically checks the boundary, no-`company_id`, envelope, money-kernel and
+single-Axios rules (rule list in its header); `scripts/contract-check.mjs` matches frontend calls and
+permission codes to the router. Session scope and integer money are kept by review and tests.
 
-Read the relevant file in `knowledge/` first (start at `knowledge/INDEX.md`), and follow
-the path-scoped rules in `.claude/rules/`. Do not duplicate that knowledge here — this file
-is a gateway, not a documentation dump.
+## Keeping documentation consistent
+
+When code changes, update the **one** owning file (see the map in `knowledge/INDEX.md`), and link to
+it from elsewhere instead of restating it.
+
+| You changed… | Update |
+|---|---|
+| An API route | `docs/API_CONTRACT.md` §6 by hand (`contract:check` only matches frontend calls to the router, not this table) |
+| A migration / table | `node scripts/db-schema-doc.mjs` regenerates `docs/DB_SCHEMA.md` §3; add the §8 history row |
+| An architectural or product decision | New/revised ADR in `knowledge/decisions/` + its line in `knowledge/INDEX.md` |
+| A domain term | `knowledge/DOMAIN_GLOSSARY.md` |
+| An audit action key | `apps/web/src/modules/audit/lib/audit-labels.ts` (its test fails otherwise) |
+| Project status, counts, open work | `docs/STATUS.md` only |
+
+Plans in `docs/plan/` and dated audits are **history**: read them for context, never treat them as the
+current state, and do not rewrite them (append to their own log sections if a plan is still active).
+Preserve each file's existing line endings (most files are LF, a few are CRLF — check with `git ls-files --eol`).

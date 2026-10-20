@@ -1,8 +1,7 @@
 # PRD — Mini ERP (Revamp)
 
-Status: **terimplementasi penuh** — 20 modul backend + frontend + POS + bot WA
-(skop L9: tanpa Knowledge/RAG/AI). Dokumen ini adalah catatan tujuan, cakupan,
-dan peta modul produk awal.
+Catatan tujuan, cakupan, dan peta modul produk. Seluruh cakupan di bawah sudah dibangun
+(20 modul backend + frontend + POS + bot WA); status terkini: [STATUS.md](STATUS.md).
 
 ## 1. Latar Belakang & Tujuan Revamp
 
@@ -56,15 +55,15 @@ menjadi **20 modul backend** dengan batas yang lebih jelas (detail teknis di
 | Retur | Sales Return, Purchase Return | 12, 13 |
 | Keuangan | Finance (COA, jurnal, HPP, laporan, pajak, tutup periode) | 17 |
 | Observabilitas | Dashboard, Reporting, Audit Log | 18, 19, 20 |
-| *(fase lanjut, opsional)* | Assistant AI + WhatsApp + Knowledge/RAG | 21 |
+| Asisten | Assistant: bot WhatsApp + tooling operasional read-only (tanpa AI generatif dan Knowledge/RAG) | 21 (sebagian) |
 
 **POS** tidak menjadi modul backend tersendiri (mengikuti pola sistem lama) — ia adalah kanal
 frontend yang merakit Product, Party, Stock, Sales, dan Payment lewat kontrak modul yang sama.
 
-**Modul 21 (Assistant/WhatsApp/Knowledge)** sengaja **tidak** masuk cakupan tahap awal. Modul ini
-paling kompleks secara integrasi (gateway WhatsApp/Baileys, pipeline RAG) dan di analisis legacy
-sendiri paling tipis didokumentasikan. Keputusan membawanya ke sistem baru — dan kapan — adalah
-keputusan bisnis terpisah, bukan bagian dari revamp inti operasional.
+**Modul 21 (Assistant/WhatsApp/Knowledge)** semula di luar cakupan tahap awal karena paling
+kompleks secara integrasi (gateway WhatsApp, pipeline RAG). Atas permintaan pemilik, bagian **bot
+WhatsApp + tooling operasional** kemudian dibangun sebagai lapisan L9 (modul `assistant`). AI
+generatif dan Knowledge/RAG tetap di luar cakupan (§9; ADR-0018 D1, menunggu konfirmasi pemilik).
 
 ## 4. Prinsip Cakupan: Replikasi Perilaku, Bukan Replikasi Cacat
 
@@ -83,10 +82,11 @@ Aturan keputusan per modul, saat modul itu didesain:
 
 ## 5. Keputusan Bisnis yang Perlu Dikonfirmasi Sebelum/Selagi Desain Modul
 
-Kelompok A dari analisis legacy berisi 48 pertanyaan; berikut **15 yang memblokir desain** (P0),
-disarikan dari [legacy-reference/open-questions.md](legacy-reference/open-questions.md). Ini
-**bukan** untuk dijawab sekarang di tahap setup — dicatat di sini supaya tidak terlewat saat modul
-terkait mulai didesain.
+Kelompok A dari analisis legacy berisi 48 pertanyaan; berikut ringkasan **15 item P0** (beberapa
+digabung per modul), disarikan dari [legacy-reference/open-questions.md](legacy-reference/open-questions.md)
+saat proyek disiapkan. Jawaban yang sudah diambil tercatat sebagai ADR di `knowledge/decisions/`
+(terutama ADR-0018) atau di [PARITY_AUDIT.md](PARITY_AUDIT.md); periksa di sana sebelum membuka
+ulang sebuah pertanyaan.
 
 | # | Modul terdampak | Pertanyaan ringkas |
 |---|---|---|
@@ -165,13 +165,13 @@ Urutan ini murni berbasis ketergantungan data/kode (detail lengkap di
 
 **Titik uji paling berharga** (diwarisi dari legacy): akhir tahap 5–7 — bila alur POS lengkap
 (jual produk bervarian, harga member, cetak struk, potong stok, catat pembayaran) berjalan benar,
-seluruh kontrak lintas modul di §9 SYSTEM_DESIGN sudah benar sebelum Finance dibangun.
+seluruh kontrak lintas modul di SYSTEM_DESIGN §7 sudah benar sebelum Finance dibangun.
 
 ## 9. Di Luar Cakupan (Untuk Saat Ini)
 
 - Multi-tenant / multi-perusahaan dalam satu instalasi.
 - Microservices, Kubernetes, message broker, cache terdistribusi (lihat aturan
-  anti-overengineering di `CLAUDE.md`).
+  anti-overengineering di `.claude/rules/monorepo.md`).
 - Assistant AI dan knowledge base/RAG (bot WhatsApp + tooling operasional SUDAH dibangun
   sebagai L9; yang di luar cakupan hanya AI generatif + RAG — lihat §3).
 - Localization selain Indonesia/Rupiah/WIB.

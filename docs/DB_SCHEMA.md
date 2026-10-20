@@ -296,9 +296,9 @@ Validasi keberadaan `party_id`/`product_id` dilakukan lewat pemanggilan `PartyCl
 `ProductClient.GetByID` di application layer modul `sales` saat order dibuat — bukan lewat
 constraint database.
 
-## 5. Belum Ditetapkan (diputuskan saat modul terkait didesain)
+## 5. Keputusan Skema yang Semula Terbuka
 
-- Strategi primary key: auto-increment integer vs ULID/UUID. Pilih satu, konsisten di semua modul.
+- Primary key: `BIGINT UNSIGNED AUTO_INCREMENT` di semua tabel (tanpa ULID/UUID).
 - Presisi desimal (dikunci dari bukti kode warisan): kuantitas & faktor konversi UOM =
   `DECIMAL(24,12)` (`order-item.entity.ts:47-51`, `product.entity.ts:48-52`); persen penyesuaian
   harga = `DECIMAL(18,4)` (`member-type.entity.ts:36`). Uang tetap integer rupiah (ADR-0005),

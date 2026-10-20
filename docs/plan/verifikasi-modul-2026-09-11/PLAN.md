@@ -1,5 +1,7 @@
 # PLAN — Penyempurnaan Pasca-Verifikasi Modul
 
+> **RIWAYAT — selesai.** Rencana ini sudah dikerjakan (lihat §5b); C0 (git) dan C2 (E2E) yang ditunda di sini kemudian dikerjakan di rencana berikutnya. Angka di dalamnya benar per 2026-09-11. Keadaan terkini: [docs/STATUS.md](../../STATUS.md).
+
 **Proyek:** mini-erp revamp (`E:/dimasprasetio/SAAS/mini-erp-revamp`)
 **Sistem lama (pembanding):** `E:/dimasprasetio/SAAS/mini-erp` (NestJS + TypeORM)
 **Tanggal:** 2026-09-11

@@ -27,8 +27,9 @@ satu orang.
 ## Peran Pengguna (Role Bawaan)
 
 Diwarisi dari sistem lama (lihat
-[docs/legacy-reference/02-users-roles-permissions/](../docs/legacy-reference/02-users-roles-permissions/)) —
-detail permission per role ditetapkan saat modul `user` didesain:
+[docs/legacy-reference/02-users-roles-permissions/](../docs/legacy-reference/02-users-roles-permissions/)).
+Izin bawaan per role didefinisikan di `apps/api/internal/bootstrap/roles.go` dan dikunci oleh test
+`TestRoleSeedMatrix` (`apps/api/internal/integration/role_matrix_test.go`) serta e2e E12:
 
 | Role | Fokus operasional |
 |---|---|

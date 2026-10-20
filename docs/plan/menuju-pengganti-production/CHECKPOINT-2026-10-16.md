@@ -1,5 +1,7 @@
 # Checkpoint 2026-10-16 — gladi ETL dengan data produksi nyata
 
+> **RIWAYAT — snapshot 2026-10-16.** Catatan gladi ETL pada tanggal itu; perubahan kode yang disebut "belum di-commit" sudah masuk `main`. Prosedur yang berlaku: `docs/RUNBOOK.md` §5b/§5c; status terkini: [docs/STATUS.md](../../STATUS.md).
+
 Tujuan dokumen: agar AI/pengembang berikutnya bisa melanjutkan **dengan urutan yang benar**
 tanpa menemukan ulang jebakan yang sama. Baca bersama `docs/RUNBOOK.md` §5b dan
 `docs/PARITY_AUDIT.md`. Semua perubahan kode di bawah **belum di-commit** (working tree).

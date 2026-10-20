@@ -10,6 +10,10 @@ sistem lama?** Bukan perbandingan kode atau arsitektur — struktur, algoritma, 
 memang sengaja berbeda (lihat [PRD.md](PRD.md) dan `knowledge/decisions/`). Yang diaudit adalah
 **permukaan kapabilitas**: endpoint, tabel, halaman, alur kerja, dan desain UI yang dilihat pengguna.
 
+> **Cara membaca.** Acuan terkini: §0A (koreksi 2026-10-19 dan daftar yang masih terbuka/diterima sebagai gap),
+> §3 (paritas per modul), §6 (yang sengaja tidak dibawa). §0 dan §10–§12 adalah log pengerjaan bertanggal.
+> Angka proyek terkini tidak ditulis di sini — lihat [STATUS.md](STATUS.md).
+
 ---
 
 ## 0. Verifikasi Independen ke-2 — 6 Koreksi
@@ -84,7 +88,7 @@ ditandai "arsip".
 | Kolom inline "Info tambahan:"/"Atribut:" pada impor produk = error (bukan peringatan + migrasi otomatis) | Menunggu tinjauan pemilik | PLAN §7 PR-08 |
 | Perlakuan akuntansi saldo kredit retur dan pemakaian uang muka | Default dipakai, **perlu konfirmasi akuntan** | PLAN §7 K-04a, N-41 |
 | Cabang pesan WhatsApp masuk tetap seluruh perusahaan (otorisasi nomor bersifat company-wide; hanya konsol uji dibatasi akses cabang) | **Diterima gap** | PLAN §7 AS-01 |
-| Cabang kerja/commit per tugas tidak dibuat (pohon kerja ±489 berkas belum di-commit, git "dubious ownership") | **Terblokir** (proses) | PLAN G-02, §7 |
+| ~~Cabang kerja/commit per tugas tidak dibuat~~ | **Tertutup** 2026-10-20 — 5 commit per area di cabang `feat/paritas-gelombang-1-3` | PLAN G-02, §7 |
 | sqlc: `finance` dan `stock` masih `pending` di ratchet (hand-written `database/sql`) | Terbuka (ADR-0012, fase terakhir) | `scripts/sqlc-migration-status.json` |
 | Risiko operasional dicatat: `Readiness`/`VerifyRollups` menjalankan `Sync` ledger (menulis, idempoten); `AverageUnitCost` per posisi pada stok rusak; antrean posting memakai total pesanan induk untuk SJ/penerimaan; retur beli tanpa nomor pesanan induk di detail PPN | Dipantau | PLAN CHECKPOINT, §7 FN-04/06, FN-10, ST-03 |
 

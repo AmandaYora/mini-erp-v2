@@ -2,7 +2,7 @@
 
 **Proyek:** mini-erp revamp — frontend `apps/web` (React 19 + Tailwind 4)
 **Tanggal:** 2026-10-16
-**Status:** RANCANGAN FINAL, siap dieksekusi bertahap. Belum ada kode yang diubah.
+**Status:** sebagian besar sudah dieksekusi — lihat "Status eksekusi" di bawah untuk yang selesai dan yang tersisa.
 **Keputusan pemilik 2026-10-16** (sudah dimasukkan ke seluruh dokumen; ringkasan di §12):
 - brand tetap **navy**, sidebar tetap **gelap navy** tetapi dimodernkan
 - primitif **Radix**
