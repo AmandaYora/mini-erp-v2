@@ -8,6 +8,7 @@ import (
 	financeapp "mini-erp/internal/modules/finance/application"
 	paymentapp "mini-erp/internal/modules/payment/application"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // insertConfirmedNotes writes n confirmed shipment headers straight into the
@@ -122,7 +123,7 @@ func TestClosedPeriodDocsDoNotBlockOtherMonths(t *testing.T) {
 		t.Fatalf("september readiness ready=%v late=%d blockers=%v; want ready with 1 late doc", check.Ready, check.LatePeriodDocs, check.Blockers)
 	}
 	// CloseDay skips the closed-month document instead of failing on it.
-	res, err := fin.CloseDay(ctx(), 0, fx.branchID, "2026-12-31")
+	res, err := fin.CloseDay(ctx(), 0, fx.branchID, timeutil.TodayWIB())
 	if err != nil {
 		t.Fatalf("close day: %v", err)
 	}

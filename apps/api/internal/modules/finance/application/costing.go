@@ -2,9 +2,11 @@ package application
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"mini-erp/internal/modules/finance/infrastructure"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
@@ -39,12 +41,34 @@ func (s *Service) Sync(ctx context.Context, branchID int64) (*SyncResult, error)
 		return nil, err
 	}
 	var res *SyncResult
-	err := doclock.Lock("fincost:"+strconv.FormatInt(branchID, 10), func() error {
+	err := s.costLock(ctx, branchID, costLockWaitSync, func() error {
 		r, err := s.syncLocked(ctx, branchID)
 		res = r
 		return err
 	})
 	return res, err
+}
+
+// Cost-lock waits: postings wait briefly for a restatement in progress; the
+// restatement and the opening completion are operator actions that can wait
+// for a running sync.
+const (
+	costLockWaitSync    = 30 * time.Second
+	costLockWaitRestate = 5 * time.Minute
+)
+
+// costLock serializes everything that writes a branch's cost ledger: in this
+// process (doclock) and across processes (a database advisory lock), since
+// cmd/costrebuild restates the same ledger from its own process.
+func (s *Service) costLock(ctx context.Context, branchID int64, wait time.Duration, fn func() error) error {
+	key := "fincost:" + strconv.FormatInt(branchID, 10)
+	return doclock.Lock(key, func() error {
+		err := s.repo.WithAdvisoryLock(ctx, key, wait, fn)
+		if errors.Is(err, infrastructure.ErrLockBusy) {
+			return apperror.Conflict("Nilai persediaan sedang dihitung ulang di proses lain; coba lagi sebentar")
+		}
+		return err
+	})
 }
 
 // costLookBackMinutes bounds how far back a late-committing lower id is sought.

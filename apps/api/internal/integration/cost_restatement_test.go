@@ -105,6 +105,19 @@ func TestCostRestatementDryRunGateAndCommit(t *testing.T) {
 		t.Fatalf("dry run changed data: %+v -> %+v", snap0, snap1)
 	}
 
+	// Audit K4: migrated history at or before the cutover boundary is never
+	// restated (ADR-0020), however stale its price.
+	if _, err := testMods.db.Exec(`INSERT INTO finance_cutover (branch_id, doc_type, covered_through_id, set_by)
+		SELECT branch_id, 'stock_movement', stock_movement_id, 0 FROM finance_inventory_cost_movements WHERE id = ?`, outID); err != nil {
+		t.Fatalf("set cutover: %v", err)
+	}
+	if bounded, err := fin.RestateCost(ctx(), financeapp.RestateCostOptions{BranchID: fx.branchID}); err != nil || bounded.RowsChanged != 0 {
+		t.Fatalf("restatement across the cutover = %+v err=%v, want nothing restated", bounded, err)
+	}
+	if _, err := testMods.db.Exec(`DELETE FROM finance_cutover WHERE doc_type = 'stock_movement'`); err != nil {
+		t.Fatalf("clear cutover: %v", err)
+	}
+
 	// (2) The trial-balance gate refuses a commit and leaves everything alone.
 	var lineID int64
 	if err := testMods.db.QueryRow(`SELECT id FROM finance_journal_lines WHERE entry_id = ? AND debit > 0`, entryID).Scan(&lineID); err != nil {

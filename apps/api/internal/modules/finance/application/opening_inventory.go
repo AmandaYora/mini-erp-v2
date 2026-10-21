@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	"mini-erp/internal/modules/finance/contracts"
 	"mini-erp/internal/modules/finance/infrastructure"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
-	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/money"
 )
 
@@ -215,7 +213,7 @@ func (s *Service) CompleteOpening(ctx context.Context, actorID, branchID int64, 
 		return nil, err
 	}
 	var res *CompleteResult
-	err = doclock.Lock("fincost:"+strconv.FormatInt(branchID, 10), func() error {
+	err = s.costLock(ctx, branchID, costLockWaitRestate, func() error {
 		r, err := s.completeLocked(ctx, actorID, branchID, items, inventory, equity)
 		res = r
 		return err
@@ -375,6 +373,12 @@ type InventoryRecon struct {
 	// the posting queue on purpose: a permanent, deliberate gap.
 	IgnoredValue int64 `json:"ignoredValue"`
 	MissingCost  int   `json:"missingCost"`
+	// EmptyValued counts positions with no quantity left that still hold
+	// value (EmptyValue in total): a cancellation is priced from its original
+	// document, so it can leave a remainder in an emptied position. The books
+	// hold that value too, so it is part of Ledger — reported, not a gap.
+	EmptyValued int   `json:"emptyValued"`
+	EmptyValue  int64 `json:"emptyValue"`
 	// TransferNet is the ledger value cross-branch transfers moved into (+) or
 	// out of (-) this branch. Transfers carry no journal by design, so it is
 	// excluded from Ledger before comparing.
@@ -394,9 +398,23 @@ func (s *Service) ReconcileInventory(ctx context.Context, branchID int64) (*Inve
 	if err != nil {
 		return nil, err
 	}
-	var ledger int64
-	for _, p := range valued {
-		ledger += p.value
+	// The ledger side is EVERY position's value, not only the valued stock
+	// the opening reads: the books carry the remainder an emptied position can
+	// keep (or the negative value a reverse-priced cancellation leaves), so
+	// leaving those out would report a gap that is not there.
+	positions, err := s.repo.CostPositions(ctx, branchID)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	var ledger, emptyValue int64
+	emptyValued := 0
+	for _, p := range positions {
+		v := money.Round(p.Total)
+		ledger += v
+		if math.Abs(p.Qty) <= 1e-9 && v != 0 {
+			emptyValued++
+			emptyValue += v
+		}
 	}
 	transfer, opening, err := s.repo.UnjournaledCostValue(ctx, branchID)
 	if err != nil {
@@ -435,7 +453,8 @@ func (s *Service) ReconcileInventory(ctx context.Context, branchID int64) (*Inve
 	}
 	rec := &InventoryRecon{Book: book, Ledger: ledger, Diff: book - ledger,
 		Tolerance: 100 + int64(len(valued)), Pending: pending, PendingValue: pendingValue, IgnoredValue: ignoredValue,
-		MissingCost: len(missing), TransferNet: transferNet, OpeningUnposted: openingUnposted}
+		MissingCost: len(missing), EmptyValued: emptyValued, EmptyValue: emptyValue,
+		TransferNet: transferNet, OpeningUnposted: openingUnposted}
 	rec.Unexplained = rec.Diff + pendingValue + ignoredValue
 	rec.Consistent = absInt64(rec.Unexplained) <= rec.Tolerance
 	return rec, nil

@@ -13,6 +13,7 @@ import (
 	financeinfra "mini-erp/internal/modules/finance/infrastructure"
 	partyapp "mini-erp/internal/modules/party/application"
 	salesapp "mini-erp/internal/modules/sales/application"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // postStockMovements journals the fixture's opening stock adjustments so a
@@ -163,7 +164,7 @@ func TestIgnoreAndRestorePostingSource(t *testing.T) {
 	if len(res) != 1 || res[0].Error == "" {
 		t.Fatalf("batch posted an ignored document: %+v", res)
 	}
-	if closed, _ := fin.CloseDay(ctx(), 0, fx.branchID, "2026-12-31"); closed == nil || len(closed.Results) != 0 {
+	if closed, _ := fin.CloseDay(ctx(), 0, fx.branchID, timeutil.TodayWIB()); closed == nil || len(closed.Results) != 0 {
 		t.Fatalf("close-day picked up an ignored document: %+v", closed)
 	}
 

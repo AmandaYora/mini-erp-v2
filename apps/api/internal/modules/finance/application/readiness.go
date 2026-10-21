@@ -177,6 +177,12 @@ func (s *Service) Readiness(ctx context.Context, branchID int64, year, month int
 		add("transfer_value", "Nilai transfer antar-cabang", CheckWarning,
 			fmt.Sprintf("transfer antar-cabang menggeser nilai persediaan ledger %d tanpa jurnal (dikeluarkan dari rekonsiliasi)", recon.TransferNet), 1)
 	}
+	if recon.EmptyValued > 0 {
+		add("empty_valued", "Posisi stok kosong masih bernilai", CheckWarning,
+			fmt.Sprintf("%d posisi stok kosong masih bernilai %d di ledger biaya (sisa harga pembatalan); "+
+				"buku memuat nilai yang sama, jadi bukan selisih — telaah bila nilainya material", recon.EmptyValued, recon.EmptyValue),
+			int64(recon.EmptyValued))
+	}
 	if recon.MissingCost > 0 {
 		add("missing_cost", "Produk berstok tanpa harga modal", CheckWarning,
 			fmt.Sprintf("%d produk berstok belum punya harga modal (nilai persediaan nol)", recon.MissingCost), int64(recon.MissingCost))

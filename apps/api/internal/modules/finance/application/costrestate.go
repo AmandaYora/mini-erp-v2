@@ -14,7 +14,6 @@ import (
 	"mini-erp/internal/modules/finance/infrastructure"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
-	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/money"
 )
 
@@ -35,8 +34,11 @@ import (
 // moves (transfers and damaged-location moves: both legs carry one value and
 // no journal exists for them by design), and documents that were cancelled
 // (their cancellation mirrors the recorded value, and no journal remains to
-// correct). Only finance's own ledger table is read; no stock data is needed,
-// so the tool stays inside the module boundary.
+// correct), nor anything at or before the cutover boundary: migrated legacy
+// history is evidence of what the books recorded then (ADR-0020), so only
+// outflows the revamp itself costed are restated. Only finance's own tables
+// are read; no stock data is needed, so the tool stays inside the module
+// boundary.
 
 // SourceCostRestatement marks the correction journal.
 const SourceCostRestatement = "cost_restatement"
@@ -92,7 +94,10 @@ type RestateReport struct {
 	ReconAfter  *InventoryRecon  `json:"reconAfter,omitempty"`
 	Applied     bool             `json:"applied"`
 	Date        string           `json:"date"`
-	rowUpdates  []restatedRow
+	// CutoverMovementID is the last legacy stock movement (finance_cutover);
+	// outflows at or below it are never restated. 0 = no migrated history.
+	CutoverMovementID int64 `json:"cutoverMovementId"`
+	rowUpdates        []restatedRow
 }
 
 type restatedRow struct {
@@ -132,7 +137,7 @@ func (s *Service) RestateCost(ctx context.Context, o RestateCostOptions) (*Resta
 		return nil, err
 	}
 	var rep *RestateReport
-	err = doclock.Lock("fincost:"+strconv.FormatInt(o.BranchID, 10), func() error {
+	err = s.costLock(ctx, o.BranchID, costLockWaitRestate, func() error {
 		r, err := s.restateLocked(ctx, o, date, before)
 		rep = r
 		return err
@@ -158,8 +163,13 @@ func (s *Service) restateLocked(ctx context.Context, o RestateCostOptions, date 
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
+	cutover, err := s.repo.Cutovers(ctx, o.BranchID)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
 	rep := &RestateReport{Commit: o.Commit, BranchID: o.BranchID, Date: date, ReconBefore: before,
-		Products: []RestateProduct{}, Skipped: []RestateSkipped{}, Gates: []RestateGate{}}
+		Products: []RestateProduct{}, Skipped: []RestateSkipped{}, Gates: []RestateGate{},
+		CutoverMovementID: cutover[SourceStockMovement]}
 	s.replayChains(rows, rep)
 	s.decorateRestate(ctx, rep)
 
@@ -226,7 +236,8 @@ func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateRep
 			}
 			newTotal := r.Total
 			offset, restatable := restateOffsets[r.RefType]
-			if restatable && !cancelled[r.RefType+"#"+strconv.FormatInt(r.RefID, 10)] && qty > positionEpsilon {
+			if restatable && r.MovementID > rep.CutoverMovementID &&
+				!cancelled[r.RefType+"#"+strconv.FormatInt(r.RefID, 10)] && qty > positionEpsilon {
 				// The same pricing the costing run uses: whole rupiah, and an
 				// out that empties the position takes exactly what is left.
 				t := -wholeRupiah(r.Qty * total / qty)

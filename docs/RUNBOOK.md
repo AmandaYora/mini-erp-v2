@@ -191,16 +191,17 @@ TOKEN=$(curl -s -X POST $API/api/v1/auth/login -H 'Content-Type: application/jso
 H="Authorization: Bearer $TOKEN"
 # 1. Readiness awal (arsipkan): unposted = antrean legacy yang belum dijurnal (POST_PENDING di findings.csv)
 curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-0.json
-# 2. Tutup harian per tanggal freeze; ulangi sampai "remaining" 0 atau tidak ada kemajuan,
-#    lalu sekali lagi untuk tanggal dokumen terakhir di antrean (SJ legacy boleh bertanggal ke depan)
+# 2. Tutup harian per tanggal freeze; ulangi sampai "remaining" 0 atau tidak ada kemajuan. Dokumen legacy
+#    bertanggal SETELAH hari ini (mis. SJ dijadwalkan) tetap di antrean dan dijurnal oleh tutup harian tanggalnya
+#    sendiri — tutup harian menolak tanggal masa depan dan jurnal tak boleh bertanggal ke depan; readiness
+#    menampilkannya sebagai belum dijurnal dan inventory_recon menjelaskannya lewat pendingValue
 curl -s -X POST -H "$H" -H 'Content-Type: application/json' -d "{\"date\":\"$FREEZE\"}" $API/api/v1/finance/posting/close-day | jq '.message, [.data.results[]|select(.error)]'
 # 3. Dokumen yang tetap gagal: perbaiki sebabnya (mis. harga modal) lalu ulangi 2; data uji yang tak material
 #    boleh diabaikan dengan alasan tertulis (gladi: SJ-BLR/2026/01331 produk "Sampel" Rp2, HPP < Rp1/unit)
 curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
   -d '{"docType":"delivery","docId":<id>,"reason":"<alasan>"}' $API/api/v1/finance/posting/ignore
-# 4. Hanya bila negative_inventory masih ada: costrebuild DRY-RUN, telaah, baru --commit (§6b). Ia merestatement
-#    HPP keluar historis seluruh cabang (gladi: Rp13,2 jt) dan melewati posisi yang berakhir negatif.
-docker exec minierp-app ./costrebuild --branch-id <N> --date $FREEZE
+# 4. negative_inventory dari histori legacy TIDAK diperbaiki costrebuild (histori migrasi tidak ditulis ulang,
+#    ADR-0020; §6b): catat posisinya untuk akuntan dan telaah sebabnya (oversell/inflow hilang di legacy).
 # 5. Bukti akhir (arsipkan): tidak ada status failed; inventory_recon konsisten (ADR-0020: selisih tak terjelaskan
 #    = selisih bawaan legacy V-27 di verify.md, dalam toleransi; gladi 2026-10-21 sesudah posting: Rp297)
 curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-1.json
@@ -250,10 +251,15 @@ Yang dilakukan: (1) menarik ledger terbaru; (2) memutar ulang tiap posisi (produ
 (penerimaan, saldo awal, baris biaya-saja, kaki cermin) adalah bukti dan tidak diubah; hanya baris keluar yang dijurnal dari
 ledger (pengiriman, selisih stok kurang, hapus stok, retur beli) yang dihitung ulang pada rata-rata bergerak saat itu, dalam
 rupiah bulat (keluar yang mengosongkan posisi mengambil tepat sisa nilainya); pasangan netral (transfer, pindah lokasi rusak)
-dan dokumen yang dibatalkan tidak disentuh (ADR-0020); posisi yang berakhir negatif dilewati dan dilaporkan; (3) untuk
+dan dokumen yang dibatalkan tidak disentuh (ADR-0020); **histori migrasi tidak pernah ditulis ulang**: hanya baris keluar
+dengan id mutasi di atas batas cutover (`finance_cutover` `stock_movement`, dilaporkan sebagai `cutoverMovementId`) yang
+boleh berubah; posisi yang berakhir negatif dilewati dan dilaporkan; (3) untuk
 commit: menulis ulang baris ledger yang berubah dan memposting SATU jurnal koreksi seimbang (`cost_restatement`: Persediaan
 lawan akun yang dipakai jurnal aslinya: HPP, Selisih Persediaan, Hapus Stok, atau Selisih Retur Beli; Dr Persediaan bila
 nilai persediaan naik, sebaliknya bila turun) dalam satu transaksi, lalu mencatat audit `finance.cost_restatement`.
+Selama berjalan ia memegang kunci basis data `fincost:<cabang>` (`GET_LOCK`) yang sama dengan penghitungan biaya server,
+jadi aman dijalankan saat aplikasi melayani: posting yang tiba menunggu (maks. 30 detik) lalu ditolak dengan pesan
+"sedang dihitung ulang" bila restatement belum selesai.
 
 Gerbang (dilaporkan juga saat dry-run; commit ditolak bila ada yang gagal):
 

@@ -556,6 +556,14 @@ func closeDayEligible(queue []QueueItem, day string) []QueueItem {
 // attempted; a document that failed is not retried within the same call.
 func (s *Service) CloseDay(ctx context.Context, actorID, branchID int64, day string) (*CloseDayResult, error) {
 	day = strings.TrimSpace(day)
+	if _, err := timeutil.ParseDateInput(day); err != nil {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "date", Message: "format tanggal harus YYYY-MM-DD"}})
+	}
+	// A day that has not come yet cannot be closed: its documents (a shipment
+	// dated ahead) are journaled by the close of their own day.
+	if timeutil.AfterTodayWIB(day) {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "date", Message: "tidak boleh di masa depan"}})
+	}
 	res := &CloseDayResult{Results: []BatchResult{}}
 	attempted := map[string]bool{}
 	for len(attempted) < MaxCloseDay {
