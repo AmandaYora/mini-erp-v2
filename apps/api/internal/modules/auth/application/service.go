@@ -33,8 +33,8 @@ const AbsoluteSessionLifetime = 30 * 24 * time.Hour
 const RefreshReuseGrace = 30 * time.Second
 
 // Failed-login allowances per minute. Only failures count, so a user who
-// types the right password is never throttled by her own logins, and the
-// username-wide cap is the only lever others have against her account.
+// types the right password is never throttled by their own logins, and the
+// username-wide cap is the only lever others have against that account.
 const (
 	LoginFailuresPerIPUser = 10
 	LoginFailuresPerIP     = 30

@@ -100,7 +100,7 @@ func TestLoginPerIPFailureLimit(t *testing.T) {
 
 // TestLoginSuccessUsesNoAllowance: only failed logins are counted, so a user
 // logging in correctly more often than the IP+username cap is never refused,
-// and her earlier successes do not shrink the allowance for later typos.
+// and their earlier successes do not shrink the allowance for later typos.
 func TestLoginSuccessUsesNoAllowance(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
