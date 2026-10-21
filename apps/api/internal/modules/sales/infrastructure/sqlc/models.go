@@ -43,6 +43,12 @@ type SalesOrder struct {
 	CompletedAt      sql.NullTime
 	CreditApprovedBy sql.NullInt64
 	CreditApprovedAt sql.NullTime
+	CancelReason     sql.NullString
+	CancelledAt      sql.NullTime
+	CancelledBy      sql.NullInt64
+	ShortCloseReason sql.NullString
+	ShortClosedAt    sql.NullTime
+	ShortClosedBy    sql.NullInt64
 }
 
 type SalesOrderItem struct {

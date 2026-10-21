@@ -113,7 +113,18 @@ type SalesOrder struct {
 	// CashierName is the user who recorded the order's payment (POS receipt /
 	// export "Kasir"); empty when nothing was paid yet. Filled on detail reads.
 	CashierName string
-	Items       []*Item
+	// Corrections (filled by detail reads only, see Service.DecorateDetail):
+	// why/who/when the order was cancelled, or short-closed ("tutup sisa
+	// order": the lines were cut to what confirmed shipments delivered).
+	CancelReason      string
+	CancelledAt       string
+	CancelledBy       int64
+	CancelledByName   string
+	ShortCloseReason  string
+	ShortClosedAt     string
+	ShortClosedBy     int64
+	ShortClosedByName string
+	Items             []*Item
 }
 
 // SalesOrderClient is the public surface of the sales module.

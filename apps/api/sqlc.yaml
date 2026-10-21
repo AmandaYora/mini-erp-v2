@@ -208,6 +208,7 @@ sql:
     schema:
       - migrations/000010_sales.up.sql
       - migrations/000019_sales.up.sql
+      - migrations/000033_sales_corrections.up.sql
     queries: internal/modules/sales/infrastructure/queries
     gen:
       go:

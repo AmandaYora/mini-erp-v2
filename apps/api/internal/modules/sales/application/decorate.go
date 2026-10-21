@@ -39,6 +39,8 @@ func (s *Service) decorateUsers(ctx context.Context, orders []*contracts.SalesOr
 		add(o.CreatedBy)
 		add(o.AssignedUserID)
 		add(o.CreditApprovedBy)
+		add(o.CancelledBy)
+		add(o.ShortClosedBy)
 	}
 	if len(ids) == 0 {
 		return nil
@@ -51,6 +53,8 @@ func (s *Service) decorateUsers(ctx context.Context, orders []*contracts.SalesOr
 		o.CreatedByName = names[o.CreatedBy]
 		o.AssignedUserName = names[o.AssignedUserID]
 		o.CreditApprovedByName = names[o.CreditApprovedBy]
+		o.CancelledByName = names[o.CancelledBy]
+		o.ShortClosedByName = names[o.ShortClosedBy]
 	}
 	return nil
 }
@@ -113,10 +117,17 @@ func (s *Service) paymentLabelsFor(ctx context.Context, ids []int64) paymentLabe
 	return out
 }
 
-// DecorateDetail adds the readable extras of a detail read: user names and the
-// cashier (the user who recorded the payment, falling back to the order's
-// creator for a POS sale not yet paid — SL-10). Two grouped reads at most.
+// DecorateDetail adds the readable extras of a detail read: the correction
+// stamps (cancel / short-close reason, who, when), user names and the cashier
+// (the user who recorded the payment, falling back to the order's creator for
+// a POS sale not yet paid — SL-10). One stamp read per order (a detail read
+// carries one) plus two grouped reads at most.
 func (s *Service) DecorateDetail(ctx context.Context, orders []*contracts.SalesOrder) error {
+	for _, o := range orders {
+		if err := s.repo.FillCorrections(ctx, o); err != nil {
+			return apperror.Internal(err)
+		}
+	}
 	if err := s.decorateUsers(ctx, orders); err != nil {
 		return err
 	}

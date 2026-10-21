@@ -64,7 +64,7 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
 | `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
 | `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql` | `purchase_orders`, `purchase_order_items` | 2 |
-| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
+| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
 | `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql` | `payments`, `payment_allocations` | 2 |
@@ -180,7 +180,7 @@ cukup untuk penelusuran di bawah HPP moving-average (lihat §6).
 
 | Tabel | Untuk apa |
 |---|---|
-| `sales_orders` | Header SO ke customer, termasuk `channel` (`regular`/`pos`); `assigned_user_id` = penanggung jawab; `credit_approved_by`/`credit_approved_at` (migrasi `000019_sales`, SL-09) = siapa/kapan kredit disetujui, diisi satu pernyataan dengan peralihan ke termin net; snapshot alamat kirim (`ship_to_*`) boleh berisi alamat sekali pakai dengan `ship_to_address_id` NULL (SL-01). ETL memetakan `id_assigned_user`, `credit_approved_by/at` |
+| `sales_orders` | Header SO ke customer, termasuk `channel` (`regular`/`pos`); `assigned_user_id` = penanggung jawab; `credit_approved_by`/`credit_approved_at` (migrasi `000019_sales`, SL-09) = siapa/kapan kredit disetujui, diisi satu pernyataan dengan peralihan ke termin net; snapshot alamat kirim (`ship_to_*`) boleh berisi alamat sekali pakai dengan `ship_to_address_id` NULL (SL-01). `cancel_reason`/`cancelled_at`/`cancelled_by` dan `short_close_reason`/`short_closed_at`/`short_closed_by` (migrasi `000033_sales_corrections`) = alasan + siapa/kapan order dibatalkan atau ditutup sisanya. ETL memetakan `id_assigned_user`, `credit_approved_by/at` |
 | `sales_order_items` | Baris SO — snapshot harga (termasuk harga member yang sudah dihitung saat itu) |
 
 ### `goodsreceipt` (L5)
@@ -360,6 +360,7 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000022_purchasing_tax_invoice` | PO-03 | `purchase_orders.tax_invoice_number`, `tax_invoice_date`; `purchase_order_items.tax_rate` | memetakan `tax_rate_snapshot` legacy |
 | `000023_payment_credit_source` | N-41 | `payments.credit_source_type`, `credit_source_id` + indeks `ix_payments_credit_source` (retur sumber saldo uang muka pada pasangan kaki pakai-saldo) | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
 | `000031_finance_fn` | FN-01, FN-07, FN-10 | tabel baru `finance_posting_ignores` dan `finance_tax_adjustment_meta`; kolom `business_expenses.party_id` (+ `ix_business_expenses_party`): pihak lawan biaya | mengisi `party_id` dari `id_business_party` legacy bila pihak itu termigrasi |
+| `000033_sales_corrections` | Koreksi salah input order jual | `sales_orders.cancel_reason`, `cancelled_at`, `cancelled_by` (alasan + siapa/kapan batal, diisi satu pernyataan CAS dengan status `cancelled`) dan `short_close_reason`, `short_closed_at`, `short_closed_by` ("tutup sisa order": baris dipotong ke qty terkirim, order `completed`) — semua nullable | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
 
 Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
 bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);

@@ -22,6 +22,7 @@ satu orang.
 | **SO (Sales Order)** | Order penjualan ke customer — modul `sales`. Termasuk kanal POS (`channel = 'pos'`). |
 | **Goods Receipt (Penerimaan Barang)** | Konfirmasi barang PO sudah diterima gudang — modul `goodsreceipt`. |
 | **Delivery Note / SJ (Surat Jalan)** | Dokumen pengiriman barang SO ke customer — modul `delivery`. |
+| **Tutup sisa order (short-close)** | Mengakhiri SO terkonfirmasi yang baru terkirim sebagian: qty tiap baris dipotong ke qty SJ terkonfirmasi (baris tanpa kiriman dihapus), total dihitung ulang dari harga baris sendiri, SO menjadi `completed` dengan alasan + siapa/kapan. Tanpa jurnal — pendapatan & piutang sudah dijurnal per SJ. Lihat `POST /sales-orders/{id}/close-short` (API_CONTRACT §6). |
 | **Snapshot (Item Dokumen)** | Salinan nama/harga produk yang dibekukan saat dokumen dibuat — nota historis tidak ikut berubah saat master data produk berubah kemudian. Kontrak lintas modul, lihat SYSTEM_DESIGN §7. |
 | **Stock Balance / Stock Movement** | Saldo stok saat ini vs riwayat mutasi yang membentuknya — selalu berpasangan (kontrak modul `stock`). |
 | **Document Sequence (Penomoran Dokumen)** | Nomor berjalan per jenis dokumen per cabang, prefix dari kode cabang — kontrak milik modul `branch`. |

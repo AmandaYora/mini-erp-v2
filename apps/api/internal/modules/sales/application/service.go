@@ -196,7 +196,13 @@ type OrderInput struct {
 	TaxInvoiceDate   string
 	// ClientRef makes creation idempotent per client cart (<= 64 chars).
 	ClientRef string
-	Items     []LineInput
+	// Reason is the optional why of a correction (update of a confirmed
+	// order); it rides the audit trail only.
+	Reason string
+	// HeaderOnly restricts an update of a confirmed order to the header-light
+	// fields (refused when anything economic differs).
+	HeaderOnly bool
+	Items      []LineInput
 }
 
 type pricedLine struct {
@@ -534,7 +540,9 @@ func (s *Service) createOrder(ctx context.Context, actorID, branchID int64, in O
 	return s.GetByID(ctx, id)
 }
 
-// UpdateOrder rewrites a draft SO (re-priced from live catalog/member rules).
+// UpdateOrder rewrites a draft SO, or corrects a confirmed one (re-priced from
+// live catalog/member rules). A confirmed order with shipments, payments or
+// returns only takes the header-light fields (see lightOnly).
 func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, in OrderInput) (*contracts.SalesOrder, error) {
 	var out *contracts.SalesOrder
 	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
@@ -571,13 +579,33 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if err != nil {
 		return nil, err
 	}
+	if fields := reasonErrors(in.Reason, false); len(fields) > 0 {
+		return nil, apperror.Validation("", fields)
+	}
+	// The trail carries before/after of what the correction changed (header
+	// fields, totals, lines) plus the optional reason.
+	before := orderSnapshot(existing)
 	if existing.Status == contracts.StatusConfirmed {
 		// Economic changes need a clean order; header notes/ship-to/due date/tax
-		// invoice stay editable while documents hang off it.
-		if err := s.assertNoDependents(ctx, id); err != nil {
+		// invoice stay editable while documents hang off it. HeaderOnly asks for
+		// that light path explicitly (the "ubah info order" dialog), so a
+		// dependent that vanished meanwhile never turns it into a re-price.
+		depErr := s.assertNoDependents(ctx, id)
+		if depErr != nil {
 			var ae *apperror.AppError
-			if !errors.As(err, &ae) || ae.Code != apperror.CodeConflict || !s.lightOnly(existing, in) {
-				return nil, err
+			if !errors.As(depErr, &ae) || ae.Code != apperror.CodeConflict {
+				return nil, depErr
+			}
+		}
+		if depErr != nil || in.HeaderOnly {
+			if !s.lightOnly(existing, in) {
+				if depErr != nil {
+					return nil, depErr
+				}
+				return nil, apperror.Conflict("Ubah info order hanya untuk jatuh tempo, catatan, alamat kirim, faktur pajak, dan penanggung jawab")
+			}
+			if fields := lightDueDateErrors(existing.PaymentTerms, in.DueDate); len(fields) > 0 {
+				return nil, apperror.Validation("", fields)
 			}
 			shipID, shipLabel, shipRecipient, shipPhone, shipAddr, taxNo, taxDate, serr := s.resolveShipTo(ctx, in)
 			if serr != nil {
@@ -596,7 +624,9 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 			if err := s.repo.UpdateHeaderLight(ctx, existing, actorID); err != nil {
 				return nil, dberr.Map(err)
 			}
-			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number + " (header)"})
+			_ = s.audit.Log(ctx, withDiff(auditcontracts.Entry{
+				Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number + " (header)",
+			}, before, orderSnapshot(existing), correctionMeta(EditHeader, in.Reason)))
 			return s.GetByID(ctx, id)
 		}
 	}
@@ -638,8 +668,26 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if err := s.repo.UpdateOrder(ctx, existing, actorID); err != nil {
 		return nil, dberr.Map(err)
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number})
+	_ = s.audit.Log(ctx, withDiff(auditcontracts.Entry{
+		Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number,
+	}, before, orderSnapshot(existing), correctionMeta(EditFull, in.Reason)))
 	return s.GetByID(ctx, id)
+}
+
+// lightDueDateErrors validates the due date of a header-light correction: a
+// net order keeps one, and it must be a date.
+func lightDueDateErrors(terms, due string) []apperror.FieldError {
+	due = strings.TrimSpace(due)
+	if due == "" {
+		if terms == "net" {
+			return []apperror.FieldError{{Field: "dueDate", Message: "wajib diisi untuk termin net"}}
+		}
+		return nil
+	}
+	if _, err := timeutil.ParseDateInput(due); err != nil {
+		return []apperror.FieldError{{Field: "dueDate", Message: "format tanggal harus YYYY-MM-DD"}}
+	}
+	return nil
 }
 
 // resolveShipTo snapshots the customer address (C2: frozen at write time,
@@ -742,55 +790,10 @@ func (s *Service) ConfirmOrder(ctx context.Context, actorID, branchID, id int64)
 	return s.GetByID(ctx, id)
 }
 
-// CancelOrder voids a draft or confirmed SO — only while nothing hangs off it.
-// Serialized per order; the status is re-read inside the lock, the dependents
-// are consulted (live shipments, active payments, live returns) and the move
-// is a CAS. A repeat on a cancelled order is a successful no-op.
+// CancelOrder voids a draft or confirmed SO without a reason (internal
+// callers); see CancelOrderWithReason.
 func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) (*contracts.SalesOrder, error) {
-	if _, err := s.mustOwnBranch(ctx, id, branchID); err != nil {
-		return nil, err
-	}
-	var number string
-	var replayed bool
-	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
-		existing, err := s.mustOwnBranch(ctx, id, branchID)
-		if err != nil {
-			return err
-		}
-		number = existing.Number
-		switch existing.Status {
-		case contracts.StatusCancelled:
-			replayed = true
-			return nil
-		case contracts.StatusCompleted:
-			return apperror.Conflict("Order sudah final")
-		}
-		if err := s.assertNoDependents(ctx, id); err != nil {
-			return err
-		}
-		won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
-		if err != nil {
-			return apperror.Internal(err)
-		}
-		if !won {
-			cur, err := s.repo.GetOrder(ctx, id)
-			if err != nil {
-				return apperror.Internal(err)
-			}
-			if cur == nil || cur.Status != contracts.StatusCancelled {
-				return apperror.Conflict("Status order berubah, muat ulang")
-			}
-			replayed = true
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.cancel", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number})
-	}
-	return s.GetByID(ctx, id)
+	return s.CancelOrderWithReason(ctx, actorID, branchID, id, "")
 }
 
 // assertNoDependents refuses to cancel an order that already has live
