@@ -62,6 +62,12 @@ type PurchaseReturn struct {
 	Status          string
 	Notes           string
 	Reason          string
+	// CancelReason / CancelledAt / CancelledBy record why, when and by whom
+	// the return was cancelled (empty when never cancelled, or cancelled
+	// before the reason was recorded).
+	CancelReason string
+	CancelledAt  string
+	CancelledBy  int64
 	// PayableReduction is the part of the return automatically offset
 	// against the order's open bill at confirmation.
 	PayableReduction int64

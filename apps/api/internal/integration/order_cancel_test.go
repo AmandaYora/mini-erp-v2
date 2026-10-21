@@ -21,7 +21,7 @@ func TestCancelSalesOrderBlockedByDependents(t *testing.T) {
 	if _, err := testMods.sales.Service().CancelOrder(ctx(), 0, fx.branchID, soID); !isConflict(err) {
 		t.Fatalf("cancel with a draft shipment = %v, want conflict", err)
 	}
-	if _, err := testMods.delivery.Service().Cancel(ctx(), 0, fx.branchID, note.ID); err != nil {
+	if _, err := testMods.delivery.Service().Cancel(ctx(), 0, fx.branchID, note.ID, ""); err != nil {
 		t.Fatalf("cancel shipment: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestCancelPurchaseOrderBlockedByReceipt(t *testing.T) {
 	if _, err := testMods.purchasing.Service().CancelOrder(ctx(), 0, fx.branchID, poID); !isConflict(err) {
 		t.Fatalf("cancel PO with a pending receipt = %v, want conflict", err)
 	}
-	if _, err := testMods.goodsreceipt.Service().Discard(ctx(), 0, fx.branchID, rec); err != nil {
+	if _, err := testMods.goodsreceipt.Service().Discard(ctx(), 0, fx.branchID, rec, ""); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
 	po, err := testMods.purchasing.Service().CancelOrder(ctx(), 0, fx.branchID, poID)

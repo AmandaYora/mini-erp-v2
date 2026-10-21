@@ -98,6 +98,32 @@ func (q *Queries) CountReceipts(ctx context.Context, arg CountReceiptsParams) (i
 	return total, err
 }
 
+const discardReceipt = `-- name: DiscardReceipt :execresult
+UPDATE goods_receipts
+SET status = 'void',
+    cancel_reason = ?,
+    cancelled_at = ?, cancelled_by = ?
+WHERE id = ? AND status = 'pending'
+`
+
+type DiscardReceiptParams struct {
+	Reason  sql.NullString
+	Stamp   sql.NullTime
+	ActorID sql.NullInt64
+	ID      int64
+}
+
+// CAS: voids a PENDING receipt and records why, when and by whom in ONE
+// statement.
+func (q *Queries) DiscardReceipt(ctx context.Context, arg DiscardReceiptParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, discardReceipt,
+		arg.Reason,
+		arg.Stamp,
+		arg.ActorID,
+		arg.ID,
+	)
+}
+
 const firstPostedReceivedAt = `-- name: FirstPostedReceivedAt :one
 SELECT received_at
 FROM goods_receipts
@@ -116,7 +142,8 @@ func (q *Queries) FirstPostedReceivedAt(ctx context.Context, purchaseOrderID int
 const getReceipt = `-- name: GetReceipt :one
 
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE id = ?
 `
@@ -132,6 +159,9 @@ type GetReceiptRow struct {
 	Status                 string
 	ClientRef              sql.NullString
 	CreatedBy              sql.NullInt64
+	CancelReason           sql.NullString
+	CancelledAt            sql.NullTime
+	CancelledBy            sql.NullInt64
 }
 
 // Goods receipt header + lines (F8-18). All queries touch only this
@@ -151,13 +181,17 @@ func (q *Queries) GetReceipt(ctx context.Context, id int64) (GetReceiptRow, erro
 		&i.Status,
 		&i.ClientRef,
 		&i.CreatedBy,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
 	)
 	return i, err
 }
 
 const getReceiptByClientRef = `-- name: GetReceiptByClientRef :one
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE branch_id = ? AND client_ref = ?
 `
@@ -178,6 +212,9 @@ type GetReceiptByClientRefRow struct {
 	Status                 string
 	ClientRef              sql.NullString
 	CreatedBy              sql.NullInt64
+	CancelReason           sql.NullString
+	CancelledAt            sql.NullTime
+	CancelledBy            sql.NullInt64
 }
 
 func (q *Queries) GetReceiptByClientRef(ctx context.Context, arg GetReceiptByClientRefParams) (GetReceiptByClientRefRow, error) {
@@ -194,6 +231,9 @@ func (q *Queries) GetReceiptByClientRef(ctx context.Context, arg GetReceiptByCli
 		&i.Status,
 		&i.ClientRef,
 		&i.CreatedBy,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
 	)
 	return i, err
 }
@@ -312,7 +352,8 @@ func (q *Queries) ListItemsByReceipt(ctx context.Context, receiptID int64) ([]Li
 
 const listPostedAfter = `-- name: ListPostedAfter :many
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE branch_id = ? AND status = 'posted' AND id > ?
 ORDER BY id ASC LIMIT ?
@@ -335,6 +376,9 @@ type ListPostedAfterRow struct {
 	Status                 string
 	ClientRef              sql.NullString
 	CreatedBy              sql.NullInt64
+	CancelReason           sql.NullString
+	CancelledAt            sql.NullTime
+	CancelledBy            sql.NullInt64
 }
 
 func (q *Queries) ListPostedAfter(ctx context.Context, arg ListPostedAfterParams) ([]ListPostedAfterRow, error) {
@@ -357,6 +401,9 @@ func (q *Queries) ListPostedAfter(ctx context.Context, arg ListPostedAfterParams
 			&i.Status,
 			&i.ClientRef,
 			&i.CreatedBy,
+			&i.CancelReason,
+			&i.CancelledAt,
+			&i.CancelledBy,
 		); err != nil {
 			return nil, err
 		}
@@ -413,7 +460,8 @@ func (q *Queries) ListPostedItemLocations(ctx context.Context, purchaseOrderID i
 
 const listReceipts = `-- name: ListReceipts :many
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE branch_id = ?
   AND (? IS NULL OR purchase_order_id = ?)
@@ -440,6 +488,9 @@ type ListReceiptsRow struct {
 	Status                 string
 	ClientRef              sql.NullString
 	CreatedBy              sql.NullInt64
+	CancelReason           sql.NullString
+	CancelledAt            sql.NullTime
+	CancelledBy            sql.NullInt64
 }
 
 func (q *Queries) ListReceipts(ctx context.Context, arg ListReceiptsParams) ([]ListReceiptsRow, error) {
@@ -470,6 +521,9 @@ func (q *Queries) ListReceipts(ctx context.Context, arg ListReceiptsParams) ([]L
 			&i.Status,
 			&i.ClientRef,
 			&i.CreatedBy,
+			&i.CancelReason,
+			&i.CancelledAt,
+			&i.CancelledBy,
 		); err != nil {
 			return nil, err
 		}

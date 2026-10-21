@@ -43,14 +43,15 @@ func (r *Repository) Count(ctx context.Context, branchID, soID int64, status str
 	return r.CountFiltered(ctx, branchID, ListFilter{SalesOrderID: soID, Statuses: listquery.SplitCSV(status)})
 }
 
-// noteColumns is the 20-column projection the raw list/waiting queries share
+// noteColumns is the 23-column projection the raw list/waiting queries share
 // with the sqlc note queries (same columns, same order, so rows scan into
 // sqlc.GetNoteRow and map through toNote).
 const noteColumns = `id, number, branch_id, sales_order_id, delivery_date,
 	driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
 	recipient_signature_status, recipient_signature_missing_reason,
 	drop_location_note, dispatched_at, dispatched_by, confirmed_at,
-	confirmed_by, document_kind, sales_return_id, status, notes`
+	confirmed_by, document_kind, sales_return_id, status, notes,
+	cancel_reason, cancelled_at, cancelled_by`
 
 func scanNoteRow(row interface {
 	Scan(dest ...any) error
@@ -60,7 +61,8 @@ func scanNoteRow(row interface {
 		&n.DeliveryDate, &n.DriverName, &n.VehiclePlate, &n.WarehouseStaffName,
 		&n.RecipientName, &n.RecipientSignatureStatus, &n.RecipientSignatureMissingReason,
 		&n.DropLocationNote, &n.DispatchedAt, &n.DispatchedBy, &n.ConfirmedAt,
-		&n.ConfirmedBy, &n.DocumentKind, &n.SalesReturnID, &n.Status, &n.Notes)
+		&n.ConfirmedBy, &n.DocumentKind, &n.SalesReturnID, &n.Status, &n.Notes,
+		&n.CancelReason, &n.CancelledAt, &n.CancelledBy)
 	return n, err
 }
 

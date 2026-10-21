@@ -4,13 +4,15 @@
 
 -- name: GetReceipt :one
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE id = ?;
 
 -- name: GetReceiptByClientRef :one
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE branch_id = ? AND client_ref = ?;
 
@@ -36,6 +38,15 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 UPDATE goods_receipts
 SET status = sqlc.arg(to_status)
 WHERE id = sqlc.arg(id) AND status IN (sqlc.slice('from_statuses'));
+
+-- name: DiscardReceipt :execresult
+-- CAS: voids a PENDING receipt and records why, when and by whom in ONE
+-- statement.
+UPDATE goods_receipts
+SET status = 'void',
+    cancel_reason = sqlc.arg(reason),
+    cancelled_at = sqlc.arg(stamp), cancelled_by = sqlc.arg(actor_id)
+WHERE id = sqlc.arg(id) AND status = 'pending';
 
 -- name: ReceivedQty :one
 -- Sums POSTED received base qty for one PO line position. A pending receipt
@@ -71,7 +82,8 @@ WHERE purchase_order_id = ? AND status IN ('pending', 'posted');
 
 -- name: ListPostedAfter :many
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE branch_id = ? AND status = 'posted' AND id > ?
 ORDER BY id ASC LIMIT ?;
@@ -83,7 +95,8 @@ WHERE id IN (sqlc.slice('ids'));
 
 -- name: ListReceipts :many
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
-  supplier_delivery_number, status, client_ref, created_by
+  supplier_delivery_number, status, client_ref, created_by,
+  cancel_reason, cancelled_at, cancelled_by
 FROM goods_receipts
 WHERE branch_id = sqlc.arg(branch_id)
   AND (sqlc.narg('po_id') IS NULL OR purchase_order_id = sqlc.narg('po_id'))

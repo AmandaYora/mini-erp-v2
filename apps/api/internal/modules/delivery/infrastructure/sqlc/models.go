@@ -35,6 +35,9 @@ type DeliveryNote struct {
 	CreatedBy                       sql.NullInt64
 	UpdatedBy                       sql.NullInt64
 	ClientRef                       sql.NullString
+	CancelReason                    sql.NullString
+	CancelledAt                     sql.NullTime
+	CancelledBy                     sql.NullInt64
 }
 
 type DeliveryNoteItem struct {

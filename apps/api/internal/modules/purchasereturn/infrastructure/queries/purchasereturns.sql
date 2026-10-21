@@ -7,7 +7,7 @@
 -- name: GetReturn :one
 SELECT id, number, branch_id, purchase_order_id, return_date, subtotal,
   discount_total, tax_total, tax_type, tax_rate, total, status, notes,
-  reason, payable_reduction
+  reason, payable_reduction, cancel_reason, cancelled_at, cancelled_by
 FROM purchase_returns WHERE id = ?;
 
 -- name: ListItemsByReturn :many
@@ -52,6 +52,16 @@ GROUP BY i.product_id, i.variant_id;
 UPDATE purchase_returns
 SET status = sqlc.arg(to_status), updated_at = sqlc.arg(now), updated_by = sqlc.arg(actor_id)
 WHERE id = sqlc.arg(id) AND status IN (sqlc.slice('from_statuses'));
+
+-- name: CancelReturn :execresult
+-- CAS: voids a draft or confirmed return and records why, when and by whom
+-- in ONE statement.
+UPDATE purchase_returns
+SET status = 'cancelled',
+  cancel_reason = sqlc.arg(reason),
+  cancelled_at = sqlc.arg(stamp), cancelled_by = sqlc.arg(actor_id),
+  updated_at = sqlc.arg(now), updated_by = sqlc.arg(actor_id)
+WHERE id = sqlc.arg(id) AND status IN ('draft', 'confirmed');
 
 -- name: SetReturnStatus :exec
 UPDATE purchase_returns

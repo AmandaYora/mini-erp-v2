@@ -224,7 +224,7 @@ Endpoint yang sudah ada hari ini:
 | `GET` | `/api/v1/stock/transfers/{id}` | Detail transfer |
 | `POST` | `/api/v1/stock/transfers/{id}/dispatch` | Kirim (potong asal, atomik) |
 | `POST` | `/api/v1/stock/transfers/{id}/receive` | Terima (tambah tujuan) |
-| `POST` | `/api/v1/stock/transfers/{id}/cancel` | Batalkan (draf langsung, terkirim via reversal) |
+| `POST` | `/api/v1/stock/transfers/{id}/cancel` | Batalkan (draf langsung, terkirim via reversal). Body `{reason}` wajib (≤ 255 karakter, 400 bila kosong); alasan, waktu, dan pelaku tersimpan di dokumen (`cancelReason`, `cancelledAt`, `cancelledBy` di view) dan di audit |
 | `GET` | `/api/v1/stock/damaged` | Saldo lokasi rusak, paginasi server (`page`,`limit`, `empty=true` = posisi sudah nol). Respons `data` = objek `{items,total,withStock,empty,totalEstimatedLoss,page,limit,totalPages}` + `meta`; tiap item memuat `estimatedUnitCost` (harga modal rata-rata, fallback harga beli) dan `estimatedLoss` = qty x harga (ST-03) |
 | `POST` | `/api/v1/stock/damaged/move-in` | Catat rusak; `locationId` opsional: tanpa lokasi asal, barang dicatat langsung masuk sebagai rusak (datang rusak, ST-06; mutasi `damaged_arrival`, masuk antrian posting dan dijurnal seperti selisih stok lebih, ADR-0020) |
 | `POST` | `/api/v1/stock/damaged/restore` | Pulihkan |
@@ -252,13 +252,13 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/goods-receipts` | Terima PO (tambah stok, lunasi PO bila penuh). GR-02: `items[].locationId` kosong → lokasi default cabang; `settlement.notes` (maks 255) pada `pay_now`; respons memuat `payment: {id, number}` bila pembayaran dibuat, bukti transfer dilampirkan lewat `POST /payments/{id}/proof` |
 | `GET` | `/api/v1/goods-receipts/{id}` | Detail penerimaan |
 | `POST` | `/api/v1/goods-receipts/{id}/complete` | Ulangi posting stok penerimaan yang tertunda (idempoten) |
-| `POST` | `/api/v1/goods-receipts/{id}/discard` | Batalkan penerimaan tertunda, membalik stok yang sudah bergerak |
+| `POST` | `/api/v1/goods-receipts/{id}/discard` | Batalkan penerimaan tertunda, membalik stok yang sudah bergerak. Body `{reason}` wajib (≤ 255 karakter, 400 bila kosong); alasan, waktu, dan pelaku tersimpan di dokumen (`cancelReason`, `cancelledAt`, `cancelledBy` di view) dan di audit |
 | `GET` | `/api/v1/deliveries` | Daftar SJ cabang (filter SO/status) |
 | `GET` | `/api/v1/deliveries/work-queue` | Antrean kerja gudang (SO siap kirim + draf menunggu); baca-saja. `search`, `from`, `to` dijalankan di SQL sebelum batas daftar pada kedua tab; order prepaid belum lunas disembunyikan; kartu memuat `itemCount`, tab menunggu memuat `hasSignedDocument` (DL-02) |
 | `POST` | `/api/v1/deliveries` | Buat draf SJ (stok belum bergerak) |
 | `GET` | `/api/v1/deliveries/{id}` | Detail SJ |
 | `POST` | `/api/v1/deliveries/{id}/confirm` | Konfirmasi (kurangi stok, lunasi SO bila penuh) |
-| `POST` | `/api/v1/deliveries/{id}/cancel` | Batalkan draf (terkonfirmasi via retur L6) |
+| `POST` | `/api/v1/deliveries/{id}/cancel` | Batalkan draf (terkonfirmasi via retur L6; SJ pengganti ditolak, ditarik lewat retur). Body `{reason}` wajib (≤ 255 karakter, 400 bila kosong); alasan, waktu, dan pelaku tersimpan di dokumen (`cancelReason`, `cancelledAt`, `cancelledBy` di view) dan di audit |
 | `POST` | `/api/v1/deliveries/{id}/proof` | Unggah bukti kirim (gambar ≤5MB), multipart `file` + `purpose` = `delivery_signed_document` (scan/foto SJ fisik bertanda tangan; wajib untuk konfirmasi bila `delivery_require_evidence` aktif) atau `delivery_location_photo` (opsional, default) (DL-01) |
 | `GET` | `/api/v1/deliveries/{id}/proofs` | Daftar bukti kirim; tiap berkas memuat `purpose` |
 | `GET` | `/api/v1/payments` | Daftar pembayaran cabang; tiap baris membawa `allocations` (order + nominal), dimuat dalam jumlah query tetap |
@@ -279,9 +279,10 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/sales-returns/preview` | Pratinjau angka retur (tanpa tulis, builder sama dengan create) + **perkiraan penyelesaian** (K-04d): `difference`, `owedToCustomer`, `chargeToCustomer`, `orderOutstanding`, `receivableReduction`, `externalRemaining`, `allowedSettlementTypes`, `hasParty` — angka sama dengan hasil konfirmasi |
 | `GET` | `/api/v1/sales-returns/{id}` | Detail retur (+ mode, barang pengganti, penyelesaian, posisi penyelesaian K-04c: `externalRemaining`, `chargeRemaining`, `allowedSettlementTypes`) |
 | `POST` | `/api/v1/sales-returns/{id}/confirm` | Konfirmasi (stok kembali). RT-02: pada order kanal POS, retur tukar langsung menyerahkan barang pengganti di konter dalam langkah yang sama (stok keluar, `replacementDeliveryStatus` = `confirmed`; SJ pengganti dibuat dan dikonfirmasi otomatis tanpa supir). Body opsional `settlement: {mode: "pay_now", …}` menagih selisih tukar lebih mahal saat itu juga (butuh `payment.create`) |
-| `POST` | `/api/v1/sales-returns/{id}/cancel` | Batalkan (draf langsung, terkonfirmasi via reversal) |
+| `POST` | `/api/v1/sales-returns/{id}/cancel` | Batalkan (draf langsung, terkonfirmasi via reversal). Body `{reason}` wajib (≤ 255 karakter, 400 bila kosong); alasan, waktu, dan pelaku tersimpan di dokumen (`cancelReason`, `cancelledAt`, `cancelledBy` di view) dan di audit |
 | `POST` | `/api/v1/sales-returns/{id}/replacement-deliveries` | Kirim barang pengganti (draf SJ pengganti; stok keluar saat konfirmasi). RT-03: `driverName` dan `warehouseStaffName` wajib (422), kecuali setting `delivery_require_evidence=false`. RT-04: harga modal pengganti dijaga — rata-rata finance dulu, lalu harga beli katalog |
 | `POST` | `/api/v1/sales-returns/{id}/replacement-deliveries/{deliveryId}/confirm` | Konfirmasi SJ pengganti (stok keluar). Body opsional `settlement: {mode: "pay_now", amount?, method?, paymentDate?, reference?, amountTendered?}` menagih selisih tukar yang lebih mahal secara atomik dengan konfirmasi (K-04e; butuh `payment.create`; hanya retur tukar ber-selisih > 0, nominal ≤ selisih terbuka; pembayaran gagal → SJ tetap draf, bisa diulang idempoten `sjr:<id>`) |
+| `POST` | `/api/v1/sales-returns/{id}/replacement-delivery/cancel` | Tarik pengiriman pengganti yang salah (`salesreturn.archive`): retur tukar berstatus pengganti `dispatched` yang SJ penggantinya masih **draf** — SJ itu dibatalkan (stok yang terlanjur keluar dibalik) dan status pengganti kembali `pending`, lalu kirim ulang pengganti yang benar atau batalkan retur. SJ pengganti terkonfirmasi ditolak (409). Idempoten (ulang setelah sukses = 200). Body `{reason}` wajib (≤ 255), tercatat di SJ dan audit `sales_returns.cancel_replacement`; respons returnView |
 | `POST` | `/api/v1/sales-returns/{id}/settlements` | Catat penyelesaian (K-04c: jenis & nominal menurut arah selisih — retur murni/tukar lebih murah: `refund` \| `customer_credit` ≤ `externalRemaining`; tukar lebih mahal: `collect_payment` ≤ `chargeRemaining`; `reduce_receivable` otomatis, ditolak manual; `customer_credit` butuh order ber-customer dan **dijurnal** Dr Piutang/Cr Uang Muka Pelanggan, K-04a; `refund` butuh `salesreturn.refund`) |
 | `GET` | `/api/v1/purchase-returns` | Daftar retur cabang. RT-01: `orderNumber` terisi; `search` mencocokkan nomor, catatan, alasan, nomor PO, dan pemasok |
 | `POST` | `/api/v1/purchase-returns` | Buat draf retur (batas = diterima−sudah diretur) |
@@ -289,7 +290,7 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/purchase-returns/preview` | Pratinjau angka retur (tanpa tulis) + perkiraan penyelesaian (K-04d): `orderOutstanding`, `payableReduction`, `externalRemaining`, `allowedSettlementTypes` |
 | `GET` | `/api/v1/purchase-returns/{id}` | Detail retur (+ penyelesaian, `payableReduction`, posisi K-04c: `externalRemaining`, `allowedSettlementTypes`) |
 | `POST` | `/api/v1/purchase-returns/{id}/confirm` | Konfirmasi (stok keluar kembali) |
-| `POST` | `/api/v1/purchase-returns/{id}/cancel` | Batalkan (draf langsung, terkonfirmasi via reversal) |
+| `POST` | `/api/v1/purchase-returns/{id}/cancel` | Batalkan (draf langsung, terkonfirmasi via reversal). Body `{reason}` wajib (≤ 255 karakter, 400 bila kosong); alasan, waktu, dan pelaku tersimpan di dokumen (`cancelReason`, `cancelledAt`, `cancelledBy` di view) dan di audit |
 | `POST` | `/api/v1/purchase-returns/{id}/settlements` | Catat penyelesaian — kamus **pembelian** (K-04b): `refund` \| `supplier_credit` ≤ `externalRemaining` (kelebihan di atas sisa hutang); `reduce_payable` otomatis, ditolak manual; tipe penjualan ditolak. `supplier_credit` **dijurnal** Dr Uang Muka Supplier/Cr Hutang (K-04a); `refund` butuh `purchasereturn.refund` |
 | `GET` | `/api/v1/finance/accounts` | Daftar akun |
 | `POST` | `/api/v1/finance/accounts` | Tambah akun (kode tak bisa diubah) |

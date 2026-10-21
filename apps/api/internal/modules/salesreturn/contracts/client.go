@@ -94,6 +94,12 @@ type SalesReturn struct {
 	Total         int64
 	Status        string
 	Notes         string
+	// CancelReason / CancelledAt / CancelledBy record why, when and by whom
+	// the return was cancelled (empty when never cancelled, or cancelled
+	// before the reason was recorded).
+	CancelReason string
+	CancelledAt  string
+	CancelledBy  int64
 	// Exchange mode (D): return-only refunds value; exchange additionally
 	// ships replacement goods tracked below.
 	ReturnMode                string

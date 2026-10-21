@@ -157,7 +157,7 @@ func TestExchangeDifferenceAndKind(t *testing.T) {
 	if err != nil || proj.Kind != salesreturncontracts.KindCharge || proj.Total != 16500 {
 		t.Fatalf("projection = %+v, %v; want charge 16500", proj, err)
 	}
-	if _, err := m.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, dearer.ID); err != nil {
+	if _, err := m.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, dearer.ID, ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	// Replace with nothing dearer than a half... use the same qty: difference 0.
@@ -267,7 +267,7 @@ func TestCancelledAutoOffsetReleasesReturn(t *testing.T) {
 		t.Fatalf("repeat confirm: %v", err)
 	}
 	check("after repeat confirm")
-	if _, err := svc.Cancel(ctx(), 0, fx.branchID, ret.ID); err != nil {
+	if _, err := svc.Cancel(ctx(), 0, fx.branchID, ret.ID, ""); err != nil {
 		t.Fatalf("cancel return once its offset is gone: %v", err)
 	}
 }

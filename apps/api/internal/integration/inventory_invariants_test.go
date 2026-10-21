@@ -80,7 +80,7 @@ func TestCancelMirrorsOriginalCost(t *testing.T) {
 	positionOf(t, fx.branchID, p.ID)
 	// The average moves before the cancel: 5 x 1.000 + 10 x 4.000 = 3.000 each.
 	seedInCost(t, fx, p.ID, vid, fx.locationID, 10, 4000)
-	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, tr.ID); err != nil {
+	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, tr.ID, ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	qty, total := positionOf(t, fx.branchID, p.ID)

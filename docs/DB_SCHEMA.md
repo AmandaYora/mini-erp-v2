@@ -2,7 +2,7 @@
 
 Status: **kontrak kepemilikan tabel yang sudah terkunci** — 65 tabel nyata: 18 berkas baseline per
 modul, `apps/api/migrations/` (`000001_user` … `000018_assistant`), ditambah migrasi bernomor
-sesudah baseline (`000019`–`000023`, `000031`; nomor 000024–000030 sengaja kosong) — turun dari 70
+sesudah baseline (`000019`–`000023`, `000031`, `000036`–`000037`, `000039`–`000041`; nomor 000024–000030 sengaja kosong) — turun dari 70
 entity sistem lama. Daftar tabel di §3 dibangkitkan dari berkas itu (`node scripts/db-schema-doc.mjs`;
 `--check` dijalankan CI/verify). Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi
 tiap tabel warisan; **riwayat migrasi bernomor (kolom/tabel baru sesudah baseline) ada di §8**.
@@ -62,14 +62,14 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `media` | `000005_media.up.sql` | `media_files` | 1 |
 | `product` | `000006_product.up.sql` | `product_categories`, `products`, `product_variants` | 3 |
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
-| `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
+| `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql`, `000041_stock_corrections.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
 | `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql` | `purchase_orders`, `purchase_order_items` | 2 |
 | `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
-| `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
-| `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
+| `goodsreceipt` | `000011_goodsreceipt.up.sql`, `000039_goodsreceipt_corrections.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
+| `delivery` | `000012_delivery.up.sql`, `000037_delivery_corrections.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
 | `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql` | `payments`, `payment_allocations` | 2 |
-| `salesreturn` | `000014_salesreturn.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
-| `purchasereturn` | `000015_purchasereturn.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
+| `salesreturn` | `000014_salesreturn.up.sql`, `000036_salesreturn_corrections.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
+| `purchasereturn` | `000015_purchasereturn.up.sql`, `000040_purchasereturn_corrections.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
 | `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta` | 14 |
 | `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
 | `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
@@ -360,6 +360,11 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000022_purchasing_tax_invoice` | PO-03 | `purchase_orders.tax_invoice_number`, `tax_invoice_date`; `purchase_order_items.tax_rate` | memetakan `tax_rate_snapshot` legacy |
 | `000023_payment_credit_source` | N-41 | `payments.credit_source_type`, `credit_source_id` + indeks `ix_payments_credit_source` (retur sumber saldo uang muka pada pasangan kaki pakai-saldo) | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
 | `000031_finance_fn` | FN-01, FN-07, FN-10 | tabel baru `finance_posting_ignores` dan `finance_tax_adjustment_meta`; kolom `business_expenses.party_id` (+ `ix_business_expenses_party`): pihak lawan biaya | mengisi `party_id` dari `id_business_party` legacy bila pihak itu termigrasi |
+| `000036_salesreturn_corrections` | Koreksi salah input | `sales_returns.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan; diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
+| `000037_delivery_corrections` | Koreksi salah input | `delivery_notes.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan (draf, termasuk SJ pengganti yang ditarik lewat retur tukar); diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
+| `000039_goodsreceipt_corrections` | Koreksi salah input | `goods_receipts.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan (penerimaan `pending` yang dibuang → `void`); diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
+| `000040_purchasereturn_corrections` | Koreksi salah input | `purchase_returns.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan; diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
+| `000041_stock_corrections` | Koreksi salah input | `stock_transfers.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan; diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
 
 Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
 bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);

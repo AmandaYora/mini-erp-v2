@@ -23,6 +23,19 @@ func DecodeJSON(r *http.Request, dst any) []apperror.FieldError {
 	return validator.Validate(dst)
 }
 
+// DecodeReason reads the body {"reason": "..."} of a correction endpoint
+// (cancel, discard) whose reason is mandatory: trimmed, non-empty, at most
+// validator.ReasonMaxRunes characters.
+func DecodeReason(r *http.Request) (string, error) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if fields := DecodeJSON(r, &in); fields != nil {
+		return "", apperror.Validation("", fields)
+	}
+	return validator.Reason(in.Reason, true)
+}
+
 // MultipartFile extracts the "file" part, capped at maxBytes.
 func MultipartFile(r *http.Request, maxBytes int64) (multipart.File, *multipart.FileHeader, *apperror.AppError) {
 	r.Body = http.MaxBytesReader(nil, r.Body, maxBytes)

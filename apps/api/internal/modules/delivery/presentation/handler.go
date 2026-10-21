@@ -48,6 +48,7 @@ func noteView(n *contracts.DeliveryNote) map[string]any {
 		"dispatchedAt":                    timeutil.FormatWIB(n.DispatchedAt), "dispatchedBy": n.DispatchedBy,
 		"confirmedAt": timeutil.FormatWIB(n.ConfirmedAt), "confirmedBy": n.ConfirmedBy,
 		"documentKind": n.DocumentKind, "salesReturnId": n.SalesReturnID,
+		"cancelReason": n.CancelReason, "cancelledAt": timeutil.FormatWIB(n.CancelledAt), "cancelledBy": n.CancelledBy,
 		"items": items,
 	}
 }
@@ -222,14 +223,19 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Surat jalan dikonfirmasi", noteView(n))
 }
 
-// Cancel handles POST /api/v1/deliveries/{id}/cancel.
+// Cancel handles POST /api/v1/deliveries/{id}/cancel {reason} (reason mandatory).
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
 	if err != nil {
 		response.Fail(w, apperror.NotFound("Surat jalan"))
 		return
 	}
-	n, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	reason, err := httpx.DecodeReason(r)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	n, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return

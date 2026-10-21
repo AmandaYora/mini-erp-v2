@@ -10,6 +10,7 @@ import (
 	"mini-erp/internal/modules/goodsreceipt/contracts"
 	"mini-erp/internal/modules/goodsreceipt/infrastructure/sqlc"
 	"mini-erp/internal/shared/dbutil"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Repository owns the goodsreceipt module tables. Data access goes through
@@ -190,6 +191,38 @@ func (r *Repository) Transition(ctx context.Context, id int64, from []string, to
 	}
 	affected, err := res.RowsAffected()
 	return affected == 1, err
+}
+
+// Discard flips pending -> void and records the reason, time and actor in ONE
+// statement guarded by the status (CAS). Returns false when the receipt was no
+// longer pending. The optional hook runs inside the CAS transaction only when
+// this call won, so the audit row co-commits with the flip (ADR-0011) and a
+// replay that lost the CAS writes none (ADR-0016).
+func (r *Repository) Discard(ctx context.Context, id int64, reason string, actorID int64, hook func(ctx context.Context, tx *sql.Tx) error) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := r.q.WithTx(tx).DiscardReceipt(ctx, sqlc.DiscardReceiptParams{
+		Reason:  dbutil.NullString(reason),
+		Stamp:   sql.NullTime{Time: timeutil.NowUTC(), Valid: true},
+		ActorID: actor(actorID),
+		ID:      id,
+	})
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil || affected != 1 {
+		return false, err
+	}
+	if hook != nil {
+		if err := hook(ctx, tx); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 // ListFilter selects receipts for List.

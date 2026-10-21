@@ -408,6 +408,7 @@ func transferView(t *infrastructure.Transfer) map[string]any {
 		"fromLocationId": t.FromLocation, "toLocationId": t.ToLocation,
 		"status": t.Status, "items": items,
 		"notes": t.Notes, "driverName": t.DriverName, "vehiclePlate": t.VehiclePlate, "transferDate": t.TransferDate,
+		"cancelReason": t.CancelReason, "cancelledAt": timeutil.FormatWIB(t.CancelledAt), "cancelledBy": t.CancelledBy,
 	}
 }
 
@@ -490,9 +491,25 @@ func (h *Handler) ReceiveTransfer(w http.ResponseWriter, r *http.Request) {
 	h.transition(w, r, "receive")
 }
 
-// CancelTransfer handles POST /api/v1/stock/transfers/{id}/cancel.
+// CancelTransfer handles POST /api/v1/stock/transfers/{id}/cancel {reason}
+// (reason mandatory).
 func (h *Handler) CancelTransfer(w http.ResponseWriter, r *http.Request) {
-	h.transition(w, r, "cancel")
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Transfer"))
+		return
+	}
+	reason, err := httpx.DecodeReason(r)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	t, err := h.svc.CancelTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, reason)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Transfer dibatalkan", transferView(t))
 }
 
 func (h *Handler) transition(w http.ResponseWriter, r *http.Request, action string) {
@@ -506,17 +523,15 @@ func (h *Handler) transition(w http.ResponseWriter, r *http.Request, action stri
 	switch action {
 	case "dispatch":
 		t, appErr = h.svc.DispatchTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
-	case "receive":
-		t, appErr = h.svc.ReceiveTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	default:
-		t, appErr = h.svc.CancelTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+		t, appErr = h.svc.ReceiveTransfer(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
 	}
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
 	msgs := map[string]string{
-		"dispatch": "Transfer dikirim", "receive": "Transfer diterima", "cancel": "Transfer dibatalkan",
+		"dispatch": "Transfer dikirim", "receive": "Transfer diterima",
 	}
 	response.OK(w, msgs[action], transferView(t))
 }

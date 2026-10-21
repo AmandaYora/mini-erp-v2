@@ -15,6 +15,7 @@ import (
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
 	"mini-erp/internal/shared/timeutil"
+	"mini-erp/internal/shared/validator"
 )
 
 // TransferItemInput is one transfer line (base UOM quantities).
@@ -335,7 +336,14 @@ func (s *Service) ReceiveTransfer(ctx context.Context, actorID, branchID, id int
 // CancelTransfer voids a draft outright, or reverses a dispatched document
 // with return movements to source, atomically. Received documents are final.
 // Only the source branch may cancel (it owns the stock while in transit).
-func (s *Service) CancelTransfer(ctx context.Context, actorID, branchID, id int64) (*infrastructure.Transfer, error) {
+// The reason is stamped on the document and the audit row inside the same
+// transaction as the status flip; the web endpoint makes it mandatory,
+// programmatic callers may pass "".
+func (s *Service) CancelTransfer(ctx context.Context, actorID, branchID, id int64, reason string) (*infrastructure.Transfer, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
 	t, err := s.GetTransfer(ctx, branchID, id)
 	if err != nil {
 		return nil, err
@@ -346,24 +354,29 @@ func (s *Service) CancelTransfer(ctx context.Context, actorID, branchID, id int6
 	if t.Status == "received" {
 		return nil, apperror.Conflict("Transfer yang sudah diterima tidak dapat dibatalkan")
 	}
-	replayed, err := s.transferStep(ctx, t.ID, actorID, []string{"draft", "dispatched"}, "cancelled",
+	// A replay (already cancelled) runs no work: no stamp, no second audit row.
+	if _, err := s.transferStep(ctx, t.ID, actorID, []string{"draft", "dispatched"}, "cancelled",
 		func(tx *sql.Tx, t *infrastructure.Transfer) error {
 			// A draft has no movements, so reversing is a no-op for it; a
 			// dispatched document gets its stock back at the source.
-			_, err := s.reverseTx(ctx, tx, t.FromBranchID, contracts.RefTransfer, t.ID, actorID)
-			return err
-		}, t)
-	if err != nil {
+			if _, err := s.reverseTx(ctx, tx, t.FromBranchID, contracts.RefTransfer, t.ID, actorID); err != nil {
+				return err
+			}
+			if err := s.repo.StampTransferCancelTx(ctx, tx, t.ID, reason, actorID); err != nil {
+				return err
+			}
+			note := t.Number
+			if reason != "" {
+				note += ": " + reason
+			}
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "stock_transfers.cancel", Entity: "stock_transfer", EntityID: t.ID, BranchID: t.FromBranchID, ActorID: actorID, Note: note,
+				After: map[string]any{"status": "cancelled", "reason": reason},
+			})
+		}, t); err != nil {
 		return nil, err
 	}
-	done, err := s.GetTransfer(ctx, branchID, id)
-	if err != nil {
-		return nil, err
-	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "stock_transfers.cancel", Entity: "stock_transfer", EntityID: done.ID, BranchID: t.FromBranchID, ActorID: actorID, Note: done.Number})
-	}
-	return done, nil
+	return s.GetTransfer(ctx, branchID, id)
 }
 
 // ListTransfersResult is a paginated transfer page.

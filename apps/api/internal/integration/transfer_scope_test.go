@@ -90,10 +90,10 @@ func TestTransferBranchScope(t *testing.T) {
 		t.Fatalf("create transfer 2: %v", err)
 	}
 	notFound(func() error {
-		_, err := m.stock.Service().CancelTransfer(ctx(), 0, branchB, tr2.ID)
+		_, err := m.stock.Service().CancelTransfer(ctx(), 0, branchB, tr2.ID, "")
 		return err
 	}(), "cancel from destination")
-	if _, err := m.stock.Service().CancelTransfer(ctx(), 0, fx.branchID, tr2.ID); err != nil {
+	if _, err := m.stock.Service().CancelTransfer(ctx(), 0, fx.branchID, tr2.ID, ""); err != nil {
 		t.Fatalf("cancel from source: %v", err)
 	}
 

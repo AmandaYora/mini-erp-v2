@@ -84,7 +84,7 @@ func TestExchangeReplacementFlow(t *testing.T) {
 	// Audit S4: the return owns the replacement note. The generic delivery
 	// cancel would strand the return in "dispatched"; the generic confirm
 	// would skip its status and surcharge steps. Both are refused.
-	if _, err := m.delivery.Service().Cancel(ctx(), 0, fx.branchID, dn.ID); err == nil {
+	if _, err := m.delivery.Service().Cancel(ctx(), 0, fx.branchID, dn.ID, ""); err == nil {
 		t.Fatal("generic cancel of a replacement note accepted")
 	}
 	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{RecipientName: "x"}); err == nil {

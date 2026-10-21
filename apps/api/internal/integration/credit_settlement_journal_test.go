@@ -174,7 +174,7 @@ func TestCreditSettlementJournalSales(t *testing.T) {
 	}
 
 	// Cancelling the return reverses BOTH journals.
-	if _, err := testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, retID); err != nil {
+	if _, err := testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, retID, ""); err != nil {
 		t.Fatalf("cancel return: %v", err)
 	}
 	if n := liveEntries(t, "sales_return_settlement", sid); n != 0 {
@@ -363,7 +363,7 @@ func TestCreditSettlementJournalPurchase(t *testing.T) {
 		t.Fatalf("balance sheet asset 2300 = %d, want %d", seen, ret.Total)
 	}
 
-	if _, err := svc.Cancel(ctx(), 0, fx.branchID, ret.ID); err != nil {
+	if _, err := svc.Cancel(ctx(), 0, fx.branchID, ret.ID, ""); err != nil {
 		t.Fatalf("cancel return: %v", err)
 	}
 	if n := liveEntries(t, "purchase_return_settlement", sid); n != 0 {

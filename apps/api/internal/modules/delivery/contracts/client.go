@@ -54,7 +54,13 @@ type DeliveryNote struct {
 	Status        string
 	Notes         string
 	ClientRef     string
-	Items         []*Item
+	// CancelReason / CancelledAt / CancelledBy record why, when and by whom a
+	// draft was voided (empty for a note that was never cancelled, or one
+	// cancelled before the reason was recorded).
+	CancelReason string
+	CancelledAt  string
+	CancelledBy  int64
+	Items        []*Item
 	// Warnings are soft notices computed when a draft is created (DL-04, ADR-0018
 	// D2): never persisted, only returned by the create call.
 	Warnings []string
@@ -143,6 +149,13 @@ type DeliveryClient interface {
 	CreateReplacement(ctx context.Context, actorID, branchID int64, in ReplacementDraft) (*DeliveryNote, error)
 	// ConfirmReplacement confirms a draft replacement shipment (stock out).
 	ConfirmReplacement(ctx context.Context, actorID, branchID, id int64, in ReplacementConfirm) (*DeliveryNote, error)
+	// CancelReplacement voids a DRAFT replacement shipment of an exchange,
+	// reversing any stock a failed confirm already moved, and records the
+	// reason. It accepts only document_kind='replacement' drafts (the generic
+	// cancel refuses those) and replays as success on a note already
+	// cancelled. Like ConfirmReplacement it takes no lock: the caller
+	// (salesreturn) serializes per return.
+	CancelReplacement(ctx context.Context, actorID, branchID, id int64, reason string) (*DeliveryNote, error)
 	// ListConfirmed lists confirmed notes newest-first, bounded by limit.
 	// Finance reads it for the derived posting queue (no posting table).
 	ListConfirmed(ctx context.Context, branchID int64, limit int) ([]*DeliveryNote, error)

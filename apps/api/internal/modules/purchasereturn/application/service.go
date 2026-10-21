@@ -22,6 +22,7 @@ import (
 	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/money"
 	"mini-erp/internal/shared/timeutil"
+	"mini-erp/internal/shared/validator"
 )
 
 // Service implements contracts.PurchaseReturnClient plus return administration.
@@ -591,7 +592,15 @@ func (s *Service) checkCommitted(ctx context.Context, poID int64, ret *contracts
 // Cancel voids a draft outright, or reverses a confirmed return (stock back
 // in). The status is re-read inside the lock so two simultaneous cancels
 // cannot both move stock; the second one replays.
-func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*contracts.PurchaseReturn, error) {
+//
+// The reason is recorded on the return and in the audit entry (co-committed
+// with the status flip); the web endpoint makes it mandatory, programmatic
+// callers may pass "".
+func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.PurchaseReturn, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
 	first, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
@@ -634,7 +643,18 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 		default:
 			return apperror.Conflict("Retur sudah dibatalkan")
 		}
-		won, err := s.repo.Transition(ctx, ret.ID, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
+		from := ret.Status
+		won, err := s.repo.Cancel(ctx, ret.ID, reason, actorID, func(ctx context.Context, tx *sql.Tx) error {
+			note := ret.Number
+			if reason != "" {
+				note += ": " + reason
+			}
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "purchase_returns.cancel", Entity: "purchase_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: note,
+				Before: map[string]any{"status": from},
+				After:  map[string]any{"status": contracts.StatusCancelled, "reason": reason},
+			})
+		})
 		if err != nil {
 			return apperror.Internal(err)
 		}
@@ -674,9 +694,6 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 				_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "purchase_return_settlement", EntityID: sid, BranchID: branchID, ActorID: actorID, Note: rerr.Error()})
 			}
 		}
-	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "purchase_returns.cancel", Entity: "purchase_return", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
 	}
 	return out, nil
 }

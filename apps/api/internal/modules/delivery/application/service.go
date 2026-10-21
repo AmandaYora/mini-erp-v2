@@ -21,6 +21,7 @@ import (
 	"mini-erp/internal/shared/dberr"
 	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/timeutil"
+	"mini-erp/internal/shared/validator"
 )
 
 // Service implements contracts.DeliveryClient plus SJ administration.
@@ -555,8 +556,9 @@ func (s *Service) draftWarnings(ctx context.Context, branchID int64, so *salesco
 // errReplacementManagedByReturn refuses the generic confirm/cancel on an
 // exchange's replacement note. The sales return owns that note's lifecycle:
 // confirming it here would skip the return's status and surcharge steps, and
-// cancelling it would strand the return in "dispatched", where neither the
-// return nor a new replacement can move it again.
+// cancelling it here would strand the return in "dispatched". A wrong draft
+// replacement is cancelled through the return instead, which also moves the
+// return back to "pending" (CancelReplacement).
 func errReplacementManagedByReturn() error {
 	return apperror.Conflict("Surat jalan pengganti dikelola dari halaman retur penjualan")
 }
@@ -831,8 +833,14 @@ func validateRecipient(in ConfirmInput) *apperror.AppError {
 // Cancel voids a draft. Confirmed notes move stock and cannot be cancelled —
 // corrections flow through sales returns (L6). A draft whose stock already
 // went out (a Confirm that failed after the posting) is reversed first so the
-// balances end where they began.
-func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*contracts.DeliveryNote, error) {
+// balances end where they began. The reason is recorded on the note and in
+// the audit entry; the web endpoint makes it mandatory, programmatic callers
+// may pass "".
+func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.DeliveryNote, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
 	n, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
@@ -840,52 +848,85 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 	if n.DocumentKind == contracts.DocumentKindReplacement {
 		return nil, errReplacementManagedByReturn()
 	}
-	var replayed bool
 	err = doclock.Lock("so:"+strconv.FormatInt(n.SalesOrderID, 10), func() error {
-		cur, err := s.mustOwnBranch(ctx, id, branchID)
-		if err != nil {
-			return err
-		}
-		switch cur.Status {
-		case contracts.StatusCancelled:
-			replayed = true
-			return nil
-		case contracts.StatusDraft:
-		default:
-			return apperror.Conflict("Surat jalan terkonfirmasi tidak dapat dibatalkan (gunakan retur)")
-		}
-		moved, err := s.stock.HasMovements(ctx, branchID, stockcontracts.RefDelivery, cur.ID)
-		if err != nil {
-			return err
-		}
-		if moved {
-			if _, err := s.stock.Reverse(ctx, branchID, stockcontracts.RefDelivery, cur.ID, actorID); err != nil {
-				return err
-			}
-		}
-		won, err := s.repo.Transition(ctx, cur.ID, []string{contracts.StatusDraft}, contracts.StatusCancelled, actorID)
-		if err != nil {
-			return apperror.Internal(err)
-		}
-		if !won {
-			latest, err := s.repo.GetNote(ctx, cur.ID)
-			if err != nil {
-				return apperror.Internal(err)
-			}
-			if latest == nil || latest.Status != contracts.StatusCancelled {
-				return apperror.Conflict("Status surat jalan berubah, muat ulang")
-			}
-			replayed = true
-		}
-		return nil
+		return s.cancelDraft(ctx, actorID, branchID, id, reason)
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "deliveries.cancel", Entity: "delivery", EntityID: id, BranchID: branchID, ActorID: actorID, Note: n.Number})
+	return s.GetByID(ctx, id)
+}
+
+// CancelReplacement voids a DRAFT replacement shipment of an exchange (see the
+// contract). It takes no lock: salesreturn calls it under the return's lock,
+// the same one ConfirmReplacement runs under.
+func (s *Service) CancelReplacement(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.DeliveryNote, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
+	n, err := s.mustOwnBranch(ctx, id, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if n.DocumentKind != contracts.DocumentKindReplacement {
+		return nil, apperror.Conflict("Bukan surat jalan pengganti")
+	}
+	if err := s.cancelDraft(ctx, actorID, branchID, id, reason); err != nil {
+		return nil, err
 	}
 	return s.GetByID(ctx, id)
+}
+
+// cancelDraft is the replay-safe void shared by both cancels: re-read the
+// note, reverse any stock a failed confirm moved (idempotent), then one CAS
+// draft -> cancelled that stamps the reason and co-commits the audit row. A
+// note already cancelled replays as success with no second audit row.
+func (s *Service) cancelDraft(ctx context.Context, actorID, branchID, id int64, reason string) error {
+	cur, err := s.mustOwnBranch(ctx, id, branchID)
+	if err != nil {
+		return err
+	}
+	switch cur.Status {
+	case contracts.StatusCancelled:
+		return nil
+	case contracts.StatusDraft:
+	default:
+		return apperror.Conflict("Surat jalan terkonfirmasi tidak dapat dibatalkan (gunakan retur)")
+	}
+	moved, err := s.stock.HasMovements(ctx, branchID, stockcontracts.RefDelivery, cur.ID)
+	if err != nil {
+		return err
+	}
+	if moved {
+		if _, err := s.stock.Reverse(ctx, branchID, stockcontracts.RefDelivery, cur.ID, actorID); err != nil {
+			return err
+		}
+	}
+	won, err := s.repo.Cancel(ctx, cur.ID, reason, actorID, func(ctx context.Context, tx *sql.Tx) error {
+		note := cur.Number
+		if reason != "" {
+			note += ": " + reason
+		}
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: "deliveries.cancel", Entity: "delivery", EntityID: cur.ID, BranchID: branchID, ActorID: actorID, Note: note,
+			Before: map[string]any{"status": contracts.StatusDraft},
+			After:  map[string]any{"status": contracts.StatusCancelled, "reason": reason, "documentKind": cur.DocumentKind},
+		})
+	})
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	if !won {
+		latest, err := s.repo.GetNote(ctx, cur.ID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if latest == nil || latest.Status != contracts.StatusCancelled {
+			return apperror.Conflict("Status surat jalan berubah, muat ulang")
+		}
+	}
+	return nil
 }
 
 // Proof purposes (legacy media purposes, kept verbatim on the wire).
@@ -1091,7 +1132,7 @@ func (s *Service) ConfirmReplacement(ctx context.Context, actorID, branchID, id 
 	}
 	// Money effect rides the same saga as a COD pay_now: idempotent (client
 	// reference sjr:<id>) and applied before the status flip, so a payment that
-	// fails leaves a DRAFT note (stock reversible by Cancel, retry replays both
+	// fails leaves a DRAFT note (stock reversible by CancelReplacement, retry replays both
 	// steps) and never a confirmed shipment with its surcharge unpaid.
 	if err := s.applyReplacementSettlement(ctx, actorID, branchID, full, in.Settlement); err != nil {
 		return nil, err

@@ -1037,6 +1037,12 @@ type Transfer struct {
 	DriverName   string
 	VehiclePlate string
 	TransferDate string
+	// CancelReason / CancelledAt / CancelledBy record why, when and by whom
+	// the document was cancelled (empty when never cancelled, or cancelled
+	// before the reason was recorded). Filled by GetTransfer only.
+	CancelReason string
+	CancelledAt  string
+	CancelledBy  int64
 	Items        []TransferItem
 }
 
@@ -1093,15 +1099,18 @@ func (r *Repository) CreateTransfer(ctx context.Context, t *Transfer, actorID in
 // GetTransfer loads a document with lines, or nil when missing.
 func (r *Repository) GetTransfer(ctx context.Context, id int64) (*Transfer, error) {
 	t := &Transfer{}
-	var notes, driver, plate sql.NullString
+	var notes, driver, plate, cancelReason sql.NullString
 	var dispatched, received sql.NullString
-	var date sql.NullTime
+	var date, cancelledAt sql.NullTime
+	var cancelledBy sql.NullInt64
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, number, from_branch_id, to_branch_id, from_location_id,
-			to_location_id, status, notes, driver_name, vehicle_plate, transfer_date, dispatched_at, received_at
+			to_location_id, status, notes, driver_name, vehicle_plate, transfer_date, dispatched_at, received_at,
+			cancel_reason, cancelled_at, cancelled_by
 		 FROM stock_transfers WHERE id = ?`, id).
 		Scan(&t.ID, &t.Number, &t.FromBranchID, &t.ToBranchID, &t.FromLocation,
-			&t.ToLocation, &t.Status, &notes, &driver, &plate, &date, &dispatched, &received)
+			&t.ToLocation, &t.Status, &notes, &driver, &plate, &date, &dispatched, &received,
+			&cancelReason, &cancelledAt, &cancelledBy)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -1112,6 +1121,10 @@ func (r *Repository) GetTransfer(ctx context.Context, id int64) (*Transfer, erro
 	t.DriverName, t.VehiclePlate = driver.String, plate.String
 	if date.Valid {
 		t.TransferDate = date.Time.Format("2006-01-02")
+	}
+	t.CancelReason, t.CancelledBy = cancelReason.String, cancelledBy.Int64
+	if cancelledAt.Valid {
+		t.CancelledAt = cancelledAt.Time.Format("2006-01-02 15:04:05")
 	}
 	rows, err := r.db.QueryContext(ctx,
 		"SELECT product_id, variant_id, qty_base, notes, to_location_id FROM stock_transfer_items WHERE transfer_id = ?",
@@ -1174,6 +1187,16 @@ func (r *Repository) TransitionTransferTx(ctx context.Context, tx *sql.Tx, id in
 	}
 	affected, err := res.RowsAffected()
 	return affected == 1, err
+}
+
+// StampTransferCancelTx records why, when and by whom a transfer is
+// cancelled, inside the caller's transaction (the one that flips the status,
+// so both commit or neither does).
+func (r *Repository) StampTransferCancelTx(ctx context.Context, tx *sql.Tx, id int64, reason string, actorID int64) error {
+	_, err := tx.ExecContext(ctx,
+		"UPDATE stock_transfers SET cancel_reason = ?, cancelled_at = UTC_TIMESTAMP(6), cancelled_by = ? WHERE id = ?",
+		dbutil.NullString(reason), actorID, id)
+	return err
 }
 
 // CreateTransferTx inserts a transfer document with the given initial status

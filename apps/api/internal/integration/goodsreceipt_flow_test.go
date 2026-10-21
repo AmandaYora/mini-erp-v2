@@ -213,7 +213,7 @@ func TestGoodsReceiptDiscard(t *testing.T) {
 	if got := onHand(t, fx, fx.productID, fx.variantID, fx.locationID); got != 60 {
 		t.Fatalf("precondition onhand = %v, want 60", got)
 	}
-	voided, err := svc.Discard(ctx(), 0, fx.branchID, id)
+	voided, err := svc.Discard(ctx(), 0, fx.branchID, id, "")
 	if err != nil || voided.Status != goodsreceiptcontracts.StatusVoid {
 		t.Fatalf("discard = %+v, %v", voided, err)
 	}
@@ -225,7 +225,7 @@ func TestGoodsReceiptDiscard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("receipt after discard: %v", err)
 	}
-	if _, err := svc.Discard(ctx(), 0, fx.branchID, posted.ID); !isConflict(err) {
+	if _, err := svc.Discard(ctx(), 0, fx.branchID, posted.ID, ""); !isConflict(err) {
 		t.Fatalf("discard posted = %v, want conflict", err)
 	}
 }

@@ -58,7 +58,7 @@ func TestSalesReturnDraftHoldsQuota(t *testing.T) {
 	if _, err := createSalesReturnLines(fx, soID, 1); !isConflict(err) {
 		t.Fatalf("second draft while first holds all = %v, want conflict", err)
 	}
-	if _, err := testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, first); err != nil {
+	if _, err := testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, first, ""); err != nil {
 		t.Fatalf("cancel first: %v", err)
 	}
 	if _, err := createSalesReturnLines(fx, soID, 10); err != nil {
@@ -128,7 +128,7 @@ func TestSalesReturnCancelOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, id)
+			_, errs[i] = testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, id, "")
 		}(i)
 	}
 	wg.Wait()
@@ -215,7 +215,7 @@ func TestPurchaseReturnQuotaAndOnce(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = svc.Cancel(ctx(), 0, fx.branchID, first.ID)
+			_, errs[i] = svc.Cancel(ctx(), 0, fx.branchID, first.ID, "")
 		}(i)
 	}
 	wg.Wait()
