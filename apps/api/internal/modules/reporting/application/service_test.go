@@ -32,6 +32,10 @@ func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, _ string) (int6
 	return 0, 0, nil
 }
 
+func (f *fakeFinance) PartyControlBalances(context.Context, int64, string) (map[int64]int64, error) {
+	return map[int64]int64{}, nil
+}
+
 func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string, _ string) (map[string]int64, error) {
 	net := map[string]int64{"cash": 1000, "receivable": 500, "payable": -300, "inventory": 700}
 	out := map[string]int64{}

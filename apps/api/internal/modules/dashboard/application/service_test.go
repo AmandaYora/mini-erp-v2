@@ -54,6 +54,10 @@ func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, code string) (i
 	return 0, 0, nil
 }
 
+func (f *fakeFinance) PartyControlBalances(context.Context, int64, string) (map[int64]int64, error) {
+	return map[int64]int64{}, nil
+}
+
 func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string, asOf string) (map[string]int64, error) {
 	f.balancesCalls++
 	f.balancesAsOf = asOf

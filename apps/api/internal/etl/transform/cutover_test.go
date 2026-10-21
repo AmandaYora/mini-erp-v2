@@ -292,13 +292,13 @@ func TestTransformCancelledOrderShippedCOGS(t *testing.T) {
 			o["id_current_status"] = cancelled
 		}
 	}
-	entry := row.Row{"id_finance_journal_entry": int64(990), "id_company": int64(1), "id_branch": int64(2), "journal_number": "JE-CBG/2026/00990",
+	entry := row.Row{"id_finance_journal_entry": int64(990), "id_branch": int64(2), "journal_number": "JE-CBG/2026/00990",
 		"journal_date": "2026-02-11T04:00:00.000000Z", "description": "HPP SJ order batal", "event_key": "stock_issue_cogs",
 		"source_type": "inventory_movement", "id_source": int64(17), "status": "posted", "posting_type": "auto",
 		"posted_at": "2026-02-11T04:00:00.000000Z", "posted_by": int64(2), "created_at": "2026-02-11T04:00:00.000000Z",
 		"updated_at": "2026-02-11T04:00:00.000000Z", "archived_at": nil, "id_reversal_of": nil, "metadata_json": nil, "reversed_at": nil, "reversed_by": nil}
 	line := func(id, acct int64, dr, cr string) row.Row {
-		return row.Row{"id_finance_journal_line": id, "id_company": int64(1), "id_branch": int64(2), "id_finance_journal_entry": int64(990),
+		return row.Row{"id_finance_journal_line": id, "id_branch": int64(2), "id_finance_journal_entry": int64(990),
 			"id_finance_account": acct, "debit_amount": dr, "credit_amount": cr, "line_no": id - 9900, "id_product": int64(1),
 			"id_product_variant": int64(1), "id_business_party": nil, "id_inventory_movement": nil, "id_order": nil, "id_payment": nil,
 			"description": nil, "metadata_json": nil, "created_at": "2026-02-11T04:00:00.000000Z"}
@@ -378,13 +378,13 @@ func TestTransformMirrorsCancelledPaymentJournal(t *testing.T) {
 	})
 	raw["finance_posting_sources"] = append(raw["finance_posting_sources"], row.Row{"id_finance_posting_source": int64(977), "id_branch": int64(1),
 		"source_type": "payment", "id_source": int64(77), "event_key": "customer_payment", "posting_status": "posted", "id_journal_entry": int64(991)})
-	raw["finance_journal_entries"] = append(raw["finance_journal_entries"], row.Row{"id_finance_journal_entry": int64(991), "id_company": int64(1),
+	raw["finance_journal_entries"] = append(raw["finance_journal_entries"], row.Row{"id_finance_journal_entry": int64(991),
 		"id_branch": int64(1), "journal_number": "JE-PST/2026/00991", "journal_date": "2026-03-02T03:00:00.000000Z", "description": "Pembayaran",
 		"event_key": "customer_payment", "source_type": "payment", "id_source": int64(77), "status": "posted", "posting_type": "auto",
 		"posted_at": "2026-03-02T03:00:00.000000Z", "posted_by": int64(2), "created_at": "2026-03-02T03:00:00.000000Z",
 		"updated_at": "2026-03-02T03:00:00.000000Z", "archived_at": nil, "id_reversal_of": nil, "metadata_json": nil, "reversed_at": nil, "reversed_by": nil})
 	line := func(id, acct int64, dr, cr string) row.Row {
-		return row.Row{"id_finance_journal_line": id, "id_company": int64(1), "id_branch": int64(1), "id_finance_journal_entry": int64(991),
+		return row.Row{"id_finance_journal_line": id, "id_branch": int64(1), "id_finance_journal_entry": int64(991),
 			"id_finance_account": acct, "debit_amount": dr, "credit_amount": cr, "line_no": id - 9910, "id_product": nil, "id_product_variant": nil,
 			"id_business_party": int64(3), "id_inventory_movement": nil, "id_order": nil, "id_payment": int64(77), "description": nil,
 			"metadata_json": nil, "created_at": "2026-03-02T03:00:00.000000Z"}

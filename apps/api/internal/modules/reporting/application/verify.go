@@ -8,5 +8,6 @@ func (s *Service) Verify() error {
 	return wiring.Check("reporting",
 		wiring.Dep{Name: "sales", Set: s.sales != nil},
 		wiring.Dep{Name: "purchasing", Set: s.purchasing != nil},
-		wiring.Dep{Name: "stock", Set: s.stock != nil})
+		wiring.Dep{Name: "stock", Set: s.stock != nil},
+		wiring.Dep{Name: "payments", Set: s.payments != nil})
 }

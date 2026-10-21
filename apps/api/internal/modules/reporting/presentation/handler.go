@@ -68,10 +68,27 @@ func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Laporan stok", rep)
 }
 
+// GetPartyReconciliation handles GET /api/v1/reporting/party-reconciliation?side=receivable|payable:
+// books (control accounts) vs documents (party balance) per party.
+func (h *Handler) GetPartyReconciliation(w http.ResponseWriter, r *http.Request) {
+	side := r.URL.Query().Get("side")
+	if side == "" {
+		side = "receivable"
+	}
+	rep, err := h.svc.PartyReconciliation(r.Context(), authcontracts.BranchID(r), side)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Rekonsiliasi buku vs dokumen per pihak", rep)
+}
+
 // RegisterRoutes mounts reporting endpoints with explicit permissions.
 func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
 	mux.Handle("GET /api/v1/reporting/sales-trend", perm("reporting.view", authcontracts.Guard(h.GetSalesTrend, branchGuard)))
 	mux.Handle("GET /api/v1/reporting/inventory", perm("reporting.view", authcontracts.Guard(h.GetInventory, branchGuard)))
 	mux.Handle("GET /api/v1/reporting/orders", perm("reporting.view", authcontracts.Guard(h.GetOrders, branchGuard)))
 	mux.Handle("GET /api/v1/reporting/stock", perm("reporting.view", authcontracts.Guard(h.GetStock, branchGuard)))
+	// Shows control-account balances from the books: finance permission.
+	mux.Handle("GET /api/v1/reporting/party-reconciliation", perm("finance.report.view", authcontracts.Guard(h.GetPartyReconciliation, branchGuard)))
 }

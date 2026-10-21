@@ -127,6 +127,10 @@ type FinanceClient interface {
 	// balance sheet of that date: journals dated after it (future-dated entries)
 	// are left out. Empty asOf = lifetime footing.
 	BalancesByKey(ctx context.Context, branchID int64, keys []string, asOf string) (map[string]int64, error)
+	// PartyControlBalances is each party's balance on one side's control
+	// accounts ("receivable": Piutang + Uang Muka Pelanggan, debit − credit;
+	// "payable": Hutang + Uang Muka Supplier, credit − debit).
+	PartyControlBalances(ctx context.Context, branchID int64, side string) (map[int64]int64, error)
 	// NetProfit returns revenue/expense/profit for a date range (inclusive,
 	// YYYY-MM-DD). Contra accounts net naturally (debits offset credits).
 	NetProfit(ctx context.Context, branchID int64, from, to string) (revenue, expense, profit int64, err error)

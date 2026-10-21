@@ -51,6 +51,7 @@ export const ROUTE_PATHS = {
   reporting: "/reporting",
   reportingOrders: "/reporting/orders",
   reportingStock: "/reporting/stock",
+  partyReconciliation: "/reporting/party-reconciliation",
   auditLogs: "/audit-logs",
   assistantSetup: "/assistant/setup",
   assistantConfig: "/assistant/config",

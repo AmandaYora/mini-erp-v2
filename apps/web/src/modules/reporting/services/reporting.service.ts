@@ -1,6 +1,8 @@
 import { apiGet } from "@/shared/services/http-client";
 import type {
   InventoryReport,
+  PartyRecon,
+  PartyReconSide,
   OrderReport,
   OrderReportQuery,
   StockReport,
@@ -10,6 +12,11 @@ import type {
 import { normalizeOrderReport } from "@/modules/reporting/lib/order-report";
 
 export const reportingService = {
+  // GET /api/v1/reporting/party-reconciliation?side — buku (akun kendali) vs
+  // dokumen per pihak; izin finance.report.view.
+  partyReconciliation: (side: PartyReconSide, signal?: AbortSignal) =>
+    apiGet<PartyRecon>("/api/v1/reporting/party-reconciliation", { side }, signal),
+
   // GET /api/v1/reporting/sales-trend?from&to — YYYY-MM-DD inklusif,
   // rentang maksimal 366 hari (ditegakkan backend).
   salesTrend: (from: string, to: string) =>

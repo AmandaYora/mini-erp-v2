@@ -1030,6 +1030,9 @@ func (s *Service) GetPartyBalance(ctx context.Context, branchID, partyID int64) 
 			if o.Status == salescontracts.StatusCancelled || o.Status == salescontracts.StatusDraft {
 				continue
 			}
+			if o.Status == salescontracts.StatusConfirmed {
+				bal.OpenOrders++
+			}
 			open = append(open, o)
 		}
 		ids := make([]int64, 0, len(open))
@@ -1061,6 +1064,9 @@ func (s *Service) GetPartyBalance(ctx context.Context, branchID, partyID int64) 
 		for _, o := range orders {
 			if o.Status == purchasingcontracts.StatusCancelled || o.Status == purchasingcontracts.StatusDraft {
 				continue
+			}
+			if o.Status == purchasingcontracts.StatusConfirmed {
+				bal.OpenOrders++
 			}
 			open = append(open, o)
 		}

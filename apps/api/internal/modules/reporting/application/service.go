@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	financecontracts "mini-erp/internal/modules/finance/contracts"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	reportingcontracts "mini-erp/internal/modules/reporting/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
@@ -22,6 +23,7 @@ type Service struct {
 	sales      salescontracts.SalesOpsClient
 	purchasing purchasingcontracts.PurchasingOpsClient
 	stock      stockcontracts.StockClient
+	payments   paymentcontracts.PaymentClient
 }
 
 // SetSources wires the operational readers (orders, stock) the order and stock

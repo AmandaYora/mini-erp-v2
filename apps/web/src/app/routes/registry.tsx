@@ -142,6 +142,7 @@ export const MENU_GROUPS: MenuGroup[] = [
       { label: "Tren & Stok", path: ROUTE_PATHS.reporting, icon: ChartLine, perm: "reporting.view" },
       { label: "Laporan Order", path: ROUTE_PATHS.reportingOrders, icon: ChartBar, perm: "reporting.view" },
       { label: "Laporan Stok", path: ROUTE_PATHS.reportingStock, icon: ChartColumnStacked, perm: "reporting.view" },
+      { label: "Rekonsiliasi Pihak", path: ROUTE_PATHS.partyReconciliation, icon: Scale, perm: "finance.report.view" },
       { label: "Konsistensi", path: ROUTE_PATHS.opsIntegrity, icon: ShieldAlert, perm: "stock.update" },
       { label: "Jejak Audit", path: ROUTE_PATHS.auditLogs, icon: ScrollText, perm: "audit.view" },
     ],

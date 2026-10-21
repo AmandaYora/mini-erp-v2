@@ -5,6 +5,7 @@ import (
 
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 	financecontracts "mini-erp/internal/modules/finance/contracts"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	"mini-erp/internal/modules/reporting/application"
 	"mini-erp/internal/modules/reporting/presentation"
@@ -19,10 +20,12 @@ type Module struct {
 }
 
 // NewModule builds reporting over the finance contract plus the operational
-// readers the order and stock reports use.
-func NewModule(finance financecontracts.FinanceClient, sales salescontracts.SalesOpsClient, purchasing purchasingcontracts.PurchasingOpsClient, stock stockcontracts.StockClient) *Module {
+// readers the order and stock reports use and the payment module's party
+// balance (party reconciliation).
+func NewModule(finance financecontracts.FinanceClient, sales salescontracts.SalesOpsClient, purchasing purchasingcontracts.PurchasingOpsClient, stock stockcontracts.StockClient, payments paymentcontracts.PaymentClient) *Module {
 	svc := application.NewService(finance)
 	svc.SetSources(sales, purchasing, stock)
+	svc.SetPayments(payments)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc)}
 }
 

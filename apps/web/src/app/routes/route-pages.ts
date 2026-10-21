@@ -86,6 +86,7 @@ export const MODULE_PAGES: Record<string, React.LazyExoticComponent<React.Compon
   "/reporting": lazy(() => import("@/modules/reporting/pages/ReportingPage")),
   "/reporting/orders": lazy(() => import("@/modules/reporting/pages/OrdersReportPage")),
   "/reporting/stock": lazy(() => import("@/modules/reporting/pages/StockReportPage")),
+  "/reporting/party-reconciliation": lazy(() => import("@/modules/reporting/pages/PartyReconciliationPage")),
   "/finance/integrity": lazy(() => import("@/modules/finance/pages/IntegrityPage")),
   "/ops/integrity": lazy(() => import("@/modules/ops/pages/OpsIntegrityPage")),
   "/audit-logs": lazy(() => import("@/modules/audit/pages/AuditPage")),

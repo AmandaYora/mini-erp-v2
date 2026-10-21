@@ -163,7 +163,7 @@ func Wire(db *sql.DB, o Options) (*Modules, error) {
 	// reporting (finance figures).
 	m.Dashboard = dashboard.NewModule(m.Finance.Finance(), m.Stock.Stock(), m.Sales.Service(), m.Purchasing.Service(),
 		m.SalesReturn.SalesReturns(), m.Payment.Payments())
-	m.Reporting = reporting.NewModule(m.Finance.Finance(), m.Sales.Service(), m.Purchasing.Service(), m.Stock.Stock())
+	m.Reporting = reporting.NewModule(m.Finance.Finance(), m.Sales.Service(), m.Purchasing.Service(), m.Stock.Stock(), m.Payment.Payments())
 	// Audit list decoration (F3b-8): actor and branch names resolved through
 	// the user/branch contracts, never by joining their tables.
 	m.Audit.SetNameResolvers(

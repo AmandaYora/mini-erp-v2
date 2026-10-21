@@ -132,15 +132,19 @@ type OrderBalance struct {
 // PartyBalance is the full position of one party. Normal orders bill one
 // way, confirmed returns bill the other; Outstanding is the net.
 type PartyBalance struct {
-	PartyID       int64          `json:"partyId"`
-	PartyName     string         `json:"partyName"`
-	TotalBilled   int64          `json:"totalBilled"`
-	TotalPaid     int64          `json:"totalPaid"`
-	TotalReturned int64          `json:"totalReturned"`
-	TotalRefunded int64          `json:"totalRefunded"`
-	Outstanding   int64          `json:"outstanding"`
-	Orders        []OrderBalance `json:"orders"`
-	Returns       []OrderBalance `json:"returns"`
+	PartyID       int64  `json:"partyId"`
+	PartyName     string `json:"partyName"`
+	TotalBilled   int64  `json:"totalBilled"`
+	TotalPaid     int64  `json:"totalPaid"`
+	TotalReturned int64  `json:"totalReturned"`
+	TotalRefunded int64  `json:"totalRefunded"`
+	Outstanding   int64  `json:"outstanding"`
+	// OpenOrders counts confirmed (not yet completed) orders: the books bill
+	// a sale/receipt per shipment while the documents bill the whole order,
+	// so a gap between them can be timing while these are open.
+	OpenOrders int            `json:"openOrders"`
+	Orders     []OrderBalance `json:"orders"`
+	Returns    []OrderBalance `json:"returns"`
 }
 
 // PaymentClient is the public surface of the payment module.
@@ -150,6 +154,9 @@ type PaymentClient interface {
 	// GetPartyBalance computes the live outstanding position. Cancelled
 	// payments and cancelled orders never count.
 	GetPartyBalance(ctx context.Context, branchID, partyID int64) (*PartyBalance, error)
+	// PartiesWithOrders lists the parties that have confirmed or completed
+	// orders on one side ("receivable": sales, "payable": purchases).
+	PartiesWithOrders(ctx context.Context, branchID int64, side string) ([]int64, error)
 	// HasActiveAllocations reports whether any active payment allocates to
 	// the document. Returns modules use it to block cancelling a refunded
 	// return (money would silently detach from reports).

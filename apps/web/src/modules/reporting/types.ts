@@ -78,3 +78,29 @@ export interface StockReportQuery {
   page: number;
   limit: number;
 }
+
+/** Satu pihak yang buku (akun kendali) dan dokumennya tidak sama. */
+export interface PartyReconRow {
+  partyId: number;
+  partyName: string;
+  /** Saldo akun kendali: Piutang + Uang Muka Pelanggan, atau Hutang + Uang Muka Supplier. */
+  books: number;
+  /** Saldo dokumen: order − pembayaran − retur + refund. */
+  documents: number;
+  /** books − documents */
+  difference: number;
+  openOrders: number;
+  /** Masih ada order berjalan: selisih bisa karena waktu (buku per pengiriman, dokumen per order). */
+  timing: boolean;
+}
+
+export type PartyReconSide = "receivable" | "payable";
+
+export interface PartyRecon {
+  side: PartyReconSide;
+  partiesChecked: number;
+  matched: number;
+  rows: PartyReconRow[];
+  totalDifference: number;
+  unexplained: number;
+}

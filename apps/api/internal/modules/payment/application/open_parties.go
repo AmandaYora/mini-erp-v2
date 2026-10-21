@@ -218,3 +218,32 @@ func (s *Service) openOrderPage(ctx context.Context, side string, branchID, afte
 	}
 	return out, nil
 }
+
+// PartiesWithOrders lists every party with a confirmed or completed order on
+// one side — the document half of the party reconciliation (reporting).
+func (s *Service) PartiesWithOrders(ctx context.Context, branchID int64, side string) ([]int64, error) {
+	if side != SideReceivable && side != SidePayable {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "side", Message: "harus receivable atau payable"}})
+	}
+	seen := map[int64]bool{}
+	var out []int64
+	var after int64
+	for p := 0; p < openPartyMaxPages; p++ {
+		rows, err := s.openOrderPage(ctx, side, branchID, after)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			break
+		}
+		after = rows[len(rows)-1].id
+		for _, r := range rows {
+			if r.partyID != 0 && !seen[r.partyID] {
+				seen[r.partyID] = true
+				out = append(out, r.partyID)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
