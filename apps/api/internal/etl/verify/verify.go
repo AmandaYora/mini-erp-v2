@@ -1239,9 +1239,11 @@ const receivableTolerance = 100
 
 // receivableSQL projects each customer's receivable in the books (Piutang
 // lines with the party, every journal including the migration corrections)
-// to after the cutover-day posting queue: plus the confirmed order SJs above
-// the delivery boundary not yet journalled, minus the incoming payments above
-// the payment boundary not yet journalled. A negative projection must be
+// to after the cutover-day posting queue: plus the confirmed order SJs and
+// exchange replacement SJs above the delivery boundary not yet journalled
+// (a replacement books its goods as a new sale) and the outgoing refunds to
+// customers, minus the incoming payments above the payment boundary and the
+// confirmed sales returns above the return boundary not yet journalled. A negative projection must be
 // explained by money the customer paid ahead: payments on orders beyond what
 // was delivered (drafts included), open return credit, and exchange
 // replacements not yet shipped. Anything else is revenue the books never got
@@ -1279,11 +1281,32 @@ rc AS (
           WHERE a.order_type = 'sales_return' AND a.order_id = r.id AND y.status = 'active'), 0)
       + CASE WHEN r.return_mode = 'exchange' AND r.replacement_delivery_status = 'pending' THEN r.replacement_total ELSE 0 END) v
     FROM sales_returns r JOIN sales_orders o ON o.id = r.sales_order_id WHERE r.status = 'confirmed' GROUP BY 1),
+rf AS (
+  SELECT p.party_id p, SUM(p.amount) v FROM payments p
+    LEFT JOIN finance_cutover c ON c.branch_id = p.branch_id AND c.doc_type = 'payment'
+   WHERE p.direction = 'out' AND p.party_type = 'customer' AND p.status = 'active' AND p.method <> 'offset' AND p.id > COALESCE(c.covered_through_id, 0)
+     AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e WHERE e.source_doc_type = 'payment' AND e.source_doc_id = p.id)
+   GROUP BY 1),
+rp AS (
+  SELECT o.party_id p, SUM(r.replacement_total) v FROM delivery_notes d
+    JOIN sales_returns r ON r.id = d.sales_return_id JOIN sales_orders o ON o.id = r.sales_order_id
+    LEFT JOIN finance_cutover c ON c.branch_id = d.branch_id AND c.doc_type = 'delivery'
+   WHERE d.status = 'confirmed' AND d.document_kind = 'replacement' AND d.id > COALESCE(c.covered_through_id, 0)
+     AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e WHERE e.source_doc_type = 'delivery' AND e.source_doc_id = d.id)
+   GROUP BY 1),
+rt AS (
+  SELECT o.party_id p, SUM(r.total) v FROM sales_returns r JOIN sales_orders o ON o.id = r.sales_order_id
+    LEFT JOIN finance_cutover c ON c.branch_id = r.branch_id AND c.doc_type = 'sales_return'
+   WHERE r.status = 'confirmed' AND r.id > COALESCE(c.covered_through_id, 0)
+     AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e WHERE e.source_doc_type = 'sales_return' AND e.source_doc_id = r.id)
+   GROUP BY 1),
 ex AS (SELECT p, SUM(ahead) v FROM od GROUP BY 1)
-SELECT pt.code, bk.bal + COALESCE(pd.v, 0) - COALESCE(pp.v, 0) projected, COALESCE(ex.v, 0) + GREATEST(COALESCE(rc.v, 0), 0) explained
+SELECT pt.code, bk.bal + COALESCE(pd.v, 0) + COALESCE(rp.v, 0) + COALESCE(rf.v, 0) - COALESCE(pp.v, 0) - COALESCE(rt.v, 0) projected,
+       COALESCE(ex.v, 0) + GREATEST(COALESCE(rc.v, 0), 0) explained
   FROM bk JOIN parties pt ON pt.id = bk.p
   LEFT JOIN pd ON pd.p = bk.p LEFT JOIN pp ON pp.p = bk.p LEFT JOIN ex ON ex.p = bk.p LEFT JOIN rc ON rc.p = bk.p
- WHERE bk.bal + COALESCE(pd.v, 0) - COALESCE(pp.v, 0) < 0
+  LEFT JOIN rp ON rp.p = bk.p LEFT JOIN rt ON rt.p = bk.p LEFT JOIN rf ON rf.p = bk.p
+ WHERE bk.bal + COALESCE(pd.v, 0) + COALESCE(rp.v, 0) + COALESCE(rf.v, 0) - COALESCE(pp.v, 0) - COALESCE(rt.v, 0) < 0
  ORDER BY pt.code`
 
 func (v *verifier) receivableSigns() {
