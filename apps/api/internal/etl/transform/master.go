@@ -110,9 +110,11 @@ func (s *state) users() {
 	for _, r := range sortedBy(s.raw["roles"], "id_role") {
 		lid := r.Int("id_role")
 		if r.Str("code") == "superadmin" {
+			// The reserved role is seeded by v2 (bootstrap.EnsureAuthz) with every
+			// permission; the loader matches it by code. Only its legacy permission
+			// list is left behind.
 			roleSkip[lid] = true
-			s.find(report.Info, "ROLE_SUPERADMIN", "roles", lid, "peran cadangan developer tidak dimigrasi (kebijakan 042)")
-			continue
+			s.find(report.Info, "ROLE_SUPERADMIN", "roles", lid, "peran superadmin dipetakan ke peran cadangan v2; izin legacy-nya tidak disalin (v2 memberi semua izin)")
 		}
 		id := s.alloc("roles", lid)
 		s.emit("roles", row.Row{
@@ -125,11 +127,6 @@ func (s *state) users() {
 	for _, r := range sortedBy(s.raw["users"], "id_user") {
 		lid := r.Int("id_user")
 		uname := r.Str("username")
-		if uname == "superadmin" {
-			s.userSkip[lid] = true
-			s.find(report.Info, "USER_SUPERADMIN", "users", lid, "akun superadmin tidak dimigrasi")
-			continue
-		}
 		if prev, dup := seenUser[lower(uname)]; dup {
 			s.find(report.Blocker, "USER_DUP", "users", lid, "username ganda (case-insensitive) dengan user %d", prev)
 			s.userSkip[lid] = true
@@ -143,6 +140,12 @@ func (s *state) users() {
 		}
 		for _, p := range seedPasswords {
 			if bcrypt.CompareHashAndPassword([]byte(hash), []byte(p)) == nil {
+				// The developer superadmin keeps working as in legacy (owner's
+				// decision, ADR-0018 D13); every other seed account is locked.
+				if uname == "superadmin" {
+					s.find(report.Warn, "USER_SUPERADMIN_SEED_PASSWORD", "users", lid, "akun superadmin masih memakai kata sandi bawaan seed: tetap aktif, segera ganti sandinya")
+					break
+				}
 				status = "inactive"
 				s.find(report.Warn, "USER_SEED_PASSWORD", "users", lid, "akun %q masih memakai kata sandi bawaan seed: dikunci, perlu reset", uname)
 				break

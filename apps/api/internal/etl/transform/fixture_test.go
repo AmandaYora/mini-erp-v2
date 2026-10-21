@@ -108,3 +108,62 @@ func TestTransformCreditSettlementCutover(t *testing.T) {
 		}
 	}
 }
+
+// ADR-0018 D13: the legacy developer superadmin is migrated, stays active
+// despite its seed password (other seed accounts are locked), and is linked
+// to the reserved superadmin role without copying that role's legacy grants.
+func TestTransformMigratesSuperadmin(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	out := runTransform(t, work)
+
+	userID := map[string]int64{}
+	for _, u := range out.Tables["users"] {
+		userID[u.Str("username")] = u.Int("id")
+		switch u.Str("username") {
+		case "superadmin":
+			if u.Str("status") != "active" {
+				t.Errorf("superadmin status = %q, want active", u.Str("status"))
+			}
+		case "admin":
+			if u.Str("status") != "inactive" {
+				t.Errorf("admin (seed password) status = %q, want inactive", u.Str("status"))
+			}
+		}
+	}
+	if _, ok := userID["superadmin"]; !ok {
+		t.Fatal("superadmin user not migrated")
+	}
+	roleID := map[string]int64{}
+	for _, r := range out.Tables["roles"] {
+		roleID[r.Str("code")] = r.Int("id")
+	}
+	sa, ok := roleID["superadmin"]
+	if !ok {
+		t.Fatal("superadmin role not emitted for the loader to match by code")
+	}
+	linked := false
+	for _, ur := range out.Tables["user_roles"] {
+		if ur.Int("user_id") == userID["superadmin"] && ur.Int("role_id") == sa {
+			linked = true
+		}
+	}
+	if !linked {
+		t.Error("superadmin user not linked to the superadmin role")
+	}
+	for _, rp := range out.Tables["role_permissions"] {
+		if rp.Int("role_id") == sa {
+			t.Errorf("legacy grant copied to the reserved role: %v", rp)
+		}
+	}
+	warned := false
+	for _, f := range out.Log.Findings {
+		if f.Code == "USER_SUPERADMIN_SEED_PASSWORD" {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Error("missing USER_SUPERADMIN_SEED_PASSWORD finding")
+	}
+}

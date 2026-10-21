@@ -258,7 +258,7 @@ func (v *verifier) counts() {
 	}
 	items := []cc{
 		{"V-01a", "cabang", "SELECT COUNT(*) FROM {branches} WHERE {co} = :c", "SELECT COUNT(*) FROM branches", 0},
-		{"V-01b", "pengguna (tanpa superadmin)", "SELECT COUNT(*) FROM {users} WHERE {co} = :c AND username <> 'superadmin'", "SELECT COUNT(*) FROM users", 0},
+		{"V-01b", "pengguna", "SELECT COUNT(*) FROM {users} WHERE {co} = :c", "SELECT COUNT(*) FROM users", 0},
 		{"V-01c", "tipe member", "SELECT COUNT(*) FROM {member_types} WHERE {co} = :c", "SELECT COUNT(*) FROM member_types", 0},
 		{"V-01d", "kategori produk", "SELECT COUNT(*) FROM {product_categories} WHERE {co} = :c", "SELECT COUNT(*) FROM product_categories", 0},
 		{"V-01e", "produk", "SELECT COUNT(*) FROM {products} WHERE {co} = :c", "SELECT COUNT(*) FROM products", 0},
@@ -306,7 +306,7 @@ func (v *verifier) counts() {
 		v.scalar(it.id, it.desc, it.src, it.tgt, it.expl)
 	}
 	// seeded-capable tables are matched by natural key
-	codes, err := v.col(v.l.SQL, v.lq("SELECT code FROM {roles} WHERE ({co} = :c OR {co} IS NULL) AND code <> 'superadmin'"))
+	codes, err := v.col(v.l.SQL, v.lq("SELECT code FROM {roles} WHERE ({co} = :c OR {co} IS NULL)"))
 	if err != nil {
 		v.fail("V-16a", "peran per kode", err)
 	} else {
@@ -318,7 +318,7 @@ func (v *verifier) counts() {
 	} else {
 		v.inTarget("V-16b", "akun legacy ada di target (per kode)", "finance_accounts", "code", acodes)
 	}
-	v.scalar("V-16c", "relasi user-peran", "SELECT COUNT(*) FROM {user_roles} ur JOIN {users} u ON u.id_user=ur.id_user JOIN {roles} r ON r.id_role=ur.id_role WHERE u.{co} = :c AND u.username <> 'superadmin' AND r.code <> 'superadmin'", "SELECT COUNT(*) FROM user_roles", 0)
+	v.scalar("V-16c", "relasi user-peran", "SELECT COUNT(*) FROM {user_roles} ur JOIN {users} u ON u.id_user=ur.id_user JOIN {roles} r ON r.id_role=ur.id_role WHERE u.{co} = :c", "SELECT COUNT(*) FROM user_roles", 0)
 }
 
 func (v *verifier) col(db Querier, q string) ([]string, error) {
@@ -1042,7 +1042,7 @@ func (v *verifier) accessSets() {
 	// user -> role set must be identical by name (permission-level identity belongs to F3b).
 	v.grouped("V-16d", "peran per pengguna",
 		`SELECT u.username, GROUP_CONCAT(r.code ORDER BY r.code SEPARATOR ','), COUNT(*) FROM {user_roles} ur JOIN {users} u ON u.id_user=ur.id_user JOIN {roles} r ON r.id_role=ur.id_role
-		  WHERE u.{co} = :c AND u.username <> 'superadmin' AND r.code <> 'superadmin' GROUP BY 1`,
+		  WHERE u.{co} = :c GROUP BY 1`,
 		`SELECT u.username, GROUP_CONCAT(r.code ORDER BY r.code SEPARATOR ','), COUNT(*) FROM user_roles ur JOIN users u ON u.id=ur.user_id JOIN roles r ON r.id=ur.role_id GROUP BY 1`, nil)
 }
 

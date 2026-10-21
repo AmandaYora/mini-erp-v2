@@ -64,7 +64,7 @@ Jenis dokumen di `docs/` (referensi, status, riwayat) dan status tiap rencana: [
 | [0015](decisions/ADR-0015-test-strategy.md) | Strategi test dan "cukup untuk cutover" |
 | [0016](decisions/ADR-0016-atomicity-by-idempotency-and-cas.md) | Atomisitas lintas modul = langkah idempoten + CAS |
 | [0017](decisions/ADR-0017-design-system-v2.md) | Design System v2 "Bingkai Navy" di atas shadcn/ui (Radix) |
-| [0018](decisions/ADR-0018-keputusan-paritas.md) | Keputusan pemilik D1–D12 untuk program paritas & cutover (D9 tanggal saldo awal, D10 cutover langsung, D11 koreksi akuntansi migrasi, D12 dokumen cetak pelanggan sama dengan sistem lama) |
+| [0018](decisions/ADR-0018-keputusan-paritas.md) | Keputusan pemilik D1–D13 untuk program paritas & cutover (D9 tanggal saldo awal, D10 cutover langsung, D11 koreksi akuntansi migrasi, D12 dokumen cetak pelanggan sama dengan sistem lama, D13 akun superadmin legacy dimigrasi) |
 | [0019](decisions/ADR-0019-deploy-elcodelabs-ghcr.md) | Deploy produksi ke VPS elcodelabs: image dibangun CI ke GHCR, server hanya pull & run (`minierp`, port 8084) |
 | [0020](decisions/ADR-0020-invarian-akuntansi-persediaan.md) | Invarian akuntansi persediaan: tiap mutasi dijurnal sebesar nilai ledger atau netral; kaki cermin, rupiah bulat, akun kendali, rekonsiliasi menjelaskan selisih |
 | [0021](decisions/ADR-0021-aturan-integritas-pra-migrasi.md) | Aturan integritas pra-migrasi: tanggal ≤ hari ini, awal pembukuan, pihak wajib di akun kendali, kunci biaya lintas proses & batas cutover `costrebuild`, kunci pembayaran, offset retur milik retur |
