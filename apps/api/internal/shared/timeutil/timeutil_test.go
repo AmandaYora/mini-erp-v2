@@ -42,3 +42,25 @@ func TestDateOrToday(t *testing.T) {
 		t.Fatalf("blank must default to today, got %q", got)
 	}
 }
+
+func TestStampConversionsUseWIB(t *testing.T) {
+	// 2026-09-30 18:00 UTC is 2026-10-01 01:00 WIB: the WIB day, not the UTC one.
+	for _, in := range []string{"2026-09-30 18:00:00", "2026-09-30 18:00:00.123456", "2026-09-30T18:00:00Z", "2026-09-30T18:00:00.5Z"} {
+		if got := WIBDay(in); got != "2026-10-01" {
+			t.Errorf("WIBDay(%q) = %q, want 2026-10-01", in, got)
+		}
+	}
+	if got := FormatWIB("2026-09-30T18:00:00Z"); got != "2026-10-01 01:00:00" {
+		t.Errorf("FormatWIB = %q", got)
+	}
+	if WIBDay("") != "" || FormatWIB("bukan waktu") != "" {
+		t.Error("empty or malformed stamps must render empty")
+	}
+	if WireTimeWIB(nil) != nil {
+		t.Error("nil time must stay null")
+	}
+	ts := time.Date(2026, 9, 30, 18, 0, 0, 0, time.UTC)
+	if got := WireTimeWIB(&ts); got != "2026-10-01 01:00:00" {
+		t.Errorf("WireTimeWIB = %v", got)
+	}
+}

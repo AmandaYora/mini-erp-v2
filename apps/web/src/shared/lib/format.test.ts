@@ -48,6 +48,11 @@ describe("formatDate / formatDateTime", () => {
     expect(formatDateTime("2026-09-10 14:30:00")).toContain("10 Sep 2026");
     expect(formatDateTime("2026-09-10 14:30:00")).toContain("14:30");
   });
+  it("server wall clock (WIB) keeps its own day and hour", () => {
+    // API mengirim semua waktu sebagai jam dinding WIB (DATABASE_GUIDE): angkanya tampil apa adanya.
+    expect(formatDate("2026-10-01 01:00:00")).toBe("1 Okt 2026");
+    expect(formatDateTime("2026-10-01 01:00:00")).toContain("01:00");
+  });
 });
 
 describe("statusTone / statusLabel", () => {

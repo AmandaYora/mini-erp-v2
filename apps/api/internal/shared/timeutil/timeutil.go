@@ -51,3 +51,54 @@ func DateOrToday(raw string) string {
 	}
 	return NowUTC().In(Jakarta).Format("2006-01-02")
 }
+
+// stampLayouts are the shapes a stored UTC instant arrives in: RFC3339 from a
+// DATETIME scanned into a string with parseTime, or the naive DATETIME text.
+var stampLayouts = []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999", "2006-01-02 15:04:05", "2006-01-02"}
+
+// ParseStampUTC reads a stored UTC instant (system stamps: created_at,
+// moved_at, completed_at...). ok is false for empty or malformed text.
+func ParseStampUTC(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, l := range stampLayouts {
+		if t, err := time.ParseInLocation(l, s, time.UTC); err == nil {
+			return t.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// WIBDay returns the Jakarta calendar day (YYYY-MM-DD) of a stored UTC
+// instant — never its UTC date, which is the day before for 00:00–06:59 WIB.
+// Empty or malformed input returns "".
+func WIBDay(stamp string) string {
+	t, ok := ParseStampUTC(stamp)
+	if !ok {
+		return ""
+	}
+	return t.In(Jakarta).Format("2006-01-02")
+}
+
+// FormatWIB renders a stored UTC instant as a naive Jakarta wall clock
+// ("2006-01-02 15:04:05") — the single wire form for every datetime the API
+// returns, so clients never have to guess a column's zone. Empty or malformed
+// input returns "".
+func FormatWIB(stamp string) string {
+	t, ok := ParseStampUTC(stamp)
+	if !ok {
+		return ""
+	}
+	return t.In(Jakarta).Format("2006-01-02 15:04:05")
+}
+
+// WireTimeWIB is FormatWIB for an optional time.Time: nil stays nil (JSON
+// null), anything else becomes the naive Jakarta wall clock.
+func WireTimeWIB(t *time.Time) any {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return t.UTC().In(Jakarta).Format("2006-01-02 15:04:05")
+}

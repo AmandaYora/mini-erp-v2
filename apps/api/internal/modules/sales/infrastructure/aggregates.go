@@ -33,10 +33,12 @@ func (r *Repository) StatusCounts(ctx context.Context, branchID int64) (map[stri
 // drafts that have not posted yet. Product names come from the frozen line
 // snapshots, so no product lookup per row.
 func (r *Repository) TopProducts(ctx context.Context, branchID int64, from, to string, limit int) ([]*contracts.TopProduct, error) {
-	a, b, err := dayRange(from, to)
-	if err != nil {
+	// completed_at is a UTC instant: bound it by WIB days converted to UTC
+	// (the same bounds CompletedSales uses), after validating the input.
+	if _, _, err := dayRange(from, to); err != nil {
 		return nil, err
 	}
+	a, b := dayBounds(from, to)
 	rows, err := r.q.TopProducts(ctx, sqlc.TopProductsParams{
 		BranchID: branchID, FromAt: sql.NullTime{Time: a, Valid: true}, ToAt: sql.NullTime{Time: b, Valid: true},
 		Limit: int32(limit),

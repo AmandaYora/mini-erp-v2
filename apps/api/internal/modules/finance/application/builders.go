@@ -18,6 +18,7 @@ import (
 	salesreturncontracts "mini-erp/internal/modules/salesreturn/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/money"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // rawLeg is one leg under construction (account by code, dimensions raw).
@@ -752,9 +753,6 @@ func (s *Service) buildStockMovement(ctx context.Context, branchID, movementID i
 	if err != nil {
 		return nil, "", "", err
 	}
-	date := row.MovedAt
-	if len(date) >= 10 {
-		date = date[:10]
-	}
-	return lines, memo, date, nil
+	// moved_at is a UTC instant: the journal takes its WIB calendar day.
+	return lines, memo, timeutil.WIBDay(row.MovedAt), nil
 }

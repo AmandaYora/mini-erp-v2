@@ -15,6 +15,7 @@ import (
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
 	"mini-erp/internal/shared/apperror"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // errPostedIndex surfaces a journal-index read failure distinctly so a
@@ -221,7 +222,7 @@ func (s *Service) UnpostedSources(ctx context.Context, branchID int64) ([]QueueI
 	}
 	withIgnore := func(it QueueItem) QueueItem {
 		if ig, ok := ignores[infrastructure.IgnoreKey(it.DocType, it.DocID)]; ok {
-			it.Ignored, it.IgnoreReason, it.IgnoredAt, it.IgnoredByID = true, ig.Reason, ig.IgnoredAt, ig.IgnoredBy
+			it.Ignored, it.IgnoreReason, it.IgnoredAt, it.IgnoredByID = true, ig.Reason, timeutil.FormatWIB(ig.IgnoredAt), ig.IgnoredBy
 		}
 		return it
 	}
@@ -273,10 +274,7 @@ func (s *Service) UnpostedSources(ctx context.Context, branchID int64) ([]QueueI
 			return nil, apperror.Internal(err)
 		}
 		for _, m := range movements {
-			date := m.MovedAt
-			if len(date) >= 10 {
-				date = date[:10]
-			}
+			date := timeutil.WIBDay(m.MovedAt) // UTC instant -> WIB day (same as its journal)
 			label := "Koreksi stok #" + strconv.FormatInt(m.MovementID, 10)
 			switch m.RefType {
 			case "write_off":

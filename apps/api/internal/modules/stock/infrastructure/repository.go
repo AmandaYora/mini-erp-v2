@@ -810,7 +810,7 @@ type Movement struct {
 
 // ListMovements filters history (branch/product/variant/location/type/date),
 // newest first.
-func (r *Repository) ListMovements(ctx context.Context, branchID, productID, variantID, locationID int64, movementType, dateFrom, dateTo string, limit, offset int) ([]*Movement, error) {
+func (r *Repository) ListMovements(ctx context.Context, branchID, productID, variantID, locationID int64, movementType, fromUTC, toUTCExclusive string, limit, offset int) ([]*Movement, error) {
 	conds := []string{}
 	args := []any{}
 	if branchID != 0 {
@@ -833,13 +833,15 @@ func (r *Repository) ListMovements(ctx context.Context, branchID, productID, var
 		conds = append(conds, "movement_type = ?")
 		args = append(args, movementType)
 	}
-	if dateFrom != "" {
+	// fromUTC / toUTCExclusive are WIB day boundaries already converted to
+	// UTC instants by the service (moved_at is a UTC instant).
+	if fromUTC != "" {
 		conds = append(conds, "moved_at >= ?")
-		args = append(args, dateFrom)
+		args = append(args, fromUTC)
 	}
-	if dateTo != "" {
-		conds = append(conds, "moved_at <= ?")
-		args = append(args, dateTo)
+	if toUTCExclusive != "" {
+		conds = append(conds, "moved_at < ?")
+		args = append(args, toUTCExclusive)
 	}
 	where := ""
 	if len(conds) > 0 {
@@ -891,7 +893,7 @@ func (r *Repository) ListMovements(ctx context.Context, branchID, productID, var
 }
 
 // CountMovements counts the List filter set.
-func (r *Repository) CountMovements(ctx context.Context, branchID, productID, variantID, locationID int64, movementType, dateFrom, dateTo string) (int64, error) {
+func (r *Repository) CountMovements(ctx context.Context, branchID, productID, variantID, locationID int64, movementType, fromUTC, toUTCExclusive string) (int64, error) {
 	conds := []string{}
 	args := []any{}
 	if branchID != 0 {
@@ -914,13 +916,15 @@ func (r *Repository) CountMovements(ctx context.Context, branchID, productID, va
 		conds = append(conds, "movement_type = ?")
 		args = append(args, movementType)
 	}
-	if dateFrom != "" {
+	// fromUTC / toUTCExclusive are WIB day boundaries already converted to
+	// UTC instants by the service (moved_at is a UTC instant).
+	if fromUTC != "" {
 		conds = append(conds, "moved_at >= ?")
-		args = append(args, dateFrom)
+		args = append(args, fromUTC)
 	}
-	if dateTo != "" {
-		conds = append(conds, "moved_at <= ?")
-		args = append(args, dateTo)
+	if toUTCExclusive != "" {
+		conds = append(conds, "moved_at < ?")
+		args = append(args, toUTCExclusive)
 	}
 	where := ""
 	if len(conds) > 0 {

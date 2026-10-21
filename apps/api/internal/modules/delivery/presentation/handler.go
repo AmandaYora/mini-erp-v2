@@ -13,6 +13,7 @@ import (
 	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the delivery module HTTP surface.
@@ -44,8 +45,8 @@ func noteView(n *contracts.DeliveryNote) map[string]any {
 		"recipientSignatureStatus":        n.RecipientSignatureStatus,
 		"recipientSignatureMissingReason": n.RecipientSignatureMissingReason,
 		"dropLocationNote":                n.DropLocationNote,
-		"dispatchedAt":                    n.DispatchedAt, "dispatchedBy": n.DispatchedBy,
-		"confirmedAt": n.ConfirmedAt, "confirmedBy": n.ConfirmedBy,
+		"dispatchedAt":                    timeutil.FormatWIB(n.DispatchedAt), "dispatchedBy": n.DispatchedBy,
+		"confirmedAt": timeutil.FormatWIB(n.ConfirmedAt), "confirmedBy": n.ConfirmedBy,
 		"documentKind": n.DocumentKind, "salesReturnId": n.SalesReturnID,
 		"items": items,
 	}

@@ -20,7 +20,8 @@ export function formatNumber(n: number | null | undefined): string {
 /** "10 Sep 2026" — tanggal saja. */
 export function formatDate(v: string | null | undefined): string {
   if (!v) return "-";
-  const d = new Date(v.length <= 10 ? `${v}T00:00:00` : v);
+  // Server mengirim jam dinding WIB "YYYY-MM-DD hh:mm:ss"; spasi diganti "T" agar terurai di semua mesin JS.
+  const d = new Date(v.length <= 10 ? `${v}T00:00:00` : v.includes(" ") && !v.includes("T") ? v.replace(" ", "T") : v);
   if (Number.isNaN(d.getTime())) return "-";
   return d.toLocaleDateString(idID, { day: "numeric", month: "short", year: "numeric" });
 }

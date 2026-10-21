@@ -10,6 +10,7 @@ import (
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the user module HTTP surface.
@@ -75,11 +76,7 @@ func listUserView(u *contracts.User, m *application.UserListMeta) map[string]any
 	}
 	view["roles"] = roles
 	view["branches"] = branches
-	if u.LastLoginAt != nil {
-		view["lastLoginAt"] = u.LastLoginAt.Format("2006-01-02 15:04:05")
-	} else {
-		view["lastLoginAt"] = nil
-	}
+	view["lastLoginAt"] = timeutil.WireTimeWIB(u.LastLoginAt)
 	return view
 }
 

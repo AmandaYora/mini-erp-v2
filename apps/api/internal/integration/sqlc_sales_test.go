@@ -658,7 +658,7 @@ func TestSqlcSalesOperationalReads(t *testing.T) {
 		}
 	}
 	setDone(o1, "2026-03-10 00:00:00")
-	setDone(o2, "2026-03-31 23:59:59")
+	setDone(o2, "2026-03-31 16:59:59") // UTC instant = 2026-03-31 23:59:59 WIB, the last second of March
 	setDone(o4, "2026-03-10 00:00:00")
 	setDone(o5, "2026-04-01 00:00:00") // outside the range below
 
@@ -682,7 +682,7 @@ func TestSqlcSalesOperationalReads(t *testing.T) {
 		t.Fatalf("items large list: %v %v", len(m), err)
 	}
 
-	// TopProducts: completed only, completed_at inside [from 00:00:00, to 23:59:59], branch scoped,
+	// TopProducts: completed only, completed_at (a UTC instant) inside the WIB days [from, to], branch scoped,
 	// grouped per snapshot, biggest qty first, limit.
 	tp, err := r.TopProducts(ctx, 1, " 2026-03-01 ", "2026-03-31", 10)
 	if err != nil || len(tp) != 3 {

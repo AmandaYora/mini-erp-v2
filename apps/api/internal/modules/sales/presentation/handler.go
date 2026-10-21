@@ -10,6 +10,7 @@ import (
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the sales module HTTP surface.
@@ -52,10 +53,10 @@ func orderView(o *contracts.SalesOrder) map[string]any {
 		"shipToRecipient": o.ShipToRecipient, "shipToPhone": o.ShipToPhone,
 		"shipToAddress":    o.ShipToAddress,
 		"taxInvoiceNumber": o.TaxInvoiceNumber, "clientRef": o.ClientRef, "taxInvoiceDate": o.TaxInvoiceDate,
-		"createdAt": o.CreatedAt, "createdBy": o.CreatedBy, "createdByName": o.CreatedByName,
+		"createdAt": timeutil.FormatWIB(o.CreatedAt), "createdBy": o.CreatedBy, "createdByName": o.CreatedByName,
 		"assignedUserId": o.AssignedUserID, "assignedUserName": o.AssignedUserName,
 		"creditApprovedBy": o.CreditApprovedBy, "creditApprovedByName": o.CreditApprovedByName,
-		"creditApprovedAt": o.CreditApprovedAt, "cashierName": o.CashierName,
+		"creditApprovedAt": timeutil.FormatWIB(o.CreditApprovedAt), "cashierName": o.CashierName,
 		"items": items,
 	}
 }

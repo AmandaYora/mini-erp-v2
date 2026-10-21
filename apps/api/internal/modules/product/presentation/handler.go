@@ -14,6 +14,7 @@ import (
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the product module HTTP surface.
@@ -274,7 +275,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request, media mediacontra
 	for _, p := range res.Products {
 		v := productView(p)
 		if p.ArchivedAt != nil {
-			v["archivedAt"] = p.ArchivedAt
+			v["archivedAt"] = timeutil.WireTimeWIB(p.ArchivedAt)
 		}
 		if !showCost {
 			delete(v, "purchasePrice")

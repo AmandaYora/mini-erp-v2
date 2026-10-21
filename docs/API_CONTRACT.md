@@ -69,6 +69,17 @@ pengguna hanya melihat kode mesin atau pesan generik.
 - Seluruh body envelope (sukses, galat, 401/403/500/503 tetap) ditulis hanya oleh `shared/response`;
   literal `{"success":` di luar paket itu ditolak arch-check (Rule M).
 
+### Tanggal & waktu
+
+- **Semua waktu di response adalah jam dinding WIB (Asia/Jakarta) tanpa zona**:
+  `"YYYY-MM-DD hh:mm:ss"`, atau `"YYYY-MM-DD"` untuk tanggal saja. Klien menampilkan angkanya apa
+  adanya (tidak dikonversi menurut zona perangkat). Tanggal dokumen memang tersimpan WIB; stempel
+  sistem (`createdAt`, `movedAt`, `dispatchedAt`, `confirmedAt`, `creditApprovedAt`, `archivedAt`,
+  `lastLoginAt`, `updatedAt`, `lastSeenAt`, `ignoredAt`) tersimpan UTC dan dikonversi di lapisan
+  presentation (`timeutil.FormatWIB` / `WireTimeWIB`). Konvensi kolom: `knowledge/DATABASE_GUIDE.md`.
+- Filter tanggal (`dateFrom`/`dateTo`, `from`/`to`) adalah hari kalender WIB, inklusif; format salah
+  ditolak 400.
+
 ## 3. Autentikasi & Scope
 
 - Header: `Authorization: Bearer <access_token>`.

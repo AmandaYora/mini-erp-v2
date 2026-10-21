@@ -8,6 +8,7 @@ import (
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the assistant module HTTP surface.
@@ -91,7 +92,7 @@ func (h *Handler) ChannelStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	response.OK(w, "Status kanal", map[string]any{
 		"connected": st.Connected, "phone": st.Phone, "qrDataUrl": st.QRDataURL,
-		"lastError": st.LastError, "updatedAt": st.UpdatedAt,
+		"lastError": st.LastError, "updatedAt": timeutil.FormatWIB(st.UpdatedAt),
 	})
 }
 
@@ -140,7 +141,7 @@ func (h *Handler) ListAuthorizations(w http.ResponseWriter, r *http.Request) {
 func authRow(id int64, phone, name, level, status string, primary bool, seen string) map[string]any {
 	return map[string]any{
 		"id": id, "phone": phone, "name": name, "accessLevel": level,
-		"status": status, "isPrimaryOwner": primary, "lastSeenAt": seen,
+		"status": status, "isPrimaryOwner": primary, "lastSeenAt": timeutil.FormatWIB(seen),
 	}
 }
 
@@ -216,7 +217,7 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	response.OK(w, "Konfigurasi asisten", map[string]any{
 		"mode": cfg.Mode, "effectiveMode": cfg.EffectiveMode,
-		"rateLimitPerMinute": cfg.RateLimitPerMin, "updatedAt": cfg.UpdatedAt,
+		"rateLimitPerMinute": cfg.RateLimitPerMin, "updatedAt": timeutil.FormatWIB(cfg.UpdatedAt),
 	})
 }
 
@@ -237,7 +238,7 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	response.OK(w, "Konfigurasi disimpan", map[string]any{
 		"mode": cfg.Mode, "effectiveMode": cfg.EffectiveMode,
-		"rateLimitPerMinute": cfg.RateLimitPerMin, "updatedAt": cfg.UpdatedAt,
+		"rateLimitPerMinute": cfg.RateLimitPerMin, "updatedAt": timeutil.FormatWIB(cfg.UpdatedAt),
 	})
 }
 

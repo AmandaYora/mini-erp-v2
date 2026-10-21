@@ -150,7 +150,7 @@ func (b *exportBatch) orderCells(o *contracts.SalesOrder) []any {
 	t := b.trans[o.ID]
 	credit := ""
 	if o.CreditApprovedAt != "" {
-		credit = strings.TrimSpace(o.CreditApprovedByName + " · " + o.CreditApprovedAt)
+		credit = strings.TrimSpace(o.CreditApprovedByName + " · " + timeutil.FormatWIB(o.CreditApprovedAt))
 	}
 	cashier := b.labels.payers[o.ID]
 	if cashier == "" && o.Channel == contracts.ChannelPOS {

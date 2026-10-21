@@ -18,6 +18,7 @@ import (
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/dberr"
 	"mini-erp/internal/shared/ratelimit"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // System location codes, stable per branch.
@@ -1179,11 +1180,15 @@ type ListMovementsResult struct {
 // ListMovements filters history newest-first (date bounds are inclusive,
 // caller converts to UTC day bounds — OQ-A32).
 func (s *Service) ListMovements(ctx context.Context, branchID, productID, variantID, locationID int64, movementType, dateFrom, dateTo string, page, limit int) (*ListMovementsResult, error) {
-	total, err := s.repo.CountMovements(ctx, branchID, productID, variantID, locationID, movementType, dateFrom, dateTo)
+	fromUTC, toUTCExclusive, err := wibDayBounds(dateFrom, dateTo)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.repo.CountMovements(ctx, branchID, productID, variantID, locationID, movementType, fromUTC, toUTCExclusive)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	movements, err := s.repo.ListMovements(ctx, branchID, productID, variantID, locationID, movementType, dateFrom, dateTo, limit, (page-1)*limit)
+	movements, err := s.repo.ListMovements(ctx, branchID, productID, variantID, locationID, movementType, fromUTC, toUTCExclusive, limit, (page-1)*limit)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -1191,6 +1196,28 @@ func (s *Service) ListMovements(ctx context.Context, branchID, productID, varian
 		movements = []*infrastructure.Movement{}
 	}
 	return &ListMovementsResult{Movements: movements, Total: total}, nil
+}
+
+// wibDayBounds turns an inclusive WIB calendar-day range (YYYY-MM-DD, either
+// end optional) into UTC instants for a UTC stamp column: [from 00:00 WIB,
+// day after to 00:00 WIB). A malformed day is a 400, never a silently wider list.
+func wibDayBounds(dateFrom, dateTo string) (fromUTC, toUTCExclusive string, err error) {
+	const layout = "2006-01-02 15:04:05"
+	if d := strings.TrimSpace(dateFrom); d != "" {
+		t, perr := timeutil.ParseDateInput(d)
+		if perr != nil {
+			return "", "", apperror.Validation("", []apperror.FieldError{{Field: "dateFrom", Message: "format tanggal harus YYYY-MM-DD"}})
+		}
+		fromUTC = timeutil.StartOfDayWIB(t).Format(layout)
+	}
+	if d := strings.TrimSpace(dateTo); d != "" {
+		t, perr := timeutil.ParseDateInput(d)
+		if perr != nil {
+			return "", "", apperror.Validation("", []apperror.FieldError{{Field: "dateTo", Message: "format tanggal harus YYYY-MM-DD"}})
+		}
+		toUTCExclusive = timeutil.StartOfDayWIB(t.AddDate(0, 0, 1)).Format(layout)
+	}
+	return fromUTC, toUTCExclusive, nil
 }
 
 // Suggest greedily fills qty from locations with available stock (oldest

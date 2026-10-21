@@ -12,6 +12,7 @@ import (
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 	"mini-erp/internal/shared/wiring"
 )
 
@@ -54,7 +55,7 @@ func recordView(rec contracts.Record, actors, branches map[int64]string) map[str
 		"id": rec.ID, "action": rec.Action, "entity": rec.Entity,
 		"entityId": rec.EntityID, "branchId": rec.BranchID, "actorId": rec.ActorID,
 		"actorType": actorType,
-		"note":      rec.Note, "createdAt": rec.CreatedAt,
+		"note":      rec.Note, "createdAt": timeutil.FormatWIB(rec.CreatedAt),
 		"before": rawJSON(rec.Before), "after": rawJSON(rec.After), "metadata": rawJSON(rec.Metadata),
 	}
 	if n, ok := actors[rec.ActorID]; ok {

@@ -21,6 +21,9 @@ menyunting ada di `.claude/rules/database.md`.
     `settlement_date`, `received_at` GR, `delivery_date`, `transfer_date`, `expense_date`, `entry_date`):
     tanggal/jam dinding **WIB** naif (`timeutil.DateOrToday`), dibaca apa adanya oleh filter
     (`listquery.DateRange`) dan jurnal. Data migrasi mengikuti aturan yang sama (RUNBOOK §5b).
+  - Turunan dari stempel UTC selalu lewat kalender WIB: hari jurnal/antrean `timeutil.WIBDay`, filter
+    hari `listquery.DateRangeWIB` / `timeutil.StartOfDayWIB`, nilai di response `timeutil.FormatWIB`
+    (format kawat: `docs/API_CONTRACT.md` §2). Jangan memotong `[:10]` dari stempel UTC.
 - Satu transaksi = satu koneksi: baca dan tutup `rows` sepenuhnya sebelum query berikutnya di tx yang
   sama.
 - Tabel baru dengan endpoint daftar → indeks `(branch_id, id)` di migrasi yang sama

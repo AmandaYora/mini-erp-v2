@@ -10,6 +10,7 @@ import (
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the party module HTTP surface.
@@ -37,7 +38,7 @@ func partyView(p *contracts.Party) map[string]any {
 	return map[string]any{
 		"id": p.ID, "code": p.Code, "type": p.Type, "name": p.Name,
 		"phone": p.Phone, "email": email, "address": p.Address, "notes": p.Notes,
-		"member": member, "status": p.Status, "archivedAt": p.ArchivedAt, "attributes": attrs,
+		"member": member, "status": p.Status, "archivedAt": timeutil.WireTimeWIB(p.ArchivedAt), "attributes": attrs,
 	}
 }
 

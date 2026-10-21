@@ -156,7 +156,8 @@ func dayBounds(from, to string) (time.Time, time.Time) {
 	if err1 != nil || err2 != nil {
 		return time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2999, 12, 31, 23, 59, 59, 0, time.UTC)
 	}
-	return start.UTC(), end.AddDate(0, 0, 1).Add(-time.Second).UTC()
+	// Last microsecond of the WIB day: completed_at is DATETIME(6).
+	return start.UTC(), end.AddDate(0, 0, 1).Add(-time.Microsecond).UTC()
 }
 
 // headerParams are the nullable columns CreateOrder/UpdateOrder write.

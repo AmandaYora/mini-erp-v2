@@ -12,6 +12,7 @@ import (
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the stock module HTTP surface.
@@ -227,8 +228,8 @@ func (h *Handler) Movements(w http.ResponseWriter, r *http.Request) {
 			"id": m.ID, "productId": m.ProductID, "variantId": m.VariantID,
 			"locationId": m.LocationID, "direction": m.Direction, "type": m.Type,
 			"qty": m.Qty, "refType": m.RefType, "refId": m.RefID, "notes": m.Notes,
-			"createdBy": m.CreatedBy, "createdAt": m.CreatedAt,
-			"balanceBefore": m.BalanceBefore, "balanceAfter": m.BalanceAfter, "movedAt": m.MovedAt,
+			"createdBy": m.CreatedBy, "createdAt": timeutil.FormatWIB(m.CreatedAt),
+			"balanceBefore": m.BalanceBefore, "balanceAfter": m.BalanceAfter, "movedAt": timeutil.FormatWIB(m.MovedAt),
 		})
 	}
 	response.Paginated(w, "Mutasi stok", items, response.Meta{
