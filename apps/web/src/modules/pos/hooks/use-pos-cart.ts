@@ -116,6 +116,8 @@ export function usePosCart() {
   const [addingId, setAddingId] = useState<number | null>(null);
   const [barcode, setBarcode] = useState("");
   const [scanning, setScanning] = useState(false);
+  const scanQueue = useRef<string[]>([]);
+  const scanBusy = useRef(false);
   const [scanNotice, setScanNotice] = useState<string | null>(null);
   // Kode produk bervarian: kasir memilih varian sebelum masuk keranjang.
   const [variantChoice, setVariantChoice] = useState<VariantChoiceState | null>(null);
@@ -358,12 +360,13 @@ export function usePosCart() {
         const found = cartLive.current.find(
           (l) => l.productId === d.id && l.variantId === variant.id && l.uom === uom,
         );
-        let qty = 1;
-        if (found) {
-          qty = found.qty + 1;
-          setCart((rows) => rows.map((l) => (l.key === found.key ? { ...l, qty: l.qty + 1 } : l)));
-        } else {
-          setCart((rows) => [
+        const qty = found ? found.qty + 1 : 1;
+        const same = (l: CartLine) => l.productId === d.id && l.variantId === variant.id && l.uom === uom;
+        // Decided inside the update: two scans in a row can land before the
+        // first one re-rendered, so the live ref may not show the line yet.
+        setCart((rows) => {
+          if (rows.some(same)) return rows.map((l) => (same(l) ? { ...l, qty: l.qty + 1 } : l));
+          return [
             ...rows,
             {
               key: nextKey++,
@@ -380,8 +383,8 @@ export function usePosCart() {
               discountPct: 0,
               discountNominal: 0,
             },
-          ]);
-        }
+          ];
+        });
         return { ok: true, name: d.name, qty };
       } catch (err) {
         toast.danger("Gagal memuat produk", readApiError(err).message);
@@ -423,17 +426,25 @@ export function usePosCart() {
     [addProductById],
   );
 
-  /** Kirim barcode ketikan/wedge (satu kali; tombol Enter ganda diabaikan selagi berjalan). */
+  /** Kirim barcode ketikan/wedge. Pemindai cepat bisa mengirim kode berikutnya
+   * sebelum yang pertama selesai diproses: kode diantre dan diproses berurutan,
+   * tidak pernah dibuang (barang yang terpindai selalu masuk keranjang). */
   async function submitBarcode() {
     const code = barcode.trim();
-    if (code === "" || scanning) return;
+    if (code === "") return;
+    setBarcode("");
+    scanQueue.current.push(code);
+    if (scanBusy.current) return;
+    scanBusy.current = true;
     setScanning(true);
     setScanNotice(null);
     try {
-      const outcome = await scanCode(code);
-      if (outcome.kind === "added" || outcome.kind === "choose") setBarcode("");
-      else if (outcome.kind === "unknown" || outcome.kind === "rejected") setScanNotice(outcome.detail);
+      for (let next = scanQueue.current.shift(); next !== undefined; next = scanQueue.current.shift()) {
+        const outcome = await scanCode(next);
+        if (outcome.kind === "unknown" || outcome.kind === "rejected") setScanNotice(outcome.detail);
+      }
     } finally {
+      scanBusy.current = false;
       setScanning(false);
     }
   }
