@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
-	"mini-erp/internal/modules/finance/infrastructure"
 	"mini-erp/internal/shared/apperror"
 )
 
@@ -302,8 +301,8 @@ func (s *Service) SafeClose(ctx context.Context, actorID, branchID int64, year, 
 		})
 	})
 	if err != nil {
-		if err == infrastructure.ErrPeriodClosed {
-			return apperror.Conflict("Periode sudah ditutup")
+		if perr := periodError(err); perr != nil {
+			return perr
 		}
 		if _, ok := err.(*apperror.AppError); ok {
 			return err

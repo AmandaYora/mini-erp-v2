@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 
 	"mini-erp/internal/modules/finance/contracts"
@@ -775,6 +776,32 @@ func (r *Repository) PostedSourceIDsAfter(ctx context.Context, branchID int64, s
 // being written (the period row lock serialises posting against closing).
 var ErrPeriodClosed = errors.New("period closed")
 
+// ErrBeforeBooksStart means the entry's month lies before the first month the
+// books cover. Once any month is closed (the data migration closes every
+// month before the opening balance), a month earlier than the earliest period
+// row is outside the books: an entry there would change every balance after
+// the opening without belonging to any period anyone can review or close.
+var ErrBeforeBooksStart = errors.New("before books start")
+
+// beforeBooksStart reports whether (year, month) precedes the branch's books.
+// A branch that has never closed a month has no fixed start yet.
+func beforeBooksStart(ctx context.Context, q rowQuerier, branchID int64, year, month int) (bool, error) {
+	var first sql.NullInt64
+	var closed int
+	if err := q.QueryRowContext(ctx,
+		`SELECT MIN(year*100 + month), COALESCE(MAX(status = 'closed'), 0) FROM finance_periods WHERE branch_id = ?`,
+		branchID).Scan(&first, &closed); err != nil {
+		return false, err
+	}
+	return closed == 1 && first.Valid && int64(year*100+month) < first.Int64, nil
+}
+
+// BeforeBooksStart is beforeBooksStart outside a transaction (the friendly
+// pre-check; guardPeriodTx repeats it inside the insert transaction).
+func (r *Repository) BeforeBooksStart(ctx context.Context, branchID int64, year, month int) (bool, error) {
+	return beforeBooksStart(ctx, r.db, branchID, year, month)
+}
+
 // guardPeriodTx takes a SHARED lock on the entry month's period row inside the
 // insert transaction. A concurrent safe-close holds the row FOR UPDATE, so a
 // posting either lands before the close (and the gate sees it) or is refused
@@ -784,6 +811,13 @@ func guardPeriodTx(ctx context.Context, tx *sql.Tx, branchID int64, entryDate st
 		return nil
 	}
 	year, month := entryDate[:4], entryDate[5:7]
+	y, _ := strconv.Atoi(year)
+	m, _ := strconv.Atoi(month)
+	if before, err := beforeBooksStart(ctx, tx, branchID, y, m); err != nil {
+		return err
+	} else if before {
+		return ErrBeforeBooksStart
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT IGNORE INTO finance_periods (branch_id, year, month, status) VALUES (?, ?, ?, 'open')`,
 		branchID, year, month); err != nil {
@@ -810,6 +844,11 @@ func (r *Repository) CloseWithGate(ctx context.Context, branchID int64, year, mo
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if before, err := beforeBooksStart(ctx, tx, branchID, year, month); err != nil {
+		return err
+	} else if before {
+		return ErrBeforeBooksStart
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT IGNORE INTO finance_periods (branch_id, year, month, status) VALUES (?, ?, ?, 'open')`,
 		branchID, year, month); err != nil {

@@ -234,8 +234,8 @@ func (s *Service) insertEntryWith(ctx context.Context, actorID, branchID int64, 
 		})
 	})
 	if err != nil {
-		if errors.Is(err, infrastructure.ErrPeriodClosed) {
-			return nil, apperror.Conflict("Periode sudah ditutup")
+		if perr := periodError(err); perr != nil {
+			return nil, perr
 		}
 		return nil, dberr.Map(err)
 	}
@@ -305,8 +305,8 @@ func (s *Service) reverse(ctx context.Context, actorID, branchID, entryID int64,
 		if errors.Is(err, infrastructure.ErrAlreadyReversed) {
 			return nil, apperror.Conflict("Jurnal sudah dibalik")
 		}
-		if errors.Is(err, infrastructure.ErrPeriodClosed) {
-			return nil, apperror.Conflict("Periode sudah ditutup")
+		if perr := periodError(err); perr != nil {
+			return nil, perr
 		}
 		return nil, dberr.Map(err)
 	}

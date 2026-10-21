@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"mini-erp/internal/shared/dberr"
 	"strings"
@@ -108,8 +107,8 @@ func (s *Service) CreateExpense(ctx context.Context, actorID, branchID int64, in
 			})
 		})
 	if err != nil {
-		if errors.Is(err, infrastructure.ErrPeriodClosed) {
-			return nil, apperror.Conflict("Periode sudah ditutup")
+		if perr := periodError(err); perr != nil {
+			return nil, perr
 		}
 		return nil, dberr.Map(err)
 	}

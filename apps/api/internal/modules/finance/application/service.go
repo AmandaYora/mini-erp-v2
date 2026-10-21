@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -503,6 +504,29 @@ func (s *Service) requireOpenPeriod(ctx context.Context, branchID int64, date st
 	}
 	if p != nil && p.Status == "closed" {
 		return apperror.Conflict("Periode sudah ditutup")
+	}
+	if p == nil {
+		before, err := s.repo.BeforeBooksStart(ctx, branchID, y, m)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if before {
+			return apperror.Conflict(beforeBooksStartMessage)
+		}
+	}
+	return nil
+}
+
+const beforeBooksStartMessage = "Tanggal sebelum awal pembukuan — bulan itu tidak tercakup buku (saldo awal sudah memuatnya)"
+
+// periodError maps the in-transaction period guards to the API error; nil when
+// err is neither.
+func periodError(err error) error {
+	switch {
+	case errors.Is(err, infrastructure.ErrPeriodClosed):
+		return apperror.Conflict("Periode sudah ditutup")
+	case errors.Is(err, infrastructure.ErrBeforeBooksStart):
+		return apperror.Conflict(beforeBooksStartMessage)
 	}
 	return nil
 }
