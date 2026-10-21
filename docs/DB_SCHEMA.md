@@ -1,10 +1,8 @@
 # Database Schema — Mini ERP (Revamp)
 
-Status: **kontrak kepemilikan tabel yang sudah terkunci** — 67 tabel nyata: 18 berkas baseline per
+Status: **kontrak kepemilikan tabel yang sudah terkunci** — 69 tabel nyata: 18 berkas baseline per
 modul, `apps/api/migrations/` (`000001_user` … `000018_assistant`), ditambah migrasi bernomor
-sesudah baseline (`000019`–`000023`, `000031`, `000032`, `000035`; nomor 000024–000030 sengaja kosong) — turun dari 70
-sesudah baseline (`000019`–`000023`, `000031`, `000036`–`000037`, `000039`–`000041`; nomor 000024–000030 sengaja kosong) — turun dari 70
-sesudah baseline (`000019`–`000023`, `000031`, `000034`; nomor 000024–000030 sengaja kosong) — turun dari 70
+sesudah baseline (`000019`–`000023`, `000031`–`000037`, `000039`–`000041`; nomor 000024–000030 dan 000038 sengaja kosong) — turun dari 70
 entity sistem lama. Daftar tabel di §3 dibangkitkan dari berkas itu (`node scripts/db-schema-doc.mjs`;
 `--check` dijalankan CI/verify). Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi
 tiap tabel warisan; **riwayat migrasi bernomor (kolom/tabel baru sesudah baseline) ada di §8**.
@@ -65,26 +63,17 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `product` | `000006_product.up.sql` | `product_categories`, `products`, `product_variants` | 3 |
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
 | `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql`, `000041_stock_corrections.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
-| `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql` | `purchase_orders`, `purchase_order_items` | 2 |
-| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql` | `sales_orders`, `sales_order_items` | 2 |
-| `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
 | `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql`, `000034_purchasing_corrections.up.sql` | `purchase_orders`, `purchase_order_items`, `purchase_order_corrections`, `purchase_order_correction_lines` | 4 |
-| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
-| `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
-| `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
-| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql` | `payments`, `payment_allocations` | 2 |
-| `salesreturn` | `000014_salesreturn.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
-| `purchasereturn` | `000015_purchasereturn.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
-| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql`, `000035_finance_corrections.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta`, `finance_inventory_revaluations`, `finance_inventory_revaluation_lines` | 16 |
+| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql`, `000039_goodsreceipt_corrections.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql`, `000037_delivery_corrections.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
-| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql` | `payments`, `payment_allocations` | 2 |
+| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql` | `payments`, `payment_allocations` | 2 |
 | `salesreturn` | `000014_salesreturn.up.sql`, `000036_salesreturn_corrections.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
 | `purchasereturn` | `000015_purchasereturn.up.sql`, `000040_purchasereturn_corrections.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
-| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta` | 14 |
+| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql`, `000035_finance_corrections.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta`, `finance_inventory_revaluations`, `finance_inventory_revaluation_lines` | 16 |
 | `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
 | `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
-| **Total** | 18 berkas modul | | **67** |
+| **Total** | 18 berkas modul | | **69** |
 <!-- END GENERATED: tables -->
 
 ### `audit` (L0)
