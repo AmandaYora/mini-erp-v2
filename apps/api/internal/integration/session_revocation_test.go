@@ -12,10 +12,11 @@ import (
 var testIPSeq atomic.Uint32
 
 // testIP memberi alamat loopback berbeda per login. Pembatas login di auth
-// (10/menit per IP+username, in-process) berlaku untuk seluruh paket ini; tes
-// sesi yang berurutan login sebagai "target" >10 kali dalam semenit dan dulu
-// gagal acak "rate_limited" di mesin cepat. Pembatasnya sendiri diuji di
-// auth_ratelimit_test.go.
+// (in-process, kini hanya menghitung login gagal) berlaku untuk seluruh paket
+// ini; tes sesi yang berurutan login sebagai "target" >10 kali dalam semenit
+// dulu gagal acak "rate_limited" di mesin cepat, dan IP terpisah menjaga tes
+// yang sengaja gagal login agar tidak saling memakan jatah. Pembatasnya
+// sendiri diuji di auth_ratelimit_test.go.
 func testIP() string {
 	n := testIPSeq.Add(1)
 	return fmt.Sprintf("127.0.%d.%d", (n/250)%250+1, n%250+1)

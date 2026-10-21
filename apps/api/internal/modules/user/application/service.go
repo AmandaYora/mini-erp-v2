@@ -249,21 +249,27 @@ func validateProfileFields(username, fullName, phone, title string) error {
 	return nil
 }
 
-// forceDefaultSuperadmin re-attaches the superadmin role on user id 1
-// (legacy assignRoles parity, F1-7): the default account cannot be
-// stripped of its role through the API.
-func (s *Service) forceDefaultSuperadmin(ctx context.Context, userID int64, roleIDs []int64) ([]int64, error) {
-	if userID != domain.DefaultSuperadminUserID {
-		return roleIDs, nil
-	}
-	superRole, err := s.repo.RoleByCode(ctx, domain.ReservedSuperadminRole)
+// reservedRolesOf returns the reserved roles the user already holds (empty
+// for every ordinary account). A holder is the hidden developer account: it
+// keeps exactly these roles through UpdateUser (legacy assignRoles parity,
+// F1-7), so the API can neither strip nor extend them. Identification is by
+// role, never by user id.
+func (s *Service) reservedRolesOf(ctx context.Context, userID int64) ([]int64, error) {
+	ids, err := s.repo.GetRoleIDs(ctx, userID)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	if superRole == nil {
-		return roleIDs, nil
+	var reserved []int64
+	for _, id := range ids {
+		role, err := s.repo.RoleByID(ctx, id)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if role != nil && role.IsReserved {
+			reserved = append(reserved, id)
+		}
 	}
-	return []int64{superRole.ID}, nil
+	return reserved, nil
 }
 
 // isLockedRole reports owner/superadmin: permission sets managed by the
@@ -522,9 +528,9 @@ type UpdateUserInput struct {
 }
 
 // UpdateUser rewrites profile, roles, and branch links in one transaction.
-// Reserved holders are invisible to non-superadmin actors (404); user id 1
-// always keeps the superadmin role; the write is refused when it would
-// leave zero managers (F1-7).
+// Reserved holders are invisible to non-superadmin actors (404) and keep
+// exactly their reserved roles; the write is refused when it would leave
+// zero managers (F1-7).
 func (s *Service) UpdateUser(ctx context.Context, actorID, userID int64, in UpdateUserInput) (*contracts.User, error) {
 	if err := s.holderDenied(ctx, actorID, userID); err != nil {
 		return nil, err
@@ -559,15 +565,15 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, userID int64, in Upda
 	if err := s.requireRolesExist(ctx, in.RoleIDs); err != nil {
 		return nil, err
 	}
-	// User id 1 always keeps exactly the superadmin role (forced below);
-	// every other user is refused the reserved role here.
+	// A reserved holder keeps exactly its reserved roles; every other user
+	// gets the requested roles, which may never include a reserved one.
 	roleIDs := in.RoleIDs
-	if userID == domain.DefaultSuperadminUserID {
-		var err error
-		roleIDs, err = s.forceDefaultSuperadmin(ctx, userID, in.RoleIDs)
-		if err != nil {
-			return nil, err
-		}
+	reserved, err := s.reservedRolesOf(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(reserved) > 0 {
+		roleIDs = reserved
 	} else if err := s.rejectReservedRole(ctx, roleIDs); err != nil {
 		return nil, err
 	}

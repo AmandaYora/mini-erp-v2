@@ -242,7 +242,7 @@ func DefaultGrants() map[string][]string {
 // SystemRoles are the roles EnsureAuthz maintains on every start.
 func SystemRoles() []usercontracts.SystemRoleDef {
 	return []usercontracts.SystemRoleDef{
-		{Code: "superadmin", Name: "Super Admin", Description: "Akses developer default (disembunyikan, id 1)", System: true, SyncAll: true},
+		{Code: "superadmin", Name: "Super Admin", Description: "Akses developer default (disembunyikan)", System: true, SyncAll: true},
 		{Code: "owner", Name: "Owner", Description: "Akses penuh", System: true, SyncAll: true},
 		{Code: "admin", Name: "Admin", Description: "Admin operasional", System: true},
 		{Code: "staff", Name: "Staff", Description: "Staff operasional", System: true},

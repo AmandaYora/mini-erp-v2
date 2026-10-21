@@ -115,3 +115,28 @@ func TestConcurrentAllow(t *testing.T) {
 		t.Fatalf("allowed = %d, want exactly 50", allowed)
 	}
 }
+
+// TestExhaustedPeeksWithoutRecording: Exhausted never consumes allowance; it
+// turns true once limit events are recorded and false again after the window.
+func TestExhaustedPeeksWithoutRecording(t *testing.T) {
+	l := New(2, time.Minute)
+	now := time.Now()
+	l.now = func() time.Time { return now }
+	for i := 0; i < 5; i++ {
+		if l.Exhausted("k") {
+			t.Fatalf("peek %d on unused key: want false", i+1)
+		}
+	}
+	l.Allow("k")
+	if l.Exhausted("k") {
+		t.Fatal("1 of 2 used: want false")
+	}
+	l.Allow("k")
+	if !l.Exhausted("k") {
+		t.Fatal("2 of 2 used: want true")
+	}
+	now = now.Add(61 * time.Second)
+	if l.Exhausted("k") {
+		t.Fatal("after window: want false")
+	}
+}

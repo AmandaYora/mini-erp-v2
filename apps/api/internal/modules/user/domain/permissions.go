@@ -38,11 +38,12 @@ const MaxPasswordBytes = 72
 // from it are already at the target cost and never trigger a rehash.
 const BcryptCost = 12
 
-// Reserved role/user identities (F1-7, legacy reserved-role-policy parity).
-// The superadmin role can never be granted through the API, and the default
-// superadmin account (id 1) is invisible to non-superadmin sessions.
+// Reserved role identity (F1-7, legacy reserved-role-policy parity). The
+// superadmin role can never be granted through the API, and its holders (the
+// hidden developer account) are invisible to non-superadmin sessions. The
+// account is recognised by the role it holds, never by its id: after the
+// data migration users.id = 1 is an ordinary business account.
 const ReservedSuperadminRole = "superadmin"
-const DefaultSuperadminUserID = int64(1)
 
 // LockedRoleCodes cannot have their permission set changed through the API
 // (owner/superadmin always hold every code; the bootstrap re-syncs them).
