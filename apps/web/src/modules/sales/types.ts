@@ -113,7 +113,52 @@ export interface SalesOrder {
   creditApprovedAt?: string;
   /** Hanya di detail: pencatat pembayaran (kasir struk). */
   cashierName?: string;
+  // Koreksi (hanya di detail, GET /sales-orders/{id}): mode ubah yang
+  // diizinkan server, alasan kunci, dan apakah sisa order boleh ditutup.
+  editMode?: SalesEditMode;
+  editLockReason?: string;
+  canCloseShort?: boolean;
+  /** Jejak batal / tutup sisa order (kosong bila tidak pernah). */
+  cancelReason?: string;
+  cancelledAt?: string;
+  cancelledByName?: string;
+  shortCloseReason?: string;
+  shortClosedAt?: string;
+  shortClosedByName?: string;
   items: SalesOrderItem[];
+}
+
+/** full = form lengkap; header = hanya kolom ringan (sudah ada dokumen turunan); none = hanya baca. */
+export type SalesEditMode = "full" | "header" | "none";
+
+/** GET /sales-orders/{id}/close-short/preview (sales/application/corrections.go ShortClosePlan). */
+export interface ShortCloseLine {
+  itemId: number;
+  productCode: string;
+  productName: string;
+  variantName: string;
+  uom: string;
+  orderedQty: number;
+  deliveredQty: number;
+  oldLineTotal: number;
+  newLineTotal: number;
+  /** Tidak ada yang terkirim: baris keluar dari order. */
+  removed: boolean;
+}
+
+export interface ShortClosePlan {
+  orderId: number;
+  number: string;
+  lines: ShortCloseLine[];
+  oldGrandTotal: number;
+  newSubtotal: number;
+  newDiscountTotal: number;
+  newTaxTotal: number;
+  newGrandTotal: number;
+  paidAmount: number;
+  outstandingAfter: number;
+  /** > 0: pelanggan sudah membayar lebih dari total baru. */
+  refundDueAfter: number;
 }
 
 /** Satu baris kiriman: tanpa harga (server yang memberi harga). */
@@ -155,6 +200,10 @@ export interface SalesOrderPayload {
   taxInvoiceDate?: string;
   /** UUID per percobaan simpan; create diulang dengan clientRef sama = replay. */
   clientRef?: string;
+  /** Alasan koreksi (opsional, maks 255) — hanya masuk jejak audit. */
+  reason?: string;
+  /** true = order terkonfirmasi: hanya kolom ringan, tanpa hitung ulang harga. */
+  headerOnly?: boolean;
   items: SalesOrderLinePayload[];
 }
 

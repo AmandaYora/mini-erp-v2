@@ -7,10 +7,16 @@ import type { SalesOrder } from "@/modules/sales/types";
 
 const getOrder = vi.fn();
 const cancelOrder = vi.fn();
+const updateOrder = vi.fn();
+const closeShort = vi.fn();
+const closeShortPreview = vi.fn();
 vi.mock("@/modules/sales/services/sales.service", () => ({
   salesService: {
     get: (...a: unknown[]) => getOrder(...a),
     cancel: (...a: unknown[]) => cancelOrder(...a),
+    update: (...a: unknown[]) => updateOrder(...a),
+    closeShort: (...a: unknown[]) => closeShort(...a),
+    closeShortPreview: (...a: unknown[]) => closeShortPreview(...a),
     confirm: vi.fn(),
     approveCredit: vi.fn(),
   },
@@ -182,8 +188,20 @@ describe("detail order jual", () => {
     renderPage();
     await openMenu();
     await userEvent.click(screen.getByRole("menuitem", { name: "Batalkan order" }));
-    await userEvent.click(await screen.findByText("Ya, batalkan"));
+    await userEvent.type(await screen.findByLabelText(/Alasan/), "salah pelanggan");
+    await userEvent.click(screen.getByRole("button", { name: "Batalkan order" }));
     await waitFor(() => expect(screen.getByText(/Masih ada surat jalan aktif SJ-1/)).toBeTruthy());
+    expect(cancelOrder).toHaveBeenCalledWith(7, "salah pelanggan");
+  });
+
+  it("batal wajib beralasan: tanpa alasan tidak memanggil server", async () => {
+    getOrder.mockResolvedValue(order());
+    renderPage();
+    await openMenu();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Batalkan order" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Batalkan order" }));
+    expect(await screen.findByText("Alasan wajib diisi")).toBeTruthy();
+    expect(cancelOrder).not.toHaveBeenCalled();
   });
 
   it("id tidak ada: halaman 404 yang jelas", async () => {
@@ -238,5 +256,94 @@ describe("detail order jual — orang, kredit, retur, alamat (SL-01/03/09)", () 
     renderPage();
     expect(await screen.findByText("Total bersih setelah retur")).toBeInTheDocument();
     expect(screen.getByText("Harus dikembalikan ke pelanggan")).toBeInTheDocument();
+  });
+});
+
+describe("detail order jual — koreksi salah input", () => {
+  it("terkonfirmasi tanpa dokumen turunan: Ubah order membuka form lengkap", async () => {
+    getOrder.mockResolvedValue(order({ editMode: "full" }));
+    renderPage();
+    await openMenu();
+    expect(screen.getByRole("menuitem", { name: "Ubah order" })).toBeTruthy();
+  });
+
+  it("terkonfirmasi dengan dokumen turunan: Ubah info order lewat dialog, headerOnly", async () => {
+    getOrder.mockResolvedValue(
+      order({ editMode: "header", editLockReason: "Order sudah memiliki surat jalan", notes: "lama" }),
+    );
+    updateOrder.mockResolvedValue({ message: "Sales order disimpan", data: order() });
+    renderPage();
+    await openMenu();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Ubah info order" }));
+    expect(await screen.findByText("Order sudah memiliki surat jalan")).toBeTruthy();
+    const notes = screen.getByLabelText("Catatan");
+    await userEvent.clear(notes);
+    await userEvent.type(notes, "kirim pagi");
+    await userEvent.click(screen.getByRole("button", { name: "Simpan perubahan" }));
+    await waitFor(() => expect(updateOrder).toHaveBeenCalled());
+    const [id, body] = updateOrder.mock.calls[0];
+    expect(id).toBe(7);
+    expect(body).toMatchObject({ notes: "kirim pagi", headerOnly: true, partyId: 3, paymentTerms: "cod" });
+  });
+
+  it("selesai: tidak ada Ubah order", async () => {
+    getOrder.mockResolvedValue(order({ status: "completed", editMode: "none" }));
+    renderPage();
+    await screen.findByRole("heading", { name: "SO-0007" });
+    expect(screen.queryByText(/Ubah/)).toBeNull();
+  });
+
+  it("terkirim sebagian: Tutup sisa order menampilkan pratinjau dan peringatan kelebihan bayar", async () => {
+    getOrder.mockResolvedValue(order({ canCloseShort: true, editMode: "header" }));
+    closeShortPreview.mockResolvedValue({
+      orderId: 7,
+      number: "SO-0007",
+      lines: [
+        {
+          itemId: 1,
+          productCode: "P1",
+          productName: "Semen",
+          variantName: "",
+          uom: "sak",
+          orderedQty: 10,
+          deliveredQty: 4,
+          oldLineTotal: 100000,
+          newLineTotal: 40000,
+          removed: false,
+        },
+      ],
+      oldGrandTotal: 100000,
+      newSubtotal: 40000,
+      newDiscountTotal: 0,
+      newTaxTotal: 0,
+      newGrandTotal: 40000,
+      paidAmount: 50000,
+      outstandingAfter: 0,
+      refundDueAfter: 10000,
+    });
+    closeShort.mockResolvedValue({ message: "Sisa order ditutup", data: order({ status: "completed" }) });
+    renderPage();
+    await openMenu();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Tutup sisa order" }));
+    expect(await screen.findByText("Pelanggan sudah membayar lebih")).toBeTruthy();
+    expect(screen.getByText("Semen")).toBeTruthy();
+    await userEvent.type(screen.getByLabelText(/Alasan/), "stok habis");
+    await userEvent.click(screen.getByRole("button", { name: "Tutup sisa order" }));
+    await waitFor(() => expect(closeShort).toHaveBeenCalledWith(7, "stok habis"));
+  });
+
+  it("order POS: tautan Cetak struk ke halaman struk", async () => {
+    getOrder.mockResolvedValue(order({ channel: "pos" }));
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Cetak struk" })).toHaveAttribute("href", "/print/pos/7");
+  });
+
+  it("order batal: alasan batal tampil", async () => {
+    getOrder.mockResolvedValue(
+      order({ status: "cancelled", cancelReason: "pelanggan batal", cancelledByName: "Rina", cancelledAt: "2026-10-05 10:00:00" }),
+    );
+    renderPage();
+    expect(await screen.findByText(/pelanggan batal/)).toBeTruthy();
+    expect(screen.getByText(/Rina/)).toBeTruthy();
   });
 });

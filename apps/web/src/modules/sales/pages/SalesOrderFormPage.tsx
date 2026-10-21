@@ -244,9 +244,15 @@ export default function SalesOrderFormPage() {
   // Galat item dari server: semua pesan "baris N: ..." (harga minimum, dll.), per baris.
   const [itemErrors, setItemErrors] = useState<ItemErrors>({ general: [], byRow: {} });
   const [loadedStatus, setLoadedStatus] = useState<string>("draft");
+  // Mode ubah dari server (GET detail editMode) dan kanal asli order: order
+  // terkonfirmasi tanpa dokumen turunan boleh dikoreksi lewat form lengkap.
+  const [loadedEditMode, setLoadedEditMode] = useState<string>("full");
+  const [loadedChannel, setLoadedChannel] = useState<string>("regular");
+  const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const readOnly = isEdit && loadedStatus !== "draft";
+  const correcting = isEdit && loadedStatus === "confirmed" && loadedEditMode === "full";
+  const readOnly = isEdit && loadedStatus !== "draft" && !correcting;
 
   const draftSnapshot = useMemo<SalesFormDraft>(
     () => ({
@@ -348,6 +354,8 @@ export default function SalesOrderFormPage() {
         return {
           key,
           loadedStatus: o.status,
+          loadedEditMode: o.editMode ?? (o.status === "draft" ? "full" : "none"),
+          loadedChannel: o.channel || "regular",
           partyId: o.partyId > 0 ? o.partyId : null,
           orderDate: o.orderDate || todayWIB(),
           paymentTerms: (o.paymentTerms === "net" || o.paymentTerms === "prepaid"
@@ -437,6 +445,9 @@ export default function SalesOrderFormPage() {
     setTaxInvoiceDate("");
     setLines([]);
     setLoadedStatus("draft");
+    setLoadedEditMode("full");
+    setLoadedChannel("regular");
+    setReason("");
     setErrors({});
   }
 
@@ -444,6 +455,8 @@ export default function SalesOrderFormPage() {
   if (editBundle && editBundle.key === formKey && appliedKey !== formKey) {
     setAppliedKey(formKey);
     setLoadedStatus(editBundle.loadedStatus);
+    setLoadedEditMode(editBundle.loadedEditMode);
+    setLoadedChannel(editBundle.loadedChannel);
     setPartyId(editBundle.partyId);
     setOrderDate(editBundle.orderDate);
     setPaymentTerms(editBundle.paymentTerms);
@@ -630,7 +643,7 @@ export default function SalesOrderFormPage() {
     const v = parsed.data;
     const body: SalesOrderPayload = {
       partyId: v.partyId ?? 0,
-      channel: "regular",
+      channel: isEdit ? loadedChannel : "regular",
       orderDate: v.orderDate,
       dueDate: v.paymentTerms === "net" ? v.dueDate.trim() : "",
       paymentTerms: v.paymentTerms,
@@ -653,6 +666,7 @@ export default function SalesOrderFormPage() {
         taxInvoiceDate.trim() === "" ? undefined : taxInvoiceDate.trim(),
       items: v.items.map(toLinePayload),
       ...(isEdit ? {} : { clientRef }),
+      ...(correcting && reason.trim() !== "" ? { reason: reason.trim() } : {}),
     };
     setSubmitting(true);
     try {
@@ -722,7 +736,7 @@ export default function SalesOrderFormPage() {
         title={isEdit ? "Ubah Order Jual" : "Tambah Order Jual"}
         description={
           isEdit
-            ? "Hanya order draf yang bisa diubah. Harga dihitung ulang server saat simpan."
+            ? "Order draf, atau order terkonfirmasi yang belum punya surat jalan, pembayaran, atau retur. Harga dihitung ulang server saat simpan."
             : "Kanal reguler. Harga dihitung server (member/katalog) saat simpan."
         }
         actions={
@@ -748,7 +762,9 @@ export default function SalesOrderFormPage() {
 
       {readOnly && (
         <Notice tone="warning" title={`Order berstatus ${statusLabel(loadedStatus)} — hanya baca`}>
-          Hanya order draf yang bisa diubah.{" "}
+          {loadedStatus === "confirmed"
+            ? "Order sudah punya surat jalan, pembayaran, atau retur: ubah info order (jatuh tempo, catatan, alamat, faktur pajak) lewat halaman detail."
+            : "Order yang sudah selesai atau dibatalkan tidak bisa diubah."}{" "}
           <Link to={`${ROUTE_PATHS.salesOrders}/${orderId}`} className="font-semibold text-primary hover:underline">
             Lihat detail
           </Link>
@@ -762,6 +778,25 @@ export default function SalesOrderFormPage() {
       )}
 
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-6">
+        {correcting && (
+          <Notice tone="info" title="Mengoreksi order terkonfirmasi">
+            <p>
+              Belum ada surat jalan, pembayaran, atau retur, jadi seluruh isi order masih bisa diperbaiki. Perubahan
+              dan alasannya dicatat di jejak audit.
+            </p>
+            <div className="mt-3 max-w-xl">
+              <FormField label="Alasan koreksi" htmlFor="f-correction-reason" errorText={errors.reason}>
+                <TextInput
+                  id="f-correction-reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  maxLength={255}
+                  placeholder="Opsional, mis. salah ketik qty"
+                />
+              </FormField>
+            </div>
+          </Notice>
+        )}
         <SectionCard title="Dokumen">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="sm:col-span-2">

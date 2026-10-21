@@ -76,6 +76,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "sales_orders.update": "Ubah order jual",
   "sales_orders.confirm": "Konfirmasi order jual",
   "sales_orders.cancel": "Batalkan order jual",
+  "sales_orders.close_short": "Tutup sisa order jual",
   "sales_orders.approve_credit": "Setujui kredit order jual",
   "deliveries.create": "Buat surat jalan",
   "deliveries.confirm": "Konfirmasi surat jalan",

@@ -1,15 +1,21 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { draftKey, saveDraft } from "@/shared/lib/draft-storage";
 
 const create = vi.fn();
+const getOrder = vi.fn();
+const update = vi.fn();
 vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/sales/services/sales.service")>();
   return {
     ...actual,
-    salesService: { create: (...a: unknown[]) => create(...a), get: vi.fn(), update: vi.fn() },
+    salesService: {
+      create: (...a: unknown[]) => create(...a),
+      get: (...a: unknown[]) => getOrder(...a),
+      update: (...a: unknown[]) => update(...a),
+    },
     productOptionService: { search: vi.fn().mockResolvedValue([]) },
   };
 });
@@ -296,5 +302,55 @@ describe("form order jual — pindai QR / barcode (SL-10)", () => {
     renderPage();
     await screen.findByText(/BRG-1/);
     expect(screen.queryByRole("button", { name: /Pindai/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("form order jual — koreksi order terkonfirmasi", () => {
+  function confirmedOrder(editMode: string) {
+    return {
+      id: 7, number: "SO-0007", branchId: 1, partyId: 0, partyName: "Tunai", channel: "pos", memberCode: "",
+      orderDate: "2026-10-01 10:00:00", dueDate: "", paymentTerms: "cod", taxType: "none", taxRate: 0,
+      subtotal: 100000, discountTotal: 0, taxTotal: 0, grandTotal: 100000, status: "confirmed", notes: "",
+      shipToAddressId: 0, shipToLabel: "", shipToRecipient: "", shipToPhone: "", shipToAddress: "",
+      taxInvoiceNumber: "", taxInvoiceDate: "", editMode,
+      items: [{
+        id: 1, productId: 5, variantId: 9, productCode: "BRG-1", productName: "Barang Uji", uom: "pcs", uomFactor: 1,
+        qty: 2, qtyBase: 2, unitPrice: 50000, discountPct: 0, discountNominal: 0, lineTotal: 100000,
+        stockTracked: true, itemType: "barang", variantName: "Default", variantCode: "D", baseUom: "pcs",
+        pricingSource: "catalog", basePrice: 50000, discountReason: "", note: "", taxable: true, taxBase: 100000, taxAmount: 0,
+      }],
+    };
+  }
+
+  function renderEdit() {
+    useAuthStore.setState({ permissions: ["sales.update", "sales.view"] } as never);
+    return render(
+      <MemoryRouter initialEntries={["/sales-orders/7/edit"]}>
+        <Routes>
+          <Route path="/sales-orders/:id/edit" element={<SalesOrderFormPage />} />
+          <Route path="/sales-orders/:id" element={<div>detail</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("tanpa dokumen turunan: form bisa disunting, kanal asli dan alasan ikut terkirim", async () => {
+    getOrder.mockResolvedValue(confirmedOrder("full"));
+    update.mockResolvedValue({ message: "Sales order disimpan", data: { id: 7 } });
+    renderEdit();
+    expect(await screen.findByText("Mengoreksi order terkonfirmasi")).toBeTruthy();
+    expect(screen.queryByText(/hanya baca/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Alasan koreksi"), { target: { value: "salah ketik qty" } });
+    fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1]).toMatchObject({ channel: "pos", reason: "salah ketik qty" });
+  });
+
+  it("sudah ada dokumen turunan: form hanya baca dan menunjuk ke detail", async () => {
+    getOrder.mockResolvedValue(confirmedOrder("header"));
+    renderEdit();
+    expect(await screen.findByText(/hanya baca/)).toBeTruthy();
+    expect(screen.getByText(/ubah info order/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Simpan" })).toBeNull();
   });
 });

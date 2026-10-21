@@ -65,7 +65,7 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
 | `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql`, `000041_stock_corrections.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
 | `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql` | `purchase_orders`, `purchase_order_items` | 2 |
-| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
+| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
 | `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql` | `payments`, `payment_allocations` | 2 |
@@ -187,7 +187,7 @@ cukup untuk penelusuran di bawah HPP moving-average (lihat §6).
 
 | Tabel | Untuk apa |
 |---|---|
-| `sales_orders` | Header SO ke customer, termasuk `channel` (`regular`/`pos`); `assigned_user_id` = penanggung jawab; `credit_approved_by`/`credit_approved_at` (migrasi `000019_sales`, SL-09) = siapa/kapan kredit disetujui, diisi satu pernyataan dengan peralihan ke termin net; snapshot alamat kirim (`ship_to_*`) boleh berisi alamat sekali pakai dengan `ship_to_address_id` NULL (SL-01). ETL memetakan `id_assigned_user`, `credit_approved_by/at` |
+| `sales_orders` | Header SO ke customer, termasuk `channel` (`regular`/`pos`); `assigned_user_id` = penanggung jawab; `credit_approved_by`/`credit_approved_at` (migrasi `000019_sales`, SL-09) = siapa/kapan kredit disetujui, diisi satu pernyataan dengan peralihan ke termin net; snapshot alamat kirim (`ship_to_*`) boleh berisi alamat sekali pakai dengan `ship_to_address_id` NULL (SL-01). `cancel_reason`/`cancelled_at`/`cancelled_by` dan `short_close_reason`/`short_closed_at`/`short_closed_by` (migrasi `000033_sales_corrections`) = alasan + siapa/kapan order dibatalkan atau ditutup sisanya. ETL memetakan `id_assigned_user`, `credit_approved_by/at` |
 | `sales_order_items` | Baris SO — snapshot harga (termasuk harga member yang sudah dihitung saat itu) |
 
 ### `goodsreceipt` (L5)
@@ -375,6 +375,7 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000039_goodsreceipt_corrections` | Koreksi salah input | `goods_receipts.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan (penerimaan `pending` yang dibuang → `void`); diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
 | `000040_purchasereturn_corrections` | Koreksi salah input | `purchase_returns.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan; diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
 | `000041_stock_corrections` | Koreksi salah input | `stock_transfers.cancel_reason` (varchar 255), `cancelled_at`, `cancelled_by` (nullable): alasan, waktu, dan pelaku pembatalan; diisi bersama status batal dalam satu CAS, audit ikut transaksi itu | dokumen legacy yang batal tetap NULL (alasan tidak tercatat di sistem lama) |
+| `000033_sales_corrections` | Koreksi salah input order jual | `sales_orders.cancel_reason`, `cancelled_at`, `cancelled_by` (alasan + siapa/kapan batal, diisi satu pernyataan CAS dengan status `cancelled`) dan `short_close_reason`, `short_closed_at`, `short_closed_by` ("tutup sisa order": baris dipotong ke qty terkirim, order `completed`) — semua nullable | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
 
 Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
 bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);

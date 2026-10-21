@@ -57,6 +57,10 @@ func orderView(o *contracts.SalesOrder) map[string]any {
 		"assignedUserId": o.AssignedUserID, "assignedUserName": o.AssignedUserName,
 		"creditApprovedBy": o.CreditApprovedBy, "creditApprovedByName": o.CreditApprovedByName,
 		"creditApprovedAt": timeutil.FormatWIB(o.CreditApprovedAt), "cashierName": o.CashierName,
+		"cancelReason": o.CancelReason, "cancelledAt": timeutil.FormatWIB(o.CancelledAt),
+		"cancelledBy": o.CancelledBy, "cancelledByName": o.CancelledByName,
+		"shortCloseReason": o.ShortCloseReason, "shortClosedAt": timeutil.FormatWIB(o.ShortClosedAt),
+		"shortClosedBy": o.ShortClosedBy, "shortClosedByName": o.ShortClosedByName,
 		"items": items,
 	}
 }
@@ -92,6 +96,8 @@ type orderPayload struct {
 	TaxInvoiceNumber string        `json:"taxInvoiceNumber"`
 	TaxInvoiceDate   string        `json:"taxInvoiceDate"`
 	ClientRef        string        `json:"clientRef"`
+	Reason           string        `json:"reason"`     // optional why of a correction (audit trail only)
+	HeaderOnly       bool          `json:"headerOnly"` // confirmed order: header-light fields only
 	Items            []linePayload `json:"items" validate:"required"`
 }
 
@@ -121,7 +127,7 @@ func toInput(in orderPayload) application.OrderInput {
 		ShipToPhone: in.ShipToPhone, ShipToAddress: in.ShipToAddress,
 		AssignedUserID:   in.AssignedUserID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate,
-		ClientRef: in.ClientRef,
+		ClientRef: in.ClientRef, Reason: in.Reason, HeaderOnly: in.HeaderOnly,
 	}
 }
 
@@ -182,6 +188,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	if sums, perr := h.svc.PaymentSummaries(r.Context(), []*contracts.SalesOrder{o}); perr == nil {
 		withPayment(v, sums[o.ID])
 	}
+	corr, cerr := h.svc.Correction(r.Context(), o)
+	if cerr != nil {
+		response.FailErr(w, cerr)
+		return
+	}
+	v["editMode"], v["editLockReason"], v["canCloseShort"] = corr.EditMode, corr.EditLockReason, corr.CanCloseShort
 	response.OK(w, "Data sales order", v)
 }
 
@@ -270,12 +282,62 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Sales order"))
 		return
 	}
-	o, appErr := h.svc.CancelOrder(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	// The body is optional (older clients send none); the web UI always sends
+	// a reason.
+	var in reasonPayload
+	if r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
+		if fields := httpx.DecodeJSON(r, &in); fields != nil {
+			response.Fail(w, apperror.Validation("", fields))
+			return
+		}
+	}
+	o, appErr := h.svc.CancelOrderWithReason(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
 	response.OK(w, "Sales order dibatalkan", orderView(o))
+}
+
+type reasonPayload struct {
+	Reason string `json:"reason"`
+}
+
+// ShortClosePreview handles GET /api/v1/sales-orders/{id}/close-short/preview:
+// what "tutup sisa order" would do (lines cut to delivered qty, new total,
+// refund due), without writing.
+func (h *Handler) ShortClosePreview(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Sales order"))
+		return
+	}
+	plan, appErr := h.svc.ShortClosePreview(r.Context(), authcontracts.BranchID(r), id)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Pratinjau tutup sisa order", plan)
+}
+
+// ShortClose handles POST /api/v1/sales-orders/{id}/close-short {reason}.
+func (h *Handler) ShortClose(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Sales order"))
+		return
+	}
+	var in reasonPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	o, appErr := h.svc.ShortClose(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Sisa order ditutup", orderView(o))
 }
 
 // ApproveCredit handles POST /api/v1/sales-orders/{id}/approve-credit.
@@ -309,6 +371,8 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("PUT /api/v1/sales-orders/{id}", perm("sales.update", authcontracts.Guard(h.Update, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/confirm", perm("sales.update", authcontracts.Guard(h.Confirm, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/cancel", perm("sales.archive", authcontracts.Guard(h.Cancel, branchGuard)))
+	mux.Handle("GET /api/v1/sales-orders/{id}/close-short/preview", perm("sales.archive", authcontracts.Guard(h.ShortClosePreview, branchGuard)))
+	mux.Handle("POST /api/v1/sales-orders/{id}/close-short", perm("sales.archive", authcontracts.Guard(h.ShortClose, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/approve-credit", perm("sales.approve", authcontracts.Guard(h.ApproveCredit, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/export", perm("sales.export", authcontracts.Guard(h.Export, branchGuard)))
 }
