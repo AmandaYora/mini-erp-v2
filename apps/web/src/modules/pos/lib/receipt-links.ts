@@ -25,3 +25,26 @@ export function invoiceHref({ orderId, hideDiscount }: ReceiptLinkInput): string
 export function paymentProofHref({ paymentId }: ReceiptLinkInput): string | null {
   return paymentId != null ? `/print/payments/${paymentId}` : null;
 }
+
+export interface HideDiscountOption {
+  /** Centang tampil: ada diskon baris atau harga member yang bisa disembunyikan (seperti sistem lama). */
+  visible: boolean;
+  /** Boleh dicentang: transaksi lunas saat itu (ADR-0018 D12). */
+  allowed: boolean;
+}
+
+/**
+ * Opsi "Sembunyikan diskon" di layar sukses POS. Hanya tampil bila ada diskon,
+ * dan hanya aktif bila transaksi lunas: bayar nanti, pembayaran yang gagal
+ * tercatat, atau tunai yang kurang dari total server membuat tagihan masih
+ * bersisa — tagihan harus menunjukkan jumlah yang benar-benar terutang.
+ */
+export function hideDiscountOption(input: {
+  hasDiscount: boolean;
+  payLater: boolean;
+  paymentPending: boolean;
+  change: number;
+}): HideDiscountOption {
+  const settled = !input.payLater && !input.paymentPending && input.change >= 0;
+  return { visible: input.hasDiscount, allowed: input.hasDiscount && settled };
+}

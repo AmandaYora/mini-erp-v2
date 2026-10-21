@@ -21,6 +21,9 @@ import {
 } from "@/modules/print/document";
 import { receiptPayments, receiptSummary } from "@/modules/print/lib/pos-receipt";
 import {
+  effectiveHideDiscount,
+  HIDE_DISCOUNT_UNPAID_NOTE,
+  hideDiscountAllowed,
   lineDiscountTotal,
   linePrintSubtotal,
   linePrintUnitPrice,
@@ -56,7 +59,8 @@ export default function PosThermalReceiptPage() {
   const paymentIdParam = searchParams.get("paymentId");
   const width: ThermalWidth = readThermalWidth(searchParams);
   // SL-05: pilihan checkout ikut di tautan (?hideDiscount=1); toolbar bisa mengubahnya.
-  const hideDiscount = readHideDiscount(searchParams);
+  // Berlaku hanya bila transaksi lunas (ADR-0018 D12) — dicek setelah order termuat.
+  const hideRequested = readHideDiscount(searchParams);
 
   const { data, loading, error } = useAsyncData(
     async (): Promise<PosReceiptData> => {
@@ -85,6 +89,8 @@ export default function PosThermalReceiptPage() {
     return <div style={{ padding: "2rem" }}>Struk termal hanya untuk transaksi POS.</div>;
   }
 
+  const hideAllowed = hideDiscountAllowed(o);
+  const hideDiscount = effectiveHideDiscount(hideRequested, o);
   const payments = receiptPayments(data.payments);
   const s = receiptSummary(o, payments, hideDiscount);
   const printDiscount = orderPrintDiscount(o);
@@ -190,13 +196,20 @@ export default function PosThermalReceiptPage() {
           <span>58mm</span>
         </label>
         {printDiscount > 0 ? (
-          <label className="thermal-toolbar-option">
+          <label className="thermal-toolbar-option" title={hideAllowed ? undefined : HIDE_DISCOUNT_UNPAID_NOTE}>
             <input
               type="checkbox"
               checked={hideDiscount}
+              disabled={!hideAllowed}
+              aria-describedby={hideAllowed ? undefined : "hide-discount-note"}
               onChange={(e) => setSearchParams(withHideDiscountParam(searchParams, e.target.checked), { replace: true })}
             />
             <span>Sembunyikan diskon (harga penuh)</span>
+            {hideAllowed ? null : (
+              <span id="hide-discount-note" style={{ fontWeight: 400, color: "#92400e" }}>
+                — hanya untuk struk lunas. {HIDE_DISCOUNT_UNPAID_NOTE}.
+              </span>
+            )}
           </label>
         ) : null}
         <button type="button" onClick={() => void handlePrint()} disabled={printing}>

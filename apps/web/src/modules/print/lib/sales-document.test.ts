@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   documentTotals,
   dueDateCell,
+  effectiveHideDiscount,
   hasLineDiscount,
+  hideDiscountAllowed,
   lineDiscountTotal,
   linePrintSubtotal,
   linePrintUnitPrice,
@@ -101,19 +103,30 @@ describe("ringkasan & judul (legacy)", () => {
     );
   });
 
-  it("sembunyikan diskon: total & dibayar naik ke harga penuh, sisa tetap riil", () => {
-    const t = documentTotals(order(), true);
-    expect(t).toMatchObject({ discount: null, total: 230000, paid: 70000, outstanding: 160000 });
-    // Belum dibayar: harga penuh yang terutang (perilaku sistem lama).
-    const unpaid = documentTotals(order({ paidAmount: 0, outstandingAmount: 210000 }), true);
-    expect(unpaid).toMatchObject({ paid: null, total: 230000, outstanding: 230000 });
+  it("sembunyikan diskon pada nota lunas: total & dibayar naik ke harga penuh, sisa 0", () => {
+    const t = documentTotals(order({ paidAmount: 210000, outstandingAmount: 0 }), true);
+    expect(t).toMatchObject({ discount: null, total: 230000, paid: 230000, outstanding: 0 });
+  });
+
+  it("tagihan yang masih bersisa tidak pernah disembunyikan diskonnya (D12)", () => {
+    // Bayar sebagian dan belum dibayar: permintaan diabaikan, angka tetap riil.
+    expect(documentTotals(order(), true)).toEqual(documentTotals(order(), false));
+    const unpaid = order({ paidAmount: 0, outstandingAmount: 210000 });
+    expect(documentTotals(unpaid, true)).toMatchObject({ discount: 20000, total: 210000, outstanding: 210000 });
+  });
+
+  it("boleh menyembunyikan diskon hanya bila server menyatakan lunas", () => {
+    expect(hideDiscountAllowed({ paidAmount: 210000, outstandingAmount: 0 })).toBe(true);
+    expect(hideDiscountAllowed({ paidAmount: 50000, outstandingAmount: 160000 })).toBe(false);
+    // Tanpa ringkasan bayar dari server lunas tidak bisa dipastikan.
+    expect(hideDiscountAllowed({})).toBe(false);
+    expect(effectiveHideDiscount(true, { paidAmount: 1, outstandingAmount: 0 })).toBe(true);
+    expect(effectiveHideDiscount(false, { paidAmount: 1, outstandingAmount: 0 })).toBe(false);
   });
 
   it("retur yang mengurangi tagihan: sisa mengikuti server", () => {
     // Tagihan 210.000, retur 30.000, dibayar 50.000 -> sisa server 130.000.
-    const o = order({ outstandingAmount: 130000 });
-    expect(documentTotals(o, false).outstanding).toBe(130000);
-    expect(documentTotals(o, true).outstanding).toBe(130000);
+    expect(documentTotals(order({ outstandingAmount: 130000 }), false).outstanding).toBe(130000);
   });
 
   it("baris Pajak hanya bila ada pajak", () => {

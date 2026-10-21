@@ -35,7 +35,10 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 import {
   documentTotals,
   dueDateCell,
+  effectiveHideDiscount,
   hasLineDiscount,
+  HIDE_DISCOUNT_UNPAID_NOTE,
+  hideDiscountAllowed,
   lineDiscountTotal,
   linePrintUnitPrice,
   lineSellingAmount,
@@ -90,7 +93,9 @@ export default function SalesInvoicePrintPage() {
   // Pengaturan, bisa ditimpa per cetak).
   const hideStoreStatic = readHideLetterhead(searchParams, !paper.showLetterhead);
   const showStoreStatic = !isContinuous || !hideStoreStatic;
-  const hideDiscount = readHideDiscount(searchParams);
+  // Sembunyikan diskon hanya untuk nota yang sudah lunas (ADR-0018 D12).
+  const hideAllowed = hideDiscountAllowed(order);
+  const hideDiscount = effectiveHideDiscount(readHideDiscount(searchParams), order);
   const printDiscount = orderPrintDiscount(order);
   const totals = documentTotals(order, hideDiscount);
   // Kolom Disc hanya bila ada baris yang punya diskonnya sendiri.
@@ -122,13 +127,20 @@ export default function SalesInvoicePrintPage() {
       extraToolbar={
         <>
           {printDiscount > 0 ? (
-            <label className="print-toolbar-option">
+            <label className="print-toolbar-option" title={hideAllowed ? undefined : HIDE_DISCOUNT_UNPAID_NOTE}>
               <input
                 type="checkbox"
                 checked={hideDiscount}
+                disabled={!hideAllowed}
+                aria-describedby={hideAllowed ? undefined : "hide-discount-note"}
                 onChange={(e) => setSearchParams(withHideDiscountParam(searchParams, e.target.checked), { replace: true })}
               />
               <span>Sembunyikan diskon (harga penuh)</span>
+              {hideAllowed ? null : (
+                <span id="hide-discount-note" style={{ fontWeight: 400, color: "#92400e" }}>
+                  — hanya untuk nota lunas. {HIDE_DISCOUNT_UNPAID_NOTE}.
+                </span>
+              )}
             </label>
           ) : null}
           <label className="print-toolbar-option" style={{ alignItems: "flex-start" }}>

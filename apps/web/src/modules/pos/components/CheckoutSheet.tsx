@@ -20,7 +20,8 @@ import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { lineTotal } from "@/modules/pos/lib/cart";
 import { NO_PAY_PERMISSION_MESSAGE } from "@/modules/pos/lib/checkout";
-import { invoiceHref, paymentProofHref, posReceiptHref } from "@/modules/pos/lib/receipt-links";
+import { hideDiscountOption, invoiceHref, paymentProofHref, posReceiptHref } from "@/modules/pos/lib/receipt-links";
+import { HIDE_DISCOUNT_UNPAID_NOTE } from "@/modules/print/lib/sales-document";
 import { quickCashOptions } from "@/modules/pos/lib/quick-cash";
 import type { PosCartApi } from "@/modules/pos/hooks/use-pos-cart";
 import { payMethodLabel, type CheckoutMode, type PayMethod } from "@/modules/pos/types";
@@ -290,9 +291,25 @@ function PaymentForm({ pos }: { pos: PosCartApi }) {
   );
 }
 
+/**
+ * Opsi cetak "Sembunyikan diskon" transaksi selesai: tampil hanya bila ada
+ * diskon (baris atau harga member), berlaku hanya bila lunas (ADR-0018 D12).
+ */
+function printHideDiscount(pos: PosCartApi) {
+  const c = pos.completed;
+  const option = hideDiscountOption({
+    hasDiscount: pos.memberSavings > 0 || pos.cart.some((l) => l.discountPct > 0 || l.discountNominal > 0),
+    payLater: c?.payLater ?? true,
+    paymentPending: c?.paymentPending ?? true,
+    change: c?.change ?? 0,
+  });
+  return { option, hide: pos.hideDiscount && option.allowed };
+}
+
 function CompletedView({ pos }: { pos: PosCartApi }) {
   const c = pos.completed;
   if (!c) return null;
+  const { option, hide } = printHideDiscount(pos);
   const row = (label: string, value: string, strong = false) => (
     <div className="flex justify-between gap-3">
       <dt className="text-muted-foreground">{label}</dt>
@@ -349,19 +366,34 @@ function CompletedView({ pos }: { pos: PosCartApi }) {
       <div className="rounded-xl border border-border p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-semibold text-foreground">Struk</p>
-          <label htmlFor="pos-hide-discount" className="flex min-h-12 cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <Checkbox
-              id="pos-hide-discount"
-              checked={pos.hideDiscount}
-              onCheckedChange={(v) => pos.setHideDiscount(v === true)}
-              className="size-6"
-            />
-            Sembunyikan diskon (harga penuh)
-          </label>
+          {option.visible && (
+            <label
+              htmlFor="pos-hide-discount"
+              className={cn(
+                "flex min-h-12 items-center gap-2 text-sm text-muted-foreground",
+                option.allowed ? "cursor-pointer" : "cursor-not-allowed opacity-60",
+              )}
+            >
+              <Checkbox
+                id="pos-hide-discount"
+                checked={hide}
+                disabled={!option.allowed}
+                aria-describedby={option.allowed ? undefined : "pos-hide-discount-note"}
+                onCheckedChange={(v) => pos.setHideDiscount(v === true)}
+                className="size-6"
+              />
+              Sembunyikan diskon (harga penuh)
+            </label>
+          )}
         </div>
+        {option.visible && !option.allowed && (
+          <p id="pos-hide-discount-note" className="text-xs text-muted-foreground">
+            Hanya untuk transaksi lunas — {HIDE_DISCOUNT_UNPAID_NOTE.toLowerCase()}.
+          </p>
+        )}
         <ul className="mt-1 divide-y divide-border text-sm">
           {pos.cart.map((l) => {
-            const unit = pos.hideDiscount ? l.unitPrice : pos.displayUnitPrice(l);
+            const unit = hide ? l.unitPrice : pos.displayUnitPrice(l);
             return (
               <li key={l.key} className="flex justify-between gap-3 py-1.5">
                 <span className="min-w-0 truncate text-muted-foreground">
@@ -372,8 +404,8 @@ function CompletedView({ pos }: { pos: PosCartApi }) {
                     lineTotal({
                       qty: l.qty,
                       unitPrice: unit,
-                      discountPct: pos.hideDiscount ? 0 : l.discountPct,
-                      discountNominal: pos.hideDiscount ? 0 : l.discountNominal,
+                      discountPct: hide ? 0 : l.discountPct,
+                      discountNominal: hide ? 0 : l.discountNominal,
                     }),
                   )}
                 </span>
@@ -381,7 +413,7 @@ function CompletedView({ pos }: { pos: PosCartApi }) {
             );
           })}
         </ul>
-        {!pos.hideDiscount && pos.memberSavings > 0 && (
+        {!hide && pos.memberSavings > 0 && (
           <p className="mt-2 text-right text-xs font-semibold text-success">Termasuk hemat member {formatIDR(pos.memberSavings)}</p>
         )}
       </div>
@@ -400,7 +432,8 @@ export function CheckoutSheet({ pos }: { pos: PosCartApi }) {
   const link = {
     orderId: completed?.orderId ?? 0,
     paymentId: completed?.paymentId ?? null,
-    hideDiscount: pos.hideDiscount,
+    // Hanya pilihan yang berlaku (lunas + ada diskon) yang ikut ke tautan cetak.
+    hideDiscount: printHideDiscount(pos).hide,
   };
   const proofHref = completed && can("payment.view") ? paymentProofHref(link) : null;
   const title = completed ? "Transaksi Berhasil" : mode === "pay_later" ? "Bayar Nanti" : "Pembayaran";

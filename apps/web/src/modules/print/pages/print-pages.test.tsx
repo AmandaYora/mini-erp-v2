@@ -156,13 +156,27 @@ describe("nota penjualan (sama dengan sistem lama)", () => {
     expect(screen.queryByText("01 November 2026")).toBeNull();
   });
 
-  it("sembunyikan diskon: kolom Disc hilang, harga penuh, total naik", async () => {
-    fetchSales.mockResolvedValue(order());
+  it("nota lunas + sembunyikan diskon: kolom Disc hilang, harga penuh, total naik", async () => {
+    fetchSales.mockResolvedValue(order({ paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid" }));
     renderAt("/print/sales/5?hideDiscount=1", "/print/sales/:id", <SalesInvoicePrintPage />);
-    await screen.findByText("Tagihan - Bayar Sebagian");
+    await screen.findByText("Nota Penjualan Lunas");
     expect(screen.queryByText("Disc")).toBeNull();
     expect(screen.queryByText("Diskon")).toBeNull();
     expect(screen.getByText(/^terbilang : dua ratus ribu rupiah$/)).toBeTruthy();
+    expect((screen.getByLabelText(/Sembunyikan diskon/) as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("tagihan bersisa: diskon tetap tercetak walau diminta disembunyikan, centang nonaktif + alasan (D12)", async () => {
+    fetchSales.mockResolvedValue(order());
+    renderAt("/print/sales/5?hideDiscount=1", "/print/sales/:id", <SalesInvoicePrintPage />);
+    await screen.findByText("Tagihan - Bayar Sebagian");
+    expect(screen.getByText("Disc")).toBeTruthy();
+    expect(screen.getByText("Diskon")).toBeTruthy();
+    expect(screen.getByText(/^terbilang : seratus delapan puluh ribu rupiah$/)).toBeTruthy();
+    const box = screen.getByLabelText(/Sembunyikan diskon/) as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    expect(box.checked).toBe(false);
+    expect(screen.getByText(/Tagihan harus menunjukkan jumlah yang benar-benar terutang/)).toBeTruthy();
   });
 
   it("peringatan profil gagal dimuat tampil (tidak ditelan)", async () => {
@@ -346,6 +360,17 @@ describe("struk termal POS (sama dengan sistem lama)", () => {
     expect(screen.queryByText("Diskon")).toBeNull();
     const box = screen.getByLabelText("Sembunyikan diskon (harga penuh)") as HTMLInputElement;
     expect(box.checked).toBe(true);
+  });
+
+  it("struk piutang: ?hideDiscount=1 diabaikan, diskon tetap tercetak (D12)", async () => {
+    fetchPos.mockResolvedValue({
+      order: posOrder({ paymentTerms: "net", paidAmount: 0, outstandingAmount: 180000, paymentStatus: "unpaid" }),
+      payments: [],
+    });
+    renderAt("/print/pos/5?hideDiscount=1", "/print/pos/:orderId", <PosThermalReceiptPage />);
+    await screen.findByText("PIUTANG");
+    expect(screen.getAllByText("Diskon").length).toBeGreaterThan(0);
+    expect((screen.getByLabelText(/Sembunyikan diskon/) as HTMLInputElement).disabled).toBe(true);
   });
 
   it("order ber-PPN (K-03): struk merinci DPP dan PPN; tanpa pajak baris itu tidak ada", async () => {

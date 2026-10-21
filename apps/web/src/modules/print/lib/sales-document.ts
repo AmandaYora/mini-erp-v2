@@ -4,11 +4,29 @@
 //   dengan harga katalognya dan selisihnya sebagai diskon;
 // - kolom Disc = nominal diskon baris; "Jumlah (Rp)" = bruto (harga penuh x qty);
 // - "sembunyikan diskon": baris diskon hilang, total & pembayaran naik ke harga
-//   penuh, sisa tagihan tetap riil (order belum dibayar = harga penuh terutang);
+//   penuh. HANYA untuk dokumen yang sudah lunas (ADR-0018 D12): tagihan yang
+//   masih bersisa harus menunjukkan jumlah yang benar-benar terutang, jadi
+//   permintaan menyembunyikan diskon di sana diabaikan (hideDiscountAllowed);
 // - judul menurut sisa tagihan: Nota Penjualan Lunas / Tagihan - Bayar
 //   Sebagian / Tagihan Penjualan.
 
 export const HIDE_DISCOUNT_PARAM = "hideDiscount";
+
+/** Penjelasan saat opsi sembunyikan diskon tidak tersedia (dokumen belum lunas). */
+export const HIDE_DISCOUNT_UNPAID_NOTE = "Tagihan harus menunjukkan jumlah yang benar-benar terutang";
+
+/**
+ * Diskon boleh disembunyikan hanya bila server menyatakan order lunas (sisa 0).
+ * Tanpa ringkasan bayar dari server, lunas tidak bisa dipastikan -> tidak boleh.
+ */
+export function hideDiscountAllowed(o: { paidAmount?: number; outstandingAmount?: number }): boolean {
+  return o.paidAmount !== undefined && o.outstandingAmount !== undefined && o.outstandingAmount <= 0;
+}
+
+/** Permintaan sembunyikan diskon yang benar-benar berlaku untuk order ini. */
+export function effectiveHideDiscount(requested: boolean, o: { paidAmount?: number; outstandingAmount?: number }): boolean {
+  return requested && hideDiscountAllowed(o);
+}
 
 export function readHideDiscount(params: URLSearchParams): boolean {
   return params.get(HIDE_DISCOUNT_PARAM) === "1";
@@ -83,7 +101,7 @@ export function hasLineDiscount(items: DocLine[]): boolean {
   return items.some((l) => lineDiscountTotal(l) > 0);
 }
 
-/** Kolom "Harga Jual": total baris, atau harga penuhnya bila diskon disembunyikan. */
+/** Kolom "Harga Jual": total baris, atau harga penuhnya bila diskon disembunyikan (nilai berlaku). */
 export function lineSellingAmount(l: DocLine, hideDiscount: boolean): number {
   return hideDiscount ? l.lineTotal + lineDiscountTotal(l) : l.lineTotal;
 }
@@ -105,7 +123,8 @@ export interface DocTotals {
   realOutstanding: number;
 }
 
-export function documentTotals(o: DocOrder, hideDiscount: boolean): DocTotals {
+export function documentTotals(o: DocOrder, hideRequested: boolean): DocTotals {
+  const hideDiscount = effectiveHideDiscount(hideRequested, o);
   const realPaid = Math.max(0, o.paidAmount ?? 0);
   const realOutstanding = Math.max(0, o.outstandingAmount ?? o.grandTotal - realPaid);
   const printDiscount = orderPrintDiscount(o);
@@ -122,17 +141,14 @@ export function documentTotals(o: DocOrder, hideDiscount: boolean): DocTotals {
       realOutstanding,
     };
   }
-  const total = o.grandTotal + printDiscount;
-  const paid = realPaid > 0 ? realPaid + printDiscount : 0;
-  // Retur yang mengurangi tagihan tidak tampil di nota; sisa tetap mengikuti server.
-  const returnReduction = Math.max(0, o.grandTotal - realPaid - realOutstanding);
+  // Lunas (dijamin hideDiscountAllowed): total & yang dibayar naik ke harga penuh, sisa 0.
   return {
     grossSubtotal: orderPrintSubtotal(o),
     discount: null,
     tax,
-    total,
-    paid: realPaid > 0 ? paid : null,
-    outstanding: Math.max(0, total - paid - returnReduction),
+    total: o.grandTotal + printDiscount,
+    paid: realPaid > 0 ? realPaid + printDiscount : null,
+    outstanding: 0,
     realPaid,
     realOutstanding,
   };

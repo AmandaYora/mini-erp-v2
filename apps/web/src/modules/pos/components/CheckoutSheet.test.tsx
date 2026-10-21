@@ -43,6 +43,16 @@ function renderSheet(pos: never) {
   );
 }
 
+const discountedLine = {
+  key: 1,
+  productId: 1,
+  productName: "Semen",
+  qty: 1,
+  unitPrice: 100000,
+  discountPct: 0,
+  discountNominal: 10000,
+};
+
 const href = (name: RegExp | string) => screen.getByRole("link", { name }).getAttribute("href");
 
 beforeEach(() => {
@@ -59,9 +69,37 @@ describe("layar sukses POS — tombol cetak (SL-05, SL-06)", () => {
   });
 
   it("pilihan sembunyikan diskon ikut ke struk dan nota", () => {
-    renderSheet(fakePos({ hideDiscount: true }));
+    renderSheet(fakePos({ hideDiscount: true, cart: [discountedLine] }));
     expect(href("Cetak Struk")).toBe("/print/pos/7?paymentId=3&hideDiscount=1");
     expect(href("Cetak Nota")).toBe("/print/sales/7?hideDiscount=1");
+  });
+});
+
+describe("layar sukses POS — opsi sembunyikan diskon (ADR-0018 D12)", () => {
+  it("tanpa diskon: centang tidak tampil, seperti sistem lama", () => {
+    renderSheet(fakePos({ cart: [{ ...discountedLine, discountNominal: 0 }] }));
+    expect(screen.queryByLabelText(/Sembunyikan diskon/)).not.toBeInTheDocument();
+  });
+
+  it("harga member juga dihitung sebagai diskon", () => {
+    renderSheet(fakePos({ cart: [{ ...discountedLine, discountNominal: 0 }], memberSavings: 5000 }));
+    expect(screen.getByLabelText(/Sembunyikan diskon/)).toBeEnabled();
+  });
+
+  it("bayar nanti: centang nonaktif dengan alasan, tautan tetap harga riil", () => {
+    renderSheet(fakePos({ hideDiscount: true, cart: [discountedLine] }, { payLater: true, paymentId: null, dueDate: "2026-11-01" }));
+    expect(screen.getByLabelText(/Sembunyikan diskon/)).toBeDisabled();
+    expect(screen.getByText(/tagihan harus menunjukkan jumlah yang benar-benar terutang/)).toBeInTheDocument();
+    expect(href("Cetak Struk")).toBe("/print/pos/7");
+    expect(href("Cetak Tagihan")).toBe("/print/sales/7");
+  });
+
+  it("tunai kurang dari total server atau pembayaran belum tercatat: nonaktif", () => {
+    renderSheet(fakePos({ cart: [discountedLine] }, { change: -5000 }));
+    expect(screen.getByLabelText(/Sembunyikan diskon/)).toBeDisabled();
+    cleanup();
+    renderSheet(fakePos({ cart: [discountedLine] }, { paymentPending: true }));
+    expect(screen.getByLabelText(/Sembunyikan diskon/)).toBeDisabled();
   });
 
   it("Bayar Nanti: Cetak Tagihan dan tanpa Bukti Bayar", () => {
