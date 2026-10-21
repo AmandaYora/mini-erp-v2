@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -102,18 +103,43 @@ func lineKeyOf(productID, variantID int64, uom string) string {
 	return strconv.FormatInt(productID, 10) + "/" + strconv.FormatInt(variantID, 10) + "/" + strings.TrimSpace(uom)
 }
 
-// recordedValue returns a source document's own recorded movement value for
-// one position: exact historical cost, immune to positions the document
-// itself emptied (the live average then reads zero while the relieved units
-// were really worth the pre-out average). Outs record negative, ins
-// positive. Movements synced before ref tracking have no rows: ok=false and
-// the caller falls back to the live average (old behavior, unchanged).
-func recordedValue(moves map[string]infrastructure.MoveValue, productID, variantID int64) (float64, bool) {
-	mv, ok := moves[infrastructure.CostKeyOf(productID, variantID)]
+// docValues hands a source document's own recorded movement value out to its
+// lines: exact historical cost, immune to positions the document itself
+// emptied (the live average then reads zero while the relieved units were
+// really worth the pre-out average). Outs record negative, ins positive.
+//
+// The ledger groups a document's value per (product, variant), while a
+// document can carry several lines of one position (the same product from two
+// locations, or in two UOMs). Each line takes its base-quantity share,
+// cumulatively — (already taken + this qty) of the moved qty, minus what the
+// earlier lines took — so the lines add up to the recorded value exactly and
+// no line books the whole position again.
+type docValues struct {
+	moves map[string]infrastructure.MoveValue
+	taken map[string][2]float64 // qty and value already handed out per position
+}
+
+func newDocValues(moves map[string]infrastructure.MoveValue) *docValues {
+	return &docValues{moves: moves, taken: map[string][2]float64{}}
+}
+
+// take returns one line's share of the recorded value. ok is false when the
+// document has no ledger rows for the position (costing not synced yet).
+func (d *docValues) take(productID, variantID int64, qtyBase float64) (float64, bool) {
+	key := infrastructure.CostKeyOf(productID, variantID)
+	mv, ok := d.moves[key]
 	if !ok {
 		return 0, false
 	}
-	return mv.Value, true
+	t := d.taken[key]
+	moved := math.Abs(mv.Qty)
+	cum := t[0] + qtyBase
+	upTo := mv.Value
+	if qtyBase > 0 && moved > positionEpsilon && cum < moved-positionEpsilon {
+		upTo = float64(money.Round(mv.Value * cum / moved))
+	}
+	d.taken[key] = [2]float64{cum, upTo}
+	return upTo - t[1], true
 }
 
 // buildGoodsReceipt: Dr Persediaan (per produk, pro-rata PO tax base) +
@@ -241,6 +267,7 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)
 	}
+	vals := newDocValues(moves)
 	var revenue, tax int64
 	before, err := s.delivery.ConfirmedQtyBefore(ctx, so.ID, note.ID)
 	if err != nil {
@@ -268,7 +295,7 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 			// The SJ's own out-movement, recorded negative. A tracked product
 			// with no recorded cost is NEVER booked at zero: the document waits
 			// until its cost is known (F2b-11).
-			v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+			v, ok := vals.take(it.ProductID, it.VariantID, it.QtyBase)
 			if !ok {
 				return nil, "", "", apperror.Conflict("Biaya persediaan surat jalan belum tercatat — sinkronkan costing")
 			}
@@ -390,6 +417,7 @@ func (s *Service) buildSalesReturn(ctx context.Context, branchID, returnID int64
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)
 	}
+	vals := newDocValues(moves)
 	for _, it := range full.Items {
 		// Restock at the return's own recorded in-value (= pre-restock
 		// average by construction of the cost ledger). Goods the customer
@@ -397,7 +425,7 @@ func (s *Service) buildSalesReturn(ctx context.Context, branchID, returnID int64
 		var restock int64
 		tracked := soTracked[strconv.FormatInt(it.ProductID, 10)+"/"+strconv.FormatInt(it.VariantID, 10)]
 		if it.Condition != salesreturncontracts.ConditionNotReturned && tracked {
-			v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+			v, ok := vals.take(it.ProductID, it.VariantID, it.QtyBase)
 			if !ok {
 				return nil, "", "", apperror.Conflict("Biaya persediaan retur belum tercatat — sinkronkan costing")
 			}
@@ -472,6 +500,7 @@ func (s *Service) buildPurchaseReturn(ctx context.Context, branchID, returnID in
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)
 	}
+	vals := newDocValues(moves)
 	var relieved int64
 	for _, it := range full.Items {
 		if !trackedPO[strconv.FormatInt(it.ProductID, 10)+"/"+strconv.FormatInt(it.VariantID, 10)] {
@@ -483,7 +512,7 @@ func (s *Service) buildPurchaseReturn(ctx context.Context, branchID, returnID in
 		}
 		// Relieve at the return's own recorded out-value (stored negative).
 		var value int64
-		v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+		v, ok := vals.take(it.ProductID, it.VariantID, it.QtyBase)
 		if !ok {
 			return nil, "", "", apperror.Conflict("Biaya persediaan retur belum tercatat — sinkronkan costing")
 		}
@@ -623,6 +652,7 @@ func (s *Service) buildReplacementDelivery(ctx context.Context, branchID int64, 
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)
 	}
+	vals := newDocValues(moves)
 	var revenue, tax int64
 	legs := make([]rawLeg, 0, len(note.Items)*3+2)
 	for _, it := range note.Items {
@@ -635,7 +665,7 @@ func (s *Service) buildReplacementDelivery(ctx context.Context, branchID int64, 
 		revenue += base
 		tax += lineTax
 		legs = append(legs, rawLeg{key: "revenue", credit: base, productID: it.ProductID, variantID: it.VariantID, note: "Barang pengganti"})
-		v, ok := recordedValue(moves, it.ProductID, it.VariantID)
+		v, ok := vals.take(it.ProductID, it.VariantID, it.QtyBase)
 		if !ok {
 			return nil, "", "", apperror.Conflict("Biaya persediaan surat jalan pengganti belum tercatat — sinkronkan costing")
 		}

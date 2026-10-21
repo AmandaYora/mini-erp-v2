@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	branchapp "mini-erp/internal/modules/branch/application"
+	deliveryapp "mini-erp/internal/modules/delivery/application"
 	financeapp "mini-erp/internal/modules/finance/application"
+	salesapp "mini-erp/internal/modules/sales/application"
 	stockapp "mini-erp/internal/modules/stock/application"
 	"mini-erp/internal/shared/apperror"
 )
@@ -298,5 +300,54 @@ func TestReconFailsOnUnexplainedGapDespitePendingDocs(t *testing.T) {
 	}
 	if c := checkOf(t, ready, "inventory_recon"); c.Status != financeapp.CheckFailed || c.Count != 500 {
 		t.Fatalf("inventory_recon = %+v, want failed with 500 unexplained", c)
+	}
+}
+
+// One shipment of one product drawn from two locations books its COGS once:
+// each line takes its share of the document's recorded value, and the lines
+// add up to exactly what the cost ledger relieved (no double booking).
+func TestMultiLocationShipmentBooksCostOnce(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	clearFixtureStock(t)
+	p := productWith(t, "TWOLOC", 0, 1)
+	vid := p.Variants[0].ID
+	shelf, err := testMods.stock.Service().CreateLocation(ctx(), 0, fx.branchID, stockapp.LocationInput{Code: "RAK2", Name: "Rak 2"})
+	if err != nil {
+		t.Fatalf("location: %v", err)
+	}
+	seedInCost(t, fx, p.ID, vid, fx.locationID, 3, 1000)
+	seedInCost(t, fx, p.ID, vid, shelf.ID, 3, 1000)
+	so, err := testMods.sales.Service().CreateOrder(ctx(), 0, fx.branchID, salesapp.OrderInput{
+		PartyID: fx.customerID, Channel: "regular", PaymentTerms: "cod", TaxType: "none",
+		Items: []salesapp.LineInput{{ProductID: p.ID, VariantID: vid, UOM: "pcs", Qty: 5}},
+	})
+	if err != nil {
+		t.Fatalf("SO: %v", err)
+	}
+	if _, err := testMods.sales.Service().ConfirmOrder(ctx(), 0, fx.branchID, so.ID); err != nil {
+		t.Fatalf("confirm SO: %v", err)
+	}
+	n, err := testMods.delivery.Service().Create(ctx(), 0, fx.branchID, so.ID, "2026-09-10", "", deliveryapp.DocInput{},
+		[]deliveryapp.LineInput{
+			{ProductID: p.ID, VariantID: vid, LocationID: fx.locationID, UOM: "pcs", Qty: 3},
+			{ProductID: p.ID, VariantID: vid, LocationID: shelf.ID, UOM: "pcs", Qty: 2},
+		})
+	if err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	if _, err := testMods.delivery.Service().Confirm(ctx(), 0, fx.branchID, n.ID, deliveryapp.ConfirmInput{Settlement: codSettle}); err != nil {
+		t.Fatalf("confirm shipment: %v", err)
+	}
+	legs := postedLegs(t, "delivery", n.ID)
+	if legs["5000"][0] != 5000 || legs["1200"][1] != 5000 {
+		t.Fatalf("legs = %v, want COGS/inventory 5000 once (not 5000 per line)", legs)
+	}
+	rec, err := testMods.finance.Service().ReconcileInventory(ctx(), fx.branchID)
+	if err != nil {
+		t.Fatalf("recon: %v", err)
+	}
+	if !rec.Consistent || rec.Unexplained != 0 {
+		t.Fatalf("recon = %+v, want exact", rec)
 	}
 }
