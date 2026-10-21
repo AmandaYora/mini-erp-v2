@@ -1,0 +1,10 @@
+ALTER TABLE `delivery_notes`
+  DROP KEY `ix_delivery_notes_direct_open`,
+  DROP COLUMN `linked_by`,
+  DROP COLUMN `linked_at`,
+  DROP COLUMN `ship_to_address`,
+  DROP COLUMN `ship_to_phone`,
+  DROP COLUMN `ship_to_recipient`,
+  DROP COLUMN `ship_to_label`,
+  DROP COLUMN `party_id`,
+  DROP COLUMN `origin`;

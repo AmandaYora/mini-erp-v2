@@ -25,6 +25,16 @@ vi.mock("@/modules/finance/services/finance.service", () => ({
     post: vi.fn(),
   },
 }));
+const toastDanger = vi.fn();
+vi.mock("@/shared/stores/toast.store", () => ({
+  toast: {
+    success: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+    fromServer: vi.fn(),
+    danger: (...a: unknown[]) => toastDanger(...a),
+  },
+}));
 
 import PostingPage from "@/modules/finance/pages/PostingPage";
 
@@ -66,7 +76,7 @@ const overview = {
 };
 
 beforeEach(() => {
-  for (const m of [postingSources, orphans, cutover, dailyOverview, ignorePosting, restorePosting, closeDay]) m.mockReset();
+  for (const m of [postingSources, orphans, cutover, dailyOverview, ignorePosting, restorePosting, closeDay, toastDanger]) m.mockReset();
   postingSources.mockResolvedValue(queue);
   orphans.mockResolvedValue([]);
   cutover.mockResolvedValue({});
@@ -122,9 +132,56 @@ describe("PostingPage: antrian", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Pulihkan/ }));
     await waitFor(() => expect(restorePosting).toHaveBeenCalledWith("goods_receipt", 8));
   });
+
+  it("SJ Langsung tanpa order berlencana 'Menunggu order' dan tidak punya tombol Abaikan (ADR-0022)", async () => {
+    postingSources.mockResolvedValue([
+      ...queue,
+      {
+        docType: "delivery", docId: 21, number: "SJ-0021", date: "2026-10-13", periodClosed: false,
+        awaitingOrder: true, amount: 0, partyName: "Toko Cici", summary: "Surat jalan langsung — menunggu order",
+      },
+    ]);
+    renderPage();
+    expect(await screen.findByText("Toko Cici")).toBeInTheDocument();
+    expect(screen.getByText("Menunggu order")).toBeInTheDocument();
+    // Dua baris biasa (SJ-0011, PAY-0005) punya Abaikan; baris SJ Langsung tidak.
+    expect(screen.getAllByRole("button", { name: /Abaikan/ })).toHaveLength(2);
+  });
+
+  it("menampilkan pesan server apa adanya bila pengabaian ditolak", async () => {
+    const refusal = "Surat jalan langsung yang belum diorder tidak bisa diabaikan: buat ordernya di menu Order Jual";
+    ignorePosting.mockRejectedValue({ status: 409, message: refusal });
+    renderPage();
+    await screen.findByText("Toko Budi");
+    fireEvent.click(screen.getAllByRole("button", { name: /Abaikan/ })[0]);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/Alasan/), { target: { value: "Coba abaikan" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Abaikan" }));
+    await waitFor(() => expect(ignorePosting).toHaveBeenCalled());
+    await waitFor(() => expect(toastDanger).toHaveBeenCalledWith("Gagal mengabaikan dokumen", refusal));
+  });
 });
 
 describe("PostingPage: ikhtisar tutup hari (FN-02)", () => {
+  it("kelompok tugas 'awaiting_order' memakai label dan petunjuk dari server (ADR-0022)", async () => {
+    dailyOverview.mockResolvedValue({
+      ...overview,
+      tasks: [
+        {
+          code: "awaiting_order",
+          label: "Surat jalan langsung menunggu order",
+          hint: "Admin penjualan membuat order dari surat jalan di menu Order Jual",
+          count: 1,
+          items: [{ docType: "delivery", docId: 21, number: "SJ-0021", date: "2026-10-12", amount: 0, partyName: "Toko Cici", message: "Menunggu order" }],
+        },
+      ],
+    });
+    renderPage("/?tab=tutup-hari");
+    expect(await screen.findByText("Surat jalan langsung menunggu order")).toBeInTheDocument();
+    expect(screen.getByText("Admin penjualan membuat order dari surat jalan di menu Order Jual")).toBeInTheDocument();
+    expect(screen.getByText("SJ-0021")).toBeInTheDocument();
+  });
+
   it("menampilkan status hari, angka, tugas butuh data pemilik, dan backlog", async () => {
     renderPage("/?tab=tutup-hari");
     expect(await screen.findByText("Selesai dengan catatan")).toBeInTheDocument();

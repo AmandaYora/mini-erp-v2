@@ -32,7 +32,7 @@ LIMIT ?;
 SELECT id, number, party_id, order_date, due_date, payment_terms, grand_total,
        CAST(channel = 'pos' AS SIGNED) AS orphan_pos
 FROM sales_orders
-WHERE branch_id = sqlc.arg(branch_id) AND status = 'confirmed'
+WHERE branch_id = sqlc.arg(branch_id) AND status = 'confirmed' AND origin <> 'delivery'
   AND (channel <> 'pos' OR updated_at < sqlc.arg(orphan_before))
 ORDER BY id ASC
 LIMIT ?;
@@ -45,7 +45,7 @@ LIMIT ?;
 SELECT id, number, party_id, order_date, due_date, payment_terms, grand_total,
        CAST(channel = 'pos' AS SIGNED) AS orphan_pos
 FROM sales_orders
-WHERE branch_id = sqlc.arg(branch_id) AND status = 'confirmed'
+WHERE branch_id = sqlc.arg(branch_id) AND status = 'confirmed' AND origin <> 'delivery'
   AND (channel <> 'pos' OR updated_at < sqlc.arg(orphan_before))
   AND (sqlc.narg(from_at) IS NULL OR order_date >= sqlc.narg(from_at))
   AND (sqlc.narg(to_before) IS NULL OR order_date < sqlc.narg(to_before))

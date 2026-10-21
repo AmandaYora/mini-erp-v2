@@ -11,12 +11,16 @@ import { DELIVERY_STATUSES } from "@/modules/delivery/types";
 import type { DeliveryFilterParams } from "@/modules/delivery/services/delivery.service";
 
 // Filter daftar Pengiriman (GET /deliveries). State hidup di URL.
+// `unordered` disimpan sebagai "" | "1" (param URL selalu string) dan
+// diterjemahkan ke boolean di toDeliveryFilterParams.
 export const deliveryListFilterSchema = z.object({
   search: searchFilter,
   status: csvOf(DELIVERY_STATUSES),
   salesOrderId: idFilter,
   salesReturnId: idFilter,
   documentKind: enumOrEmpty(["order", "replacement"] as const),
+  origin: enumOrEmpty(["order", "direct"] as const),
+  unordered: enumOrEmpty(["1"] as const),
   from: dateFilter,
   to: dateFilter,
   page: pageFilter,
@@ -30,6 +34,8 @@ export const DELIVERY_LIST_DEFAULTS: DeliveryListFilter = {
   salesOrderId: 0,
   salesReturnId: 0,
   documentKind: "",
+  origin: "",
+  unordered: "",
   from: "",
   to: "",
   page: 1,
@@ -42,6 +48,8 @@ export function toDeliveryFilterParams(f: DeliveryListFilter): DeliveryFilterPar
     salesOrderId: f.salesOrderId,
     salesReturnId: f.salesReturnId,
     documentKind: f.documentKind,
+    origin: f.origin,
+    unordered: f.unordered === "1",
     from: f.from,
     to: f.to,
   };

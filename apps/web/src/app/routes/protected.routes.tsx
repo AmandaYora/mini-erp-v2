@@ -37,6 +37,7 @@ const EXTRA_ROUTES: { path: string; perm: string; page: keyof typeof MODULE_PAGE
   { path: "goods-receipts/new", perm: "goodsreceipt.create", page: "/goods-receipts/new" },
   { path: "goods-receipts/:id", perm: "goodsreceipt.view", page: "/goods-receipts/:id" },
   { path: "deliveries/new", perm: "delivery.create", page: "/deliveries/new" },
+  { path: "deliveries/new-direct", perm: "delivery.create_direct", page: "/deliveries/new-direct" },
   { path: "deliveries/:id", perm: "delivery.view", page: "/deliveries/:id" },
   { path: "payments/:id", perm: "payment.view", page: "/payments/:id" },
   { path: "sales-returns/new", perm: "salesreturn.create", page: "/sales-returns/new" },

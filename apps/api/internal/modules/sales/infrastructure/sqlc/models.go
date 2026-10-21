@@ -49,6 +49,7 @@ type SalesOrder struct {
 	ShortCloseReason sql.NullString
 	ShortClosedAt    sql.NullTime
 	ShortClosedBy    sql.NullInt64
+	Origin           string
 }
 
 type SalesOrderItem struct {

@@ -68,6 +68,7 @@ Jenis dokumen di `docs/` (referensi, status, riwayat) dan status tiap rencana: [
 | [0019](decisions/ADR-0019-deploy-elcodelabs-ghcr.md) | Deploy produksi ke VPS elcodelabs: image dibangun CI ke GHCR, server hanya pull & run (`minierp`, port 8084) |
 | [0020](decisions/ADR-0020-invarian-akuntansi-persediaan.md) | Invarian akuntansi persediaan: tiap mutasi dijurnal sebesar nilai ledger atau netral; kaki cermin, rupiah bulat, akun kendali, rekonsiliasi menjelaskan selisih |
 | [0021](decisions/ADR-0021-aturan-integritas-pra-migrasi.md) | Aturan integritas pra-migrasi: tanggal ≤ hari ini, awal pembukuan, pihak wajib di akun kendali, kunci biaya lintas proses & batas cutover `costrebuild`, kunci pembayaran, offset retur milik retur |
+| [0022](decisions/ADR-0022-sj-langsung.md) | SJ Langsung: jalur tambahan surat jalan dulu (tanpa order), order dibuat dari SJ dan langsung selesai; jurnal menunggu order (tidak bisa diabaikan, memblokir tutup bulan); keputusan K1–K7 (default dipakai, menunggu konfirmasi pemilik/akuntan) |
 | [0023](decisions/ADR-0023-mekanisme-koreksi-lewat-web.md) | Mekanisme koreksi salah input lewat web: setiap koreksi beralasan, tersimpan di dokumen, teraudit; koreksi pembayaran, tutup sisa order, koreksi harga beli, hitung ulang HPP, revaluasi harga modal, batal SJ pengganti, rekonsiliasi buku vs dokumen per pihak |
 
 ADR baru: nomor berikutnya, format `## Status / Context / Decision / Consequences`, lalu tambahkan

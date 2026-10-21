@@ -58,7 +58,7 @@ sistem lama dengan batas yang eksplisit. Struktur folder tiap modul mengikuti
 | `purchasing` | Order pembelian ke supplier | `PurchaseOrderClient.GetByID` | 08 |
 | `sales` | Order penjualan ke customer (kanal reguler & POS) | `SalesOrderClient.GetByID` | 09, 15 (kanal) |
 | `goodsreceipt` | Penerimaan barang atas PO | `GoodsReceiptClient.GetByID` | 10 |
-| `delivery` | Pengiriman atas SO, surat jalan, bukti kirim | `DeliveryClient.GetByID` | 11 |
+| `delivery` | Pengiriman atas SO, surat jalan, bukti kirim; SJ Langsung tanpa order (ADR-0022) | `DeliveryClient.GetByID`, `GetByIDs`, `ListOpenDirect`, `OpenDirectSummary`, `LinkDirect` | 11 |
 | `payment` | Pembayaran & alokasi, saldo/ledger pihak | `PaymentClient.GetByID`, `PaymentClient.GetPartyBalance` | 14 |
 | `salesreturn` | Retur penjualan atas SO/SJ | `SalesReturnClient.GetByID` | 12 |
 | `purchasereturn` | Retur pembelian atas PO/penerimaan | `PurchaseReturnClient.GetByID` | 13 |
@@ -87,7 +87,7 @@ Diturunkan dari [legacy-reference/module-dependency-map.md §4, §9](legacy-refe
 | L2 — Master Data | `product`, `party` | L1. `party` butuh `product` (member pricing menghitung dari harga produk) |
 | L3 — Inventaris | `stock` | L1 + `product` |
 | L4 — Transaksi Inti | `purchasing`, `sales` | L1 + L2 + L3 |
-| L5 — Turunan Transaksi | `goodsreceipt` (butuh `purchasing`), `delivery` (butuh `sales`+`stock`), `payment` (butuh `purchasing`+`sales`) | L4. Ketiganya bisa paralel |
+| L5 — Turunan Transaksi | `goodsreceipt` (butuh `purchasing`), `delivery` (butuh `sales`+`stock`+`party`), `payment` (butuh `purchasing`+`sales`) | L4. Ketiganya bisa paralel |
 | L6 — Retur | `salesreturn` (butuh `sales`+`delivery`), `purchasereturn` (butuh `purchasing`+`goodsreceipt`) | L5 |
 | L7 — Keuangan | `finance` | **Semua modul di atas** — konsumen data terbesar (§7). Selalu paling akhir dari sisi transaksional |
 | L8 — Observabilitas | `dashboard`, `reporting`, UI `audit` | L4 (dashboard/reporting cukup baca order+stok) |
@@ -146,6 +146,7 @@ keputusan modul tunggal.
 | 10 | `AuditClient.Log` dipanggil di setiap operasi tulis dengan `action_key` `snake_case` `resource.action` | `audit` | Semua modul |
 | 11 | Setiap produk selalu punya minimal satu varian (varian default tersembunyi bila produk tidak dikonfigurasi bervarian) | `product` | `stock`, `sales` (kanal POS) |
 | 12 | Momen stok berkurang untuk penjualan: saat surat jalan **dikonfirmasi** (bukan saat SJ draf dibuat, bukan saat SO dikonfirmasi); SJ draf hanya memberi peringatan ketersediaan, tanpa reservasi (ADR-0018 D2) | `delivery` | `stock`, `finance` |
+| 13 | SJ Langsung (ADR-0022): SJ `origin='direct'` boleh hidup tanpa SO (`sales_order_id = 0`, pelanggan di SJ, hanya barang berstok). Jurnalnya menunggu order; `sales` membangun SO `origin='delivery'` dari SJ, menautkannya lewat `DeliveryClient.LinkDirect` (Σ qty dasar SJ = baris stok SO, satu transaksi atau tidak sama sekali) dan **sales yang menyelesaikan** order itu. SJ yang menunggu order tidak bisa diabaikan dari antrean posting dan memblokir tutup bulan (`direct_unordered`) | `delivery`, `sales` | `finance`, `salesreturn` |
 
 ## 8. Modul Paling Berisiko Diubah
 

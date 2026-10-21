@@ -29,6 +29,36 @@
 //   recipientSignatureMissingReason} — body kosong tetap valid; bila status
 //   diisi maka nama wajib, bila missing maka alasan wajib (service.go:
 //   validateRecipient).
+//
+// Hasil verifikasi SJ Langsung / ADR-0022 (JANGAN ditebak ulang):
+// - noteView juga membawa origin ("order" | "direct"), partyId, partyName
+//   (terisi untuk SJ Langsung; "" untuk SJ order), shipToLabel,
+//   shipToRecipient, shipToPhone, shipToAddress, linkedAt ("" sampai SJ
+//   Langsung mendapat order), linkedBy (handler.go: noteView).
+// - SJ Langsung yang belum diorder: salesOrderId = 0 dan orderNumber = "".
+//   Setelah tertaut keduanya terisi dan SJ berperilaku seperti SJ order.
+// - Filter daftar tambahan: origin=order|direct dan unordered=1 (SJ Langsung
+//   tanpa order, semua status kecuali cancelled).
+// - POST /deliveries/direct (izin delivery.create_direct) {partyId wajib,
+//   deliveryDate?, shipToAddressId?, shipToLabel?, shipToRecipient?,
+//   shipToPhone?, shipToAddress?, driverName?, vehiclePlate?,
+//   warehouseStaffName?, dropLocationNote?, notes?, clientRef?,
+//   items[{productId, variantId, locationId?, uom, qty}]} → 201 noteView +
+//   warnings?[] + replayed?. Aturan alamat kirim sama dengan form order:
+//   shipToAddressId memilih alamat tersimpan, else isian ad-hoc (alamat wajib
+//   bila ada detail), else tanpa alamat. Hanya barang berstok yang diterima
+//   (server menolak jasa/non-stok dengan pesan). Tanpa harga.
+// - GET /deliveries/open-direct?partyId=&limit= (izin delivery.view) →
+//   {items: noteView[] (SJ Langsung terkonfirmasi tanpa order, tertua dulu),
+//   count, oldestDate "YYYY-MM-DD"|""}; limit=0 → hanya count/oldestDate.
+// - Confirm SJ Langsung tanpa order: body sama, tetapi `settlement` TIDAK
+//   boleh dikirim (400). Cancel {reason}: SJ Langsung tanpa order boleh
+//   dibatalkan saat draft DAN confirmed (stok dibalik); setelah punya order
+//   berlaku aturan lama (confirmed → via retur).
+// - work-queue waitingReturn[] membawa origin; SJ "direct" tanpa order punya
+//   salesOrderId 0, orderNumber "" tetapi partyName terisi.
+
+export type DeliveryOrigin = "order" | "direct";
 
 export interface DeliveryItem {
   id: number;
@@ -66,6 +96,18 @@ export interface DeliveryNote {
   /** "order" (SJ order) | "replacement" (barang pengganti retur). */
   documentKind?: string;
   salesReturnId?: number;
+  /** "order" (dibuat dari order jual) | "direct" (SJ Langsung, ADR-0022). */
+  origin?: DeliveryOrigin;
+  /** Pelanggan SJ Langsung (snapshot); 0/"" untuk SJ order. */
+  partyId?: number;
+  partyName?: string;
+  shipToLabel?: string;
+  shipToRecipient?: string;
+  shipToPhone?: string;
+  shipToAddress?: string;
+  /** Waktu SJ Langsung mendapat order ("" selama belum diorder). */
+  linkedAt?: string;
+  linkedBy?: number;
   /** Peringatan lunak hanya pada respons create (DL-04): [0] = stok belum ditahan, sisanya per posisi. */
   warnings?: string[];
   items: DeliveryItem[];
@@ -101,6 +143,39 @@ export interface DeliveryPayload {
   /** UUID per percobaan simpan: ulang dengan clientRef sama = replay. */
   clientRef?: string;
   items: DeliveryLinePayload[];
+}
+
+/** Body POST /deliveries/direct (handler.go: CreateDirect) — tanpa harga. */
+export interface DirectDeliveryPayload {
+  partyId: number;
+  deliveryDate?: string;
+  /** Alamat tersimpan pelanggan; dihilangkan = pakai isian ad-hoc (bila ada). */
+  shipToAddressId?: number;
+  shipToLabel?: string;
+  shipToRecipient?: string;
+  shipToPhone?: string;
+  shipToAddress?: string;
+  driverName?: string;
+  vehiclePlate?: string;
+  warehouseStaffName?: string;
+  dropLocationNote?: string;
+  notes?: string;
+  /** UUID per form dibuka: ulang dengan clientRef sama = replay. */
+  clientRef?: string;
+  items: DeliveryLinePayload[];
+}
+
+/** GET /deliveries/open-direct — SJ Langsung terkonfirmasi yang belum diorder. */
+export interface OpenDirectResult {
+  items: DeliveryNote[];
+  count: number;
+  /** "YYYY-MM-DD" SJ tertua, "" bila tidak ada. */
+  oldestDate: string;
+}
+
+/** SJ Langsung yang belum mendapat order (salesOrderId masih 0). */
+export function isUnorderedDirect(n: Pick<DeliveryNote, "origin" | "salesOrderId">): boolean {
+  return n.origin === "direct" && n.salesOrderId === 0;
 }
 
 export type SettlementMode = "pay_now" | "switch_to_net";
@@ -224,6 +299,8 @@ export interface WaitingNote {
   vehiclePlate: string;
   /** Scan/foto SJ bertanda tangan sudah diunggah (DL-01). */
   hasSignedDocument: boolean;
+  /** "direct" = SJ Langsung (tanpa order: salesOrderId 0, orderNumber ""). */
+  origin?: DeliveryOrigin;
 }
 
 export interface WorkQueue {

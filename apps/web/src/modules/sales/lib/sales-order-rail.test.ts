@@ -72,4 +72,13 @@ describe("rel dokumen order jual", () => {
       { label: "SJ-0001", kind: "Surat jalan", to: "/deliveries/1", status: { label: "Dibatalkan", tone: "muted" } },
     ]);
   });
+
+  it("order dari SJ Langsung: rel mulai dari Dikirim tanpa langkah Draf", () => {
+    const rail = salesOrderRail(input({ origin: "delivery", status: "confirmed" }));
+    expect(rail.steps.map((s) => s.key)).toEqual(["shipped", "confirmed", "paid", "done"]);
+    // Barang sudah keluar sebelum order: minimal Dikirim walau belum ada SJ di riwayat.
+    expect(rail.current).toBe("shipped");
+    expect(salesOrderRailCurrent(input({ origin: "delivery", status: "completed" }))).toBe("done");
+    expect(salesOrderRailCurrent(input({ origin: "delivery", status: "cancelled" }))).toBe("shipped");
+  });
 });

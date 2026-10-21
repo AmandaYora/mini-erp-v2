@@ -8,6 +8,7 @@ const periods = vi.fn();
 const taxPeriods = vi.fn();
 const reopenPeriod = vi.fn();
 const reopenTaxPeriod = vi.fn();
+const readiness = vi.fn();
 vi.mock("@/modules/finance/services/finance.service", () => ({
   financeService: {
     periods: (...a: unknown[]) => periods(...a),
@@ -17,7 +18,7 @@ vi.mock("@/modules/finance/services/finance.service", () => ({
     closePeriod: vi.fn(),
     closeTaxPeriod: vi.fn(),
     safeClose: vi.fn(),
-    readiness: vi.fn(),
+    readiness: (...a: unknown[]) => readiness(...a),
   },
 }));
 
@@ -26,7 +27,7 @@ import PeriodsPage from "@/modules/finance/pages/PeriodsPage";
 const year = Number(todayWIB().slice(0, 4));
 
 beforeEach(() => {
-  for (const m of [periods, taxPeriods, reopenPeriod, reopenTaxPeriod]) m.mockReset();
+  for (const m of [periods, taxPeriods, reopenPeriod, reopenTaxPeriod, readiness]) m.mockReset();
   periods.mockResolvedValue([{ year, month: 3, status: "closed" }]);
   taxPeriods.mockResolvedValue([{ year, month: 3, status: "closed" }]);
   reopenPeriod.mockResolvedValue({ message: "Periode dibuka", data: null });
@@ -68,5 +69,23 @@ describe("PeriodsPage: buka ulang periode butuh alasan (FN-05)", () => {
     fireEvent.change(await screen.findByLabelText(/Alasan/), { target: { value: "Salah snapshot" } });
     fireEvent.click(screen.getByRole("button", { name: "Buka ulang" }));
     await waitFor(() => expect(reopenTaxPeriod).toHaveBeenCalledWith({ year, month: 3, reason: "Salah snapshot" }));
+  });
+});
+
+describe("PeriodsPage: daftar periksa kesiapan tutup periode", () => {
+  it("merender gerbang 'direct_unordered' dengan label dan keterangan dari server (ADR-0022)", async () => {
+    readiness.mockResolvedValue({
+      year, month: 9, closed: false, unposted: 2, unbalanced: 0, missingTaxInvoice: 0, missingSupplierInvoice: 0,
+      latePeriodDocs: 0, orphans: 0, ready: false,
+      blockers: ["2 surat jalan langsung belum diorder"], warnings: [],
+      checks: [
+        { key: "unposted", label: "Dokumen sudah diposting", status: "failed", detail: "2 dokumen belum diposting", count: 2 },
+        { key: "direct_unordered", label: "Surat jalan langsung sudah diorder", status: "failed", detail: "2 surat jalan langsung belum diorder (tertua 2026-09-03)", count: 2 },
+      ],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Cek dan tutup aman" }));
+    expect(await screen.findByText("Surat jalan langsung sudah diorder")).toBeInTheDocument();
+    expect(screen.getByText("2 surat jalan langsung belum diorder (tertua 2026-09-03)")).toBeInTheDocument();
   });
 });

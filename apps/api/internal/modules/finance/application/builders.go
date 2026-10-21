@@ -259,6 +259,13 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 	if note.DocumentKind == deliverycontracts.DocumentKindReplacement {
 		return s.buildReplacementDelivery(ctx, branchID, note)
 	}
+	// SJ Langsung (ADR-0022): the goods left before any price was agreed. The
+	// journal waits for the order the sales module builds from the note — it
+	// is the order that carries revenue, tax and the receivable. The message
+	// is what the daily-close overview classifies as "menunggu order".
+	if note.Origin == deliverycontracts.OriginDirect && note.SalesOrderID == 0 {
+		return nil, "", "", apperror.Conflict("Surat jalan langsung " + note.Number + " menunggu order: buat ordernya dari surat jalan di menu Order Jual")
+	}
 	so, err := s.sales.GetByID(ctx, note.SalesOrderID)
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)

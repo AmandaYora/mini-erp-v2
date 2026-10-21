@@ -25,6 +25,37 @@ func (q *Queries) ActiveNoteCount(ctx context.Context, salesOrderID int64) (int6
 	return total, err
 }
 
+const cancelDirectNote = `-- name: CancelDirectNote :execresult
+UPDATE delivery_notes
+SET status = 'cancelled',
+    cancel_reason = ?,
+    cancelled_at = ?, cancelled_by = ?,
+    updated_at = ?, updated_by = ?
+WHERE id = ? AND origin = 'direct' AND sales_order_id = 0
+  AND status IN ('draft', 'confirmed')
+`
+
+type CancelDirectNoteParams struct {
+	Reason  sql.NullString
+	Stamp   sql.NullTime
+	ActorID sql.NullInt64
+	Now     time.Time
+	ID      int64
+}
+
+// CAS: voids a SJ Langsung that has no order yet (draft OR confirmed — the
+// stock is reversed by the caller first) and records why, when and by whom.
+func (q *Queries) CancelDirectNote(ctx context.Context, arg CancelDirectNoteParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, cancelDirectNote,
+		arg.Reason,
+		arg.Stamp,
+		arg.ActorID,
+		arg.Now,
+		arg.ActorID,
+		arg.ID,
+	)
+}
+
 const cancelNote = `-- name: CancelNote :execresult
 UPDATE delivery_notes
 SET status = 'cancelled',
@@ -319,7 +350,9 @@ SELECT id, number, branch_id, sales_order_id, delivery_date,
   recipient_signature_status, recipient_signature_missing_reason,
   drop_location_note, dispatched_at, dispatched_by, confirmed_at,
   confirmed_by, document_kind, sales_return_id, status, notes,
-  cancel_reason, cancelled_at, cancelled_by
+  cancel_reason, cancelled_at, cancelled_by,
+  origin, party_id, ship_to_label, ship_to_recipient, ship_to_phone, ship_to_address,
+  linked_at, linked_by
 FROM delivery_notes WHERE id = ?
 `
 
@@ -347,6 +380,14 @@ type GetNoteRow struct {
 	CancelReason                    sql.NullString
 	CancelledAt                     sql.NullTime
 	CancelledBy                     sql.NullInt64
+	Origin                          string
+	PartyID                         sql.NullInt64
+	ShipToLabel                     sql.NullString
+	ShipToRecipient                 sql.NullString
+	ShipToPhone                     sql.NullString
+	ShipToAddress                   sql.NullString
+	LinkedAt                        sql.NullTime
+	LinkedBy                        sql.NullInt64
 }
 
 // Delivery note header + lines (F8-18). All queries touch only this
@@ -355,6 +396,10 @@ type GetNoteRow struct {
 // The dynamic list/count/waiting filters live in listfilter.go (raw-sql
 // allow-list). The client_ref column is never projected (as before: reads
 // resolve it via NoteIDByClientRef only).
+//
+// Every header projection below lists the SAME 31 columns in the SAME order
+// (noteColumns in listfilter.go mirrors it), so the generated row types convert
+// to GetNoteRow and one mapper (toNote) serves them all.
 func (q *Queries) GetNote(ctx context.Context, id int64) (GetNoteRow, error) {
 	row := q.db.QueryRowContext(ctx, getNote, id)
 	var i GetNoteRow
@@ -382,6 +427,14 @@ func (q *Queries) GetNote(ctx context.Context, id int64) (GetNoteRow, error) {
 		&i.CancelReason,
 		&i.CancelledAt,
 		&i.CancelledBy,
+		&i.Origin,
+		&i.PartyID,
+		&i.ShipToLabel,
+		&i.ShipToRecipient,
+		&i.ShipToPhone,
+		&i.ShipToAddress,
+		&i.LinkedAt,
+		&i.LinkedBy,
 	)
 	return i, err
 }
@@ -391,8 +444,9 @@ INSERT INTO delivery_notes
   (number, branch_id, sales_order_id, delivery_date, driver_name,
    vehicle_plate, warehouse_staff_name, drop_location_note,
    document_kind, sales_return_id,
+   origin, party_id, ship_to_label, ship_to_recipient, ship_to_phone, ship_to_address,
    status, notes, client_ref, created_by, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
 `
 
 type InsertNoteParams struct {
@@ -406,6 +460,12 @@ type InsertNoteParams struct {
 	DropLocationNote   sql.NullString
 	DocumentKind       string
 	SalesReturnID      sql.NullInt64
+	Origin             string
+	PartyID            sql.NullInt64
+	ShipToLabel        sql.NullString
+	ShipToRecipient    sql.NullString
+	ShipToPhone        sql.NullString
+	ShipToAddress      sql.NullString
 	Notes              sql.NullString
 	ClientRef          sql.NullString
 	CreatedBy          sql.NullInt64
@@ -424,6 +484,12 @@ func (q *Queries) InsertNote(ctx context.Context, arg InsertNoteParams) (sql.Res
 		arg.DropLocationNote,
 		arg.DocumentKind,
 		arg.SalesReturnID,
+		arg.Origin,
+		arg.PartyID,
+		arg.ShipToLabel,
+		arg.ShipToRecipient,
+		arg.ShipToPhone,
+		arg.ShipToAddress,
 		arg.Notes,
 		arg.ClientRef,
 		arg.CreatedBy,
@@ -464,13 +530,46 @@ func (q *Queries) InsertNoteItem(ctx context.Context, arg InsertNoteItemParams) 
 	return err
 }
 
+const linkDirectNote = `-- name: LinkDirectNote :execresult
+UPDATE delivery_notes
+SET sales_order_id = ?,
+    linked_at = ?, linked_by = ?,
+    updated_at = ?, updated_by = ?
+WHERE id = ? AND origin = 'direct' AND document_kind = 'order'
+  AND status = 'confirmed' AND sales_order_id = 0
+`
+
+type LinkDirectNoteParams struct {
+	SalesOrderID int64
+	Stamp        sql.NullTime
+	ActorID      sql.NullInt64
+	Now          time.Time
+	ID           int64
+}
+
+// CAS: attaches a confirmed, still unordered SJ Langsung to its order and
+// stamps when/by whom. Zero rows = the note moved meanwhile (already linked,
+// cancelled, or never a direct note).
+func (q *Queries) LinkDirectNote(ctx context.Context, arg LinkDirectNoteParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, linkDirectNote,
+		arg.SalesOrderID,
+		arg.Stamp,
+		arg.ActorID,
+		arg.Now,
+		arg.ActorID,
+		arg.ID,
+	)
+}
+
 const listConfirmedAfter = `-- name: ListConfirmedAfter :many
 SELECT id, number, branch_id, sales_order_id, delivery_date,
   driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
   recipient_signature_status, recipient_signature_missing_reason,
   drop_location_note, dispatched_at, dispatched_by, confirmed_at,
   confirmed_by, document_kind, sales_return_id, status, notes,
-  cancel_reason, cancelled_at, cancelled_by
+  cancel_reason, cancelled_at, cancelled_by,
+  origin, party_id, ship_to_label, ship_to_recipient, ship_to_phone, ship_to_address,
+  linked_at, linked_by
 FROM delivery_notes
 WHERE branch_id = ? AND status = 'confirmed' AND id > ? ORDER BY id ASC LIMIT ?
 `
@@ -505,6 +604,14 @@ type ListConfirmedAfterRow struct {
 	CancelReason                    sql.NullString
 	CancelledAt                     sql.NullTime
 	CancelledBy                     sql.NullInt64
+	Origin                          string
+	PartyID                         sql.NullInt64
+	ShipToLabel                     sql.NullString
+	ShipToRecipient                 sql.NullString
+	ShipToPhone                     sql.NullString
+	ShipToAddress                   sql.NullString
+	LinkedAt                        sql.NullTime
+	LinkedBy                        sql.NullInt64
 }
 
 func (q *Queries) ListConfirmedAfter(ctx context.Context, arg ListConfirmedAfterParams) ([]ListConfirmedAfterRow, error) {
@@ -540,6 +647,77 @@ func (q *Queries) ListConfirmedAfter(ctx context.Context, arg ListConfirmedAfter
 			&i.CancelReason,
 			&i.CancelledAt,
 			&i.CancelledBy,
+			&i.Origin,
+			&i.PartyID,
+			&i.ShipToLabel,
+			&i.ShipToRecipient,
+			&i.ShipToPhone,
+			&i.ShipToAddress,
+			&i.LinkedAt,
+			&i.LinkedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listItemsByDeliveries = `-- name: ListItemsByDeliveries :many
+SELECT delivery_id, id, product_id, variant_id, location_id, uom, uom_factor, qty, qty_base, reservation_key
+FROM delivery_note_items WHERE delivery_id IN (/*SLICE:ids*/?) ORDER BY delivery_id ASC, id ASC
+`
+
+type ListItemsByDeliveriesRow struct {
+	DeliveryID     int64
+	ID             int64
+	ProductID      int64
+	VariantID      int64
+	LocationID     int64
+	Uom            string
+	UomFactor      float64
+	Qty            float64
+	QtyBase        float64
+	ReservationKey sql.NullString
+}
+
+// Lines of many notes in one read, grouped by note in row order.
+func (q *Queries) ListItemsByDeliveries(ctx context.Context, ids []int64) ([]ListItemsByDeliveriesRow, error) {
+	query := listItemsByDeliveries
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListItemsByDeliveriesRow{}
+	for rows.Next() {
+		var i ListItemsByDeliveriesRow
+		if err := rows.Scan(
+			&i.DeliveryID,
+			&i.ID,
+			&i.ProductID,
+			&i.VariantID,
+			&i.LocationID,
+			&i.Uom,
+			&i.UomFactor,
+			&i.Qty,
+			&i.QtyBase,
+			&i.ReservationKey,
 		); err != nil {
 			return nil, err
 		}
@@ -604,6 +782,124 @@ func (q *Queries) ListItemsByDelivery(ctx context.Context, deliveryID int64) ([]
 	return items, nil
 }
 
+const listOpenDirect = `-- name: ListOpenDirect :many
+SELECT id, number, branch_id, sales_order_id, delivery_date,
+  driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
+  recipient_signature_status, recipient_signature_missing_reason,
+  drop_location_note, dispatched_at, dispatched_by, confirmed_at,
+  confirmed_by, document_kind, sales_return_id, status, notes,
+  cancel_reason, cancelled_at, cancelled_by,
+  origin, party_id, ship_to_label, ship_to_recipient, ship_to_phone, ship_to_address,
+  linked_at, linked_by
+FROM delivery_notes
+WHERE branch_id = ? AND origin = 'direct' AND sales_order_id = 0 AND status = 'confirmed'
+  AND (? IS NULL OR party_id = ?)
+ORDER BY delivery_date ASC, id ASC
+LIMIT ?
+`
+
+type ListOpenDirectParams struct {
+	BranchID int64
+	PartyID  sql.NullInt64
+	Limit    int32
+}
+
+type ListOpenDirectRow struct {
+	ID                              int64
+	Number                          string
+	BranchID                        int64
+	SalesOrderID                    int64
+	DeliveryDate                    time.Time
+	DriverName                      sql.NullString
+	VehiclePlate                    sql.NullString
+	WarehouseStaffName              sql.NullString
+	RecipientName                   sql.NullString
+	RecipientSignatureStatus        sql.NullString
+	RecipientSignatureMissingReason sql.NullString
+	DropLocationNote                sql.NullString
+	DispatchedAt                    sql.NullTime
+	DispatchedBy                    sql.NullInt64
+	ConfirmedAt                     sql.NullTime
+	ConfirmedBy                     sql.NullInt64
+	DocumentKind                    string
+	SalesReturnID                   sql.NullInt64
+	Status                          string
+	Notes                           sql.NullString
+	CancelReason                    sql.NullString
+	CancelledAt                     sql.NullTime
+	CancelledBy                     sql.NullInt64
+	Origin                          string
+	PartyID                         sql.NullInt64
+	ShipToLabel                     sql.NullString
+	ShipToRecipient                 sql.NullString
+	ShipToPhone                     sql.NullString
+	ShipToAddress                   sql.NullString
+	LinkedAt                        sql.NullTime
+	LinkedBy                        sql.NullInt64
+}
+
+// Confirmed SJ Langsung still waiting for their order (ADR-0022), oldest
+// first; party_id NULL = every customer. Served by ix_delivery_notes_direct_open.
+func (q *Queries) ListOpenDirect(ctx context.Context, arg ListOpenDirectParams) ([]ListOpenDirectRow, error) {
+	rows, err := q.db.QueryContext(ctx, listOpenDirect,
+		arg.BranchID,
+		arg.PartyID,
+		arg.PartyID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOpenDirectRow{}
+	for rows.Next() {
+		var i ListOpenDirectRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.BranchID,
+			&i.SalesOrderID,
+			&i.DeliveryDate,
+			&i.DriverName,
+			&i.VehiclePlate,
+			&i.WarehouseStaffName,
+			&i.RecipientName,
+			&i.RecipientSignatureStatus,
+			&i.RecipientSignatureMissingReason,
+			&i.DropLocationNote,
+			&i.DispatchedAt,
+			&i.DispatchedBy,
+			&i.ConfirmedAt,
+			&i.ConfirmedBy,
+			&i.DocumentKind,
+			&i.SalesReturnID,
+			&i.Status,
+			&i.Notes,
+			&i.CancelReason,
+			&i.CancelledAt,
+			&i.CancelledBy,
+			&i.Origin,
+			&i.PartyID,
+			&i.ShipToLabel,
+			&i.ShipToRecipient,
+			&i.ShipToPhone,
+			&i.ShipToAddress,
+			&i.LinkedAt,
+			&i.LinkedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const noteIDByClientRef = `-- name: NoteIDByClientRef :one
 SELECT id FROM delivery_notes WHERE branch_id = ? AND client_ref = ?
 `
@@ -618,6 +914,143 @@ func (q *Queries) NoteIDByClientRef(ctx context.Context, arg NoteIDByClientRefPa
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const notesByIDs = `-- name: NotesByIDs :many
+SELECT id, number, branch_id, sales_order_id, delivery_date,
+  driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
+  recipient_signature_status, recipient_signature_missing_reason,
+  drop_location_note, dispatched_at, dispatched_by, confirmed_at,
+  confirmed_by, document_kind, sales_return_id, status, notes,
+  cancel_reason, cancelled_at, cancelled_by,
+  origin, party_id, ship_to_label, ship_to_recipient, ship_to_phone, ship_to_address,
+  linked_at, linked_by
+FROM delivery_notes WHERE id IN (/*SLICE:ids*/?) ORDER BY id ASC
+`
+
+type NotesByIDsRow struct {
+	ID                              int64
+	Number                          string
+	BranchID                        int64
+	SalesOrderID                    int64
+	DeliveryDate                    time.Time
+	DriverName                      sql.NullString
+	VehiclePlate                    sql.NullString
+	WarehouseStaffName              sql.NullString
+	RecipientName                   sql.NullString
+	RecipientSignatureStatus        sql.NullString
+	RecipientSignatureMissingReason sql.NullString
+	DropLocationNote                sql.NullString
+	DispatchedAt                    sql.NullTime
+	DispatchedBy                    sql.NullInt64
+	ConfirmedAt                     sql.NullTime
+	ConfirmedBy                     sql.NullInt64
+	DocumentKind                    string
+	SalesReturnID                   sql.NullInt64
+	Status                          string
+	Notes                           sql.NullString
+	CancelReason                    sql.NullString
+	CancelledAt                     sql.NullTime
+	CancelledBy                     sql.NullInt64
+	Origin                          string
+	PartyID                         sql.NullInt64
+	ShipToLabel                     sql.NullString
+	ShipToRecipient                 sql.NullString
+	ShipToPhone                     sql.NullString
+	ShipToAddress                   sql.NullString
+	LinkedAt                        sql.NullTime
+	LinkedBy                        sql.NullInt64
+}
+
+// Many headers in one read (order-from-SJ reads its source notes this way).
+func (q *Queries) NotesByIDs(ctx context.Context, ids []int64) ([]NotesByIDsRow, error) {
+	query := notesByIDs
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotesByIDsRow{}
+	for rows.Next() {
+		var i NotesByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.BranchID,
+			&i.SalesOrderID,
+			&i.DeliveryDate,
+			&i.DriverName,
+			&i.VehiclePlate,
+			&i.WarehouseStaffName,
+			&i.RecipientName,
+			&i.RecipientSignatureStatus,
+			&i.RecipientSignatureMissingReason,
+			&i.DropLocationNote,
+			&i.DispatchedAt,
+			&i.DispatchedBy,
+			&i.ConfirmedAt,
+			&i.ConfirmedBy,
+			&i.DocumentKind,
+			&i.SalesReturnID,
+			&i.Status,
+			&i.Notes,
+			&i.CancelReason,
+			&i.CancelledAt,
+			&i.CancelledBy,
+			&i.Origin,
+			&i.PartyID,
+			&i.ShipToLabel,
+			&i.ShipToRecipient,
+			&i.ShipToPhone,
+			&i.ShipToAddress,
+			&i.LinkedAt,
+			&i.LinkedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const openDirectSummary = `-- name: OpenDirectSummary :one
+SELECT COUNT(*) AS total, MIN(delivery_date) AS oldest
+FROM delivery_notes
+WHERE branch_id = ? AND origin = 'direct' AND sales_order_id = 0 AND status = 'confirmed'
+  AND (? IS NULL OR party_id = ?)
+`
+
+type OpenDirectSummaryParams struct {
+	BranchID int64
+	PartyID  sql.NullInt64
+}
+
+type OpenDirectSummaryRow struct {
+	Total  int64
+	Oldest interface{}
+}
+
+// How many SJ Langsung await an order and since when (party_id NULL = all).
+func (q *Queries) OpenDirectSummary(ctx context.Context, arg OpenDirectSummaryParams) (OpenDirectSummaryRow, error) {
+	row := q.db.QueryRowContext(ctx, openDirectSummary, arg.BranchID, arg.PartyID, arg.PartyID)
+	var i OpenDirectSummaryRow
+	err := row.Scan(&i.Total, &i.Oldest)
+	return i, err
 }
 
 const orderIDsByNotes = `-- name: OrderIDsByNotes :many

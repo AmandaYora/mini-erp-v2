@@ -43,13 +43,15 @@ import {
   deliveryConfirmSchema,
   toConfirmPayload,
 } from "@/modules/delivery/schemas/delivery-confirm.schema";
-import type {
-  DeliveryItem,
-  DeliveryNote,
-  DeliveryProof,
-  DeliveryProofPurpose,
-  SalesOrderOption,
+import {
+  isUnorderedDirect,
+  type DeliveryItem,
+  type DeliveryNote,
+  type DeliveryProof,
+  type DeliveryProofPurpose,
+  type SalesOrderOption,
 } from "@/modules/delivery/types";
+import type { ProductOptionRow } from "@/modules/products/types";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 
 // Alur: draft → confirmed (stok keluar saat confirm) / cancelled.
@@ -61,6 +63,11 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 // - Bukti kirim: GET /:id/proofs + upload POST /:id/proof (multipart "file").
 // Dipesan vs dikirim: noteView TIDAK membawa qty pesanan maupun nama produk —
 // keduanya dijoin best-effort dari detail SO via productId/variantId.
+// SJ Langsung (ADR-0022, origin "direct"): selama salesOrderId = 0 tidak ada
+// SO — pelanggan/alamat dibaca dari SJ, nama produk dari search-options
+// (best-effort), rel bertambah langkah "Diorder", konfirmasi tanpa pelunasan,
+// dan batal beralasan juga boleh saat confirmed (stok dibalik). Tombol "Buat
+// order dari SJ ini" menuju form order (sales) dengan ?fromDeliveries=<id>.
 
 function formatBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "-";
@@ -122,13 +129,23 @@ export default function DeliveryDetailPage() {
       }
       try {
         const n = await deliveryService.get(noteId);
-        const [proofRows, orderDetail] = await Promise.all([
+        const [proofRows, orderDetail, productRows] = await Promise.all([
           deliveryService.proofs(noteId).catch(() => [] as DeliveryProof[]),
-          deliveryService
-            .salesOrderDetail(n.salesOrderId)
-            .catch(() => null as SalesOrderOption | null),
+          n.salesOrderId > 0
+            ? deliveryService.salesOrderDetail(n.salesOrderId).catch(() => null as SalesOrderOption | null)
+            : Promise.resolve(null as SalesOrderOption | null),
+          // Tanpa SO (SJ Langsung belum diorder): label produk dari master, best-effort.
+          n.salesOrderId === 0
+            ? Promise.all(
+                [...new Set(n.items.map((it) => it.productId))].map((pid) =>
+                  deliveryService.productOption(pid).catch(() => null as ProductOptionRow | null),
+                ),
+              )
+            : Promise.resolve([] as (ProductOptionRow | null)[]),
         ]);
-        return { note: n, proofs: proofRows, so: orderDetail };
+        const products = new Map<number, ProductOptionRow>();
+        for (const p of productRows) if (p) products.set(p.id, p);
+        return { note: n, proofs: proofRows, so: orderDetail, products };
       } catch (err) {
         const apiErr = toApiError(err);
         toast.danger("Gagal memuat surat jalan", apiErr.message);
@@ -144,6 +161,7 @@ export default function DeliveryDetailPage() {
   // Peringatan lunak dari pembuatan draf (DL-04): dibawa lewat state navigasi.
   const createWarnings = ((useLocation().state as { warnings?: string[] } | null)?.warnings ?? []).filter(Boolean);
   const so: SalesOrderOption | null = data?.so ?? null;
+  const products: Map<number, ProductOptionRow> = data?.products ?? new Map();
   usePageCrumb(note?.number);
 
   function openConfirm() {
@@ -296,6 +314,21 @@ export default function DeliveryDetailPage() {
     so?.items.find(
       (l) => l.productId === it.productId && l.variantId === it.variantId,
     ) ?? null;
+  /** Label produk baris: dari SO bila ada, else dari master produk (SJ Langsung belum diorder). */
+  const productLabelOf = (it: DeliveryItem): { name: string; code: string } | null => {
+    const match = soLineOf(it);
+    if (match) return { name: match.productName, code: match.productCode };
+    const p = products.get(it.productId);
+    if (!p) return null;
+    const variant = p.variants.find((v) => v.id === it.variantId);
+    const variantName = variant && !variant.isHidden && variant.name.trim() !== "" && variant.name !== p.name ? ` - ${variant.name}` : "";
+    return { name: `${p.name}${variantName}`, code: p.code };
+  };
+
+  const isDirect = note.origin === "direct";
+  const unordered = isUnorderedDirect({ origin: note.origin, salesOrderId: note.salesOrderId });
+  const isConfirmed = note.status === "confirmed";
+  const partyName = so?.partyName || note.partyName || "";
 
   const rail = deliveryRail({
     status: note.status,
@@ -304,12 +337,18 @@ export default function DeliveryDetailPage() {
     orderNumber: note.orderNumber,
     orderStatus: so?.status ?? null,
     salesReturnId: replacementReturnId,
+    origin: note.origin ?? null,
   });
   const driverMissing = evidenceMissing.some((m) => m.key === "driverName" || m.key === "warehouseStaffName");
   // Siklus SJ pengganti dimiliki retur penjualan (server menolak konfirmasi/batal
   // generik): tombolnya ada di halaman retur.
   const showConfirm = isDraft && canConfirm && !isReplacement;
-  const showCancel = isDraft && canCancel && !isReplacement;
+  // SJ Langsung yang belum diorder boleh dibatalkan juga saat terkonfirmasi (stok dibalik).
+  const showCancel = canCancel && !isReplacement && (isDraft || (unordered && isConfirmed));
+  // Order dibuat dari SJ oleh admin penjualan (izin sales.create), hanya SJ terkonfirmasi tanpa order.
+  const showCreateOrder = unordered && isConfirmed && can("sales.create");
+  // Pelunasan COD hanya relevan bila SJ menuntaskan order COD; SJ Langsung tanpa order tidak punya pelunasan.
+  const showSettlement = !unordered && so?.paymentTerms === "cod";
 
   return (
     <Page>
@@ -319,9 +358,11 @@ export default function DeliveryDetailPage() {
           <>
             <StatusBadge status={note.status} />
             {isReplacement && <Badge tone="info">Pengganti</Badge>}
+            {isDirect && <Badge tone="info">SJ Langsung</Badge>}
+            {unordered && <Badge tone="warning">Belum diorder</Badge>}
           </>
         }
-        subtitle={`${so?.partyName || "Walk-in"} · ${formatDate(note.deliveryDate)}`}
+        subtitle={`${partyName || "Walk-in"} · ${formatDate(note.deliveryDate)}`}
         actions={
           <>
             <Button variant="secondary" asChild>
@@ -329,6 +370,11 @@ export default function DeliveryDetailPage() {
                 Cetak
               </Link>
             </Button>
+            {showCreateOrder && (
+              <Button asChild>
+                <Link to={`${ROUTE_PATHS.salesOrders}/new?fromDeliveries=${note.id}`}>Buat order dari SJ ini</Link>
+              </Button>
+            )}
             <ActionMenu
               items={
                 showCancel
@@ -374,6 +420,14 @@ export default function DeliveryDetailPage() {
           )}
         </Notice>
       )}
+      {unordered && isConfirmed && (
+        <Notice tone="info" title="Surat jalan langsung menunggu order">
+          Barang sudah keluar tanpa order. Admin penjualan membuat order jual dari surat jalan ini
+          {showCreateOrder ? " lewat tombol Buat order dari SJ ini" : " dari menu Order Jual"}; jurnal pendapatan dan
+          piutang menunggu sampai order tertaut. Bila ada yang salah, batalkan surat jalan ini (stok dikembalikan) lalu buat
+          ulang.
+        </Notice>
+      )}
       {isDraft && driverMissing && (
         <Notice tone="warning" title="Dokumen belum lengkap">
           Sopir dan/atau petugas gudang belum terisi pada surat jalan ini. Pengiriman reguler tidak bisa
@@ -408,11 +462,11 @@ export default function DeliveryDetailPage() {
                   {
                     header: "Produk",
                     render: (r) => {
-                      const match = soLineOf(r);
+                      const match = productLabelOf(r);
                       return match ? (
                         <div>
-                          <p className="font-medium">{match.productName}</p>
-                          <p className="text-xs text-muted-foreground">{match.productCode}</p>
+                          <p className="font-medium">{match.name}</p>
+                          <p className="text-xs text-muted-foreground">{match.code}</p>
                         </div>
                       ) : (
                         <span className="text-muted-foreground">
@@ -421,14 +475,18 @@ export default function DeliveryDetailPage() {
                       );
                     },
                   },
-                  {
-                    header: "Dipesan (SO)",
-                    align: "right",
-                    render: (r) => {
-                      const match = soLineOf(r);
-                      return match ? <Qty value={match.qty} unit={match.uom} /> : "–";
-                    },
-                  },
+                  ...(unordered
+                    ? []
+                    : [
+                        {
+                          header: "Dipesan (SO)",
+                          align: "right" as const,
+                          render: (r: DeliveryItem) => {
+                            const match = soLineOf(r);
+                            return match ? <Qty value={match.qty} unit={match.uom} /> : "–";
+                          },
+                        },
+                      ]),
                   {
                     header: "Dikirim",
                     align: "right",
@@ -497,15 +555,40 @@ export default function DeliveryDetailPage() {
                 columns={1}
                 items={[
                   { label: "Nomor", value: <DocNumber value={note.number} copyable /> },
+                  ...(isDirect ? [{ label: "Asal", value: "SJ Langsung (tanpa order)" }] : []),
                   {
                     label: "Order jual",
-                    value: (
+                    value: unordered ? (
+                      <span className="text-muted-foreground">Belum diorder</span>
+                    ) : (
                       <Link to={`${ROUTE_PATHS.salesOrders}/${note.salesOrderId}`} className="text-primary hover:underline">
                         <DocNumber value={note.orderNumber || `#${note.salesOrderId}`} />
                       </Link>
                     ),
                   },
-                  { label: "Pelanggan", value: so?.partyName },
+                  ...(isDirect && !unordered && note.linkedAt
+                    ? [{ label: "Diorder", value: `${formatDateTime(note.linkedAt)}${note.linkedBy ? ` · #${note.linkedBy}` : ""}` }]
+                    : []),
+                  { label: "Pelanggan", value: partyName || null },
+                  ...(isDirect && (note.shipToAddress || note.shipToRecipient || note.shipToPhone)
+                    ? [
+                        {
+                          label: "Alamat kirim",
+                          wide: true,
+                          value: (
+                            <span>
+                              {note.shipToLabel ? <span className="font-medium">{note.shipToLabel} · </span> : null}
+                              {note.shipToAddress || "-"}
+                              {note.shipToRecipient || note.shipToPhone ? (
+                                <span className="block text-xs text-muted-foreground">
+                                  {[note.shipToRecipient, note.shipToPhone].filter(Boolean).join(" · ")}
+                                </span>
+                              ) : null}
+                            </span>
+                          ),
+                        },
+                      ]
+                    : []),
                   { label: "Tanggal kirim", value: formatDate(note.deliveryDate) },
                   ...cancellationItems(note),
                   ...(isReplacement
@@ -523,9 +606,11 @@ export default function DeliveryDetailPage() {
         open={confirmOpen}
         title="Konfirmasi Surat Jalan"
         description={
-          needsEvidence
-            ? `Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Pengiriman reguler wajib dilengkapi bukti serah terima di bawah.`
-            : `Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Isian penerima opsional — kosongkan semua untuk konfirmasi polos.`
+          unordered
+            ? `Konfirmasi ${note.number}? Stok keluar dicatat tanpa pelunasan; order dibuat belakangan dari surat jalan ini. Selama belum diorder, surat jalan masih bisa dibatalkan (stok dikembalikan).${needsEvidence ? " Lengkapi bukti serah terima di bawah." : ""}`
+            : needsEvidence
+              ? `Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Pengiriman reguler wajib dilengkapi bukti serah terima di bawah.`
+              : `Konfirmasi ${note.number}? Stok keluar dicatat dan tidak bisa dibatalkan (koreksi via retur). Isian penerima opsional — kosongkan semua untuk konfirmasi polos.`
         }
         onClose={() => {
           if (!acting) setConfirmOpen(false);
@@ -622,7 +707,7 @@ export default function DeliveryDetailPage() {
             </FormField>
           </div>
         )}
-        {so?.paymentTerms === "cod" && (
+        {showSettlement && so && (
           <div className="mt-5 rounded-md border border-border p-4">
             <p className="text-sm font-semibold text-foreground">Pelunasan order COD</p>
             <p className="text-muted-foreground mt-1 text-xs">
@@ -700,7 +785,13 @@ export default function DeliveryDetailPage() {
       <ReasonDialog
         open={cancelOpen}
         title="Batalkan surat jalan"
-        description={`${note.number} dibatalkan dan kuota order dilepas. Alasan dicatat pada surat jalan dan jejak audit.`}
+        description={
+          unordered
+            ? isConfirmed
+              ? `${note.number} dibatalkan dan stok yang sudah keluar dikembalikan. Alasan dicatat pada surat jalan dan jejak audit.`
+              : `${note.number} dibatalkan. Alasan dicatat pada surat jalan dan jejak audit.`
+            : `${note.number} dibatalkan dan kuota order dilepas. Alasan dicatat pada surat jalan dan jejak audit.`
+        }
         confirmLabel="Batalkan surat jalan"
         placeholder="Mis. salah jumlah, salah lokasi gudang"
         submitting={acting}

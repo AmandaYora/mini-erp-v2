@@ -9,6 +9,8 @@ export const ROUTE_PATHS = {
   deliveries: "/deliveries",
   deliveriesQueue: "/deliveries/queue",
   deliveriesNew: "/deliveries/new",
+  /** SJ Langsung (ADR-0022): surat jalan tanpa order, izin delivery.create_direct. */
+  deliveriesNewDirect: "/deliveries/new-direct",
   salesReturns: "/sales-returns",
   purchaseReturns: "/purchase-returns",
   purchaseOrders: "/purchase-orders",

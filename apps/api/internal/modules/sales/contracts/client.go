@@ -21,6 +21,15 @@ const (
 	ChannelPOS     = "pos"
 )
 
+// Origins of an order (ADR-0022): a standard order is written first and
+// shipped later; an order of origin "delivery" was built from SJ Langsung —
+// direct delivery notes that already shipped — so it completes the moment its
+// notes are linked and never waits in the warehouse queue.
+const (
+	OriginStandard = "standard"
+	OriginDelivery = "delivery"
+)
+
 // Item is one snapshotted order line (contract §7.4).
 type Item struct {
 	ID              int64
@@ -71,9 +80,11 @@ type SalesOrder struct {
 	PartyName string
 	// PartyPhone / PartyAddress are the customer's own contact, filled by the
 	// detail read only (printed documents fall back to them without a ship-to).
-	PartyPhone    string
-	PartyAddress  string
-	Channel       string
+	PartyPhone   string
+	PartyAddress string
+	Channel      string
+	// Origin: OriginStandard | OriginDelivery (built from direct delivery notes).
+	Origin        string
 	MemberCode    string
 	OrderDate     string
 	DueDate       string

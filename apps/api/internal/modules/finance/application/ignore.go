@@ -73,6 +73,12 @@ func (s *Service) IgnoreSource(ctx context.Context, actorID, branchID int64, doc
 	if target.Ignored {
 		return target, nil
 	}
+	if target.AwaitingOrder {
+		// The goods left without a price (ADR-0022): hiding the note would
+		// leave a shipment unbilled forever. Either the order is built or the
+		// note is cancelled (stock back) — never ignored.
+		return nil, apperror.Conflict("Surat jalan langsung yang belum diorder tidak bisa diabaikan: buat ordernya di menu Order Jual, atau batalkan surat jalannya bila tidak jadi")
+	}
 	key := docType + ":" + strconv.FormatInt(docID, 10)
 	created, err := s.repo.IgnoreSource(ctx, branchID, docType, docID, reason, actorID, func(ctx context.Context, tx *infrastructure.Tx) error {
 		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{

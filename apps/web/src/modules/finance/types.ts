@@ -513,6 +513,11 @@ export interface PostingSource {
   partyId?: number;
   partyName?: string;
   summary?: string;
+  /**
+   * ADR-0022: surat jalan langsung yang ordernya belum dibuat. Tidak bisa dijurnal
+   * maupun diabaikan sampai admin penjualan membuat ordernya (menu Order Jual).
+   */
+  awaitingOrder?: boolean;
 }
 
 /** Status hari pada ikhtisar tutup hari (FN-02). */

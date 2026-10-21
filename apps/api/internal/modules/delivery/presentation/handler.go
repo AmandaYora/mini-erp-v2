@@ -49,8 +49,121 @@ func noteView(n *contracts.DeliveryNote) map[string]any {
 		"confirmedAt": timeutil.FormatWIB(n.ConfirmedAt), "confirmedBy": n.ConfirmedBy,
 		"documentKind": n.DocumentKind, "salesReturnId": n.SalesReturnID,
 		"cancelReason": n.CancelReason, "cancelledAt": timeutil.FormatWIB(n.CancelledAt), "cancelledBy": n.CancelledBy,
+		// SJ Langsung (ADR-0022): its own customer/ship-to while it has no order.
+		"origin": n.Origin, "partyId": n.PartyID, "partyName": n.PartyName,
+		"shipToLabel": n.ShipToLabel, "shipToRecipient": n.ShipToRecipient,
+		"shipToPhone": n.ShipToPhone, "shipToAddress": n.ShipToAddress,
+		"linkedAt": timeutil.FormatWIB(n.LinkedAt), "linkedBy": n.LinkedBy,
 		"items": items,
 	}
+}
+
+// lineInputs maps the shared line payload of Create / CreateDirect.
+type linePayload struct {
+	ProductID      int64   `json:"productId" validate:"required"`
+	VariantID      int64   `json:"variantId" validate:"required"`
+	LocationID     int64   `json:"locationId"`
+	UOM            string  `json:"uom" validate:"required"`
+	Qty            float64 `json:"qty" validate:"required"`
+	ReservationKey string  `json:"reservationKey"`
+}
+
+func lineInputs(items []linePayload) []application.LineInput {
+	lines := make([]application.LineInput, 0, len(items))
+	for _, l := range items {
+		lines = append(lines, application.LineInput{
+			ProductID: l.ProductID, VariantID: l.VariantID,
+			LocationID: l.LocationID, UOM: l.UOM, Qty: l.Qty, ReservationKey: l.ReservationKey,
+		})
+	}
+	return lines
+}
+
+// CreateDirect handles POST /api/v1/deliveries/direct: a surat jalan for a
+// customer with no order yet (SJ Langsung, ADR-0022).
+func (h *Handler) CreateDirect(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PartyID            int64         `json:"partyId" validate:"required"`
+		DeliveryDate       string        `json:"deliveryDate"`
+		ShipToAddressID    int64         `json:"shipToAddressId"`
+		ShipToLabel        string        `json:"shipToLabel"`
+		ShipToRecipient    string        `json:"shipToRecipient"`
+		ShipToPhone        string        `json:"shipToPhone"`
+		ShipToAddress      string        `json:"shipToAddress"`
+		DriverName         string        `json:"driverName"`
+		VehiclePlate       string        `json:"vehiclePlate"`
+		WarehouseStaffName string        `json:"warehouseStaffName"`
+		DropLocationNote   string        `json:"dropLocationNote"`
+		Notes              string        `json:"notes"`
+		ClientRef          string        `json:"clientRef"`
+		Items              []linePayload `json:"items" validate:"required"`
+	}
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	n, replayed, err := h.svc.CreateDirect(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), application.DirectInput{
+		PartyID: in.PartyID, DeliveryDate: in.DeliveryDate, Notes: in.Notes,
+		ShipToAddressID: in.ShipToAddressID, ShipToLabel: in.ShipToLabel, ShipToRecipient: in.ShipToRecipient,
+		ShipToPhone: in.ShipToPhone, ShipToAddress: in.ShipToAddress,
+		Doc: application.DocInput{
+			DriverName: in.DriverName, VehiclePlate: in.VehiclePlate,
+			WarehouseStaffName: in.WarehouseStaffName, DropLocationNote: in.DropLocationNote,
+			ClientRef: in.ClientRef,
+		},
+		Lines: lineInputs(in.Items),
+	})
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	view := noteView(n)
+	if len(n.Warnings) > 0 {
+		view["warnings"] = n.Warnings
+	}
+	if replayed {
+		view["replayed"] = true
+		response.OK(w, "Surat jalan langsung sudah dibuat sebelumnya", view)
+		return
+	}
+	response.Created(w, "Surat jalan langsung dibuat", view)
+}
+
+// OpenDirect handles GET /api/v1/deliveries/open-direct?partyId&limit: the
+// confirmed SJ Langsung still waiting for their order (oldest first) plus the
+// count and the oldest delivery date — what the order form and the dashboard
+// read. limit=0 returns the summary only.
+func (h *Handler) OpenDirect(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	partyID, err := listquery.ParseID(q.Get("partyId"), "partyId")
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	limit := pagination.ParseDisplayLimit(q.Get("limit"), 50, 200)
+	if q.Get("limit") == "0" {
+		limit = 0 // summary only (dashboard counter)
+	}
+	branchID := authcontracts.BranchID(r)
+	sum, serr := h.svc.OpenDirectSummary(r.Context(), branchID, partyID)
+	if serr != nil {
+		response.FailErr(w, serr)
+		return
+	}
+	items := []any{}
+	if limit > 0 && sum.Count > 0 {
+		notes, lerr := h.svc.ListOpenDirect(r.Context(), branchID, partyID, limit)
+		if lerr != nil {
+			response.FailErr(w, lerr)
+			return
+		}
+		for _, n := range notes {
+			items = append(items, noteView(n))
+		}
+	}
+	response.OK(w, "Surat jalan langsung menunggu order", map[string]any{
+		"items": items, "count": sum.Count, "oldestDate": sum.OldestDate,
+	})
 }
 
 // List handles GET /api/v1/deliveries.
@@ -72,9 +185,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		response.FailErr(w, err)
 		return
 	}
+	if err := listquery.ValidateEnum("origin", q.Get("origin"), contracts.OriginOrder, contracts.OriginDirect); err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	res, err := h.svc.ListFiltered(r.Context(), authcontracts.BranchID(r), application.ListFilter{
 		Search: c.Search, Statuses: c.Statuses, SalesOrderID: soID, SalesReturnID: srID,
 		DocumentKind: q.Get("documentKind"), From: c.From, To: c.To,
+		Origin: q.Get("origin"), Unordered: q.Get("unordered") == "1" || q.Get("unordered") == "true",
 	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
@@ -112,39 +230,25 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /api/v1/deliveries.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		SalesOrderID       int64  `json:"salesOrderId" validate:"required"`
-		DeliveryDate       string `json:"deliveryDate"`
-		DriverName         string `json:"driverName"`
-		VehiclePlate       string `json:"vehiclePlate"`
-		WarehouseStaffName string `json:"warehouseStaffName"`
-		DropLocationNote   string `json:"dropLocationNote"`
-		Notes              string `json:"notes"`
-		ClientRef          string `json:"clientRef"`
-		Items              []struct {
-			ProductID      int64   `json:"productId" validate:"required"`
-			VariantID      int64   `json:"variantId" validate:"required"`
-			LocationID     int64   `json:"locationId"`
-			UOM            string  `json:"uom" validate:"required"`
-			Qty            float64 `json:"qty" validate:"required"`
-			ReservationKey string  `json:"reservationKey"`
-		} `json:"items" validate:"required"`
+		SalesOrderID       int64         `json:"salesOrderId" validate:"required"`
+		DeliveryDate       string        `json:"deliveryDate"`
+		DriverName         string        `json:"driverName"`
+		VehiclePlate       string        `json:"vehiclePlate"`
+		WarehouseStaffName string        `json:"warehouseStaffName"`
+		DropLocationNote   string        `json:"dropLocationNote"`
+		Notes              string        `json:"notes"`
+		ClientRef          string        `json:"clientRef"`
+		Items              []linePayload `json:"items" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	lines := make([]application.LineInput, 0, len(in.Items))
-	for _, l := range in.Items {
-		lines = append(lines, application.LineInput{
-			ProductID: l.ProductID, VariantID: l.VariantID,
-			LocationID: l.LocationID, UOM: l.UOM, Qty: l.Qty, ReservationKey: l.ReservationKey,
-		})
-	}
 	n, replayed, err := h.svc.CreateIdempotent(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.SalesOrderID, in.DeliveryDate, in.Notes, application.DocInput{
 		DriverName: in.DriverName, VehiclePlate: in.VehiclePlate,
 		WarehouseStaffName: in.WarehouseStaffName, DropLocationNote: in.DropLocationNote,
 		ClientRef: in.ClientRef,
-	}, lines)
+	}, lineInputs(in.Items))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -325,7 +429,7 @@ func (h *Handler) WorkQueue(w http.ResponseWriter, r *http.Request) {
 	waiting := make([]any, 0, len(queue.WaitingReturn))
 	for _, n := range queue.WaitingReturn {
 		waiting = append(waiting, map[string]any{
-			"id": n.ID, "number": n.Number, "salesOrderId": n.SalesOrderID,
+			"id": n.ID, "number": n.Number, "salesOrderId": n.SalesOrderID, "origin": n.Origin,
 			"orderNumber": n.OrderNumber, "partyName": n.PartyName,
 			"deliveryDate": n.DeliveryDate, "ageDays": n.AgeDays,
 			"driverName": n.DriverName, "vehiclePlate": n.VehiclePlate,
@@ -342,6 +446,8 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, media mediacontracts.MediaCl
 	mux.Handle("GET /api/v1/deliveries", perm("delivery.view", authcontracts.Guard(h.List, branchGuard)))
 	mux.Handle("GET /api/v1/deliveries/work-queue", perm("delivery.view", authcontracts.Guard(h.WorkQueue, branchGuard)))
 	mux.Handle("POST /api/v1/deliveries", perm("delivery.create", authcontracts.Guard(h.Create, branchGuard)))
+	mux.Handle("POST /api/v1/deliveries/direct", perm("delivery.create_direct", authcontracts.Guard(h.CreateDirect, branchGuard)))
+	mux.Handle("GET /api/v1/deliveries/open-direct", perm("delivery.view", authcontracts.Guard(h.OpenDirect, branchGuard)))
 	mux.Handle("GET /api/v1/deliveries/{id}", perm("delivery.view", authcontracts.Guard(h.Get, branchGuard)))
 	mux.Handle("POST /api/v1/deliveries/{id}/confirm", perm("delivery.create", authcontracts.Guard(h.Confirm, branchGuard)))
 	mux.Handle("POST /api/v1/deliveries/{id}/cancel", perm("delivery.archive", authcontracts.Guard(h.Cancel, branchGuard)))

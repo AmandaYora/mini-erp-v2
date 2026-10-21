@@ -58,6 +58,8 @@ export interface SalesOrder {
   partyPhone?: string;
   partyAddress?: string;
   channel: string;
+  /** standard = order biasa; delivery = lahir dari SJ Langsung (ADR-0022), dibuat langsung `completed`. */
+  origin?: SalesOrderOrigin | string;
   memberCode: string;
   orderDate: string;
   dueDate: string;
@@ -214,6 +216,20 @@ export interface ProductOption {
   code: string;
   name: string;
   sellingPrice: number;
+  /** barang | jasa | paket | non_stok (SearchOptions juga membawa type/tracked). */
+  type?: string;
+  /** false = tidak berstok (jasa/non-stok): satu-satunya yang boleh ditambah di order dari SJ (K6). */
+  tracked?: boolean;
+}
+
+export const SALES_ORIGINS = ["standard", "delivery"] as const;
+
+export type SalesOrderOrigin = (typeof SALES_ORIGINS)[number];
+
+export function originLabel(origin: string | null | undefined): string {
+  if (origin === "delivery") return "SJ Langsung";
+  if (origin === "standard") return "Order biasa";
+  return origin ?? "-";
 }
 
 export const PAYMENT_TERMS = ["cod", "net", "prepaid"] as const;
@@ -243,7 +259,9 @@ export type SalesNextStep =
   | "confirm_delivery"
   | "pay"
   | "done"
-  | "cancelled";
+  | "cancelled"
+  /** Order origin "delivery" yang terkonfirmasi tapi belum selesai: POST from-deliveries ulang dengan clientRef sama. */
+  | "finish_from_deliveries";
 
 /** GET /api/v1/sales-orders/by-client-ref/{ref}/state (handler.State). */
 export interface SalesClientRefState {
@@ -252,4 +270,118 @@ export interface SalesClientRefState {
   paidAmount: number;
   outstanding: number;
   nextStep: SalesNextStep;
+}
+
+// --- Order dari surat jalan (SJ Langsung, ADR-0022) ---
+// Kunci JSON terverifikasi dari sales/presentation/handler.go
+// (fromDeliveriesPayload, fromDeliveriesPreviewView) dan
+// delivery/presentation/handler.go (OpenDirect, noteView).
+
+/** Baris SJ Langsung — subset noteView items (tanpa nama produk). */
+export interface OpenDirectDeliveryItem {
+  id: number;
+  productId: number;
+  variantId: number;
+  locationId: number;
+  uom: string;
+  uomFactor: number;
+  qty: number;
+  qtyBase: number;
+}
+
+/** SJ Langsung terkonfirmasi yang belum diorder (GET /deliveries/open-direct items). */
+export interface OpenDirectDelivery {
+  id: number;
+  number: string;
+  deliveryDate: string;
+  partyId: number;
+  partyName: string;
+  driverName: string;
+  vehiclePlate: string;
+  recipientName: string;
+  origin: "direct" | string;
+  salesOrderId: number;
+  items: OpenDirectDeliveryItem[];
+}
+
+/** GET /deliveries/open-direct → {items, count, oldestDate}; limit=0 = ringkasan saja. */
+export interface OpenDirectResult {
+  items: OpenDirectDelivery[];
+  count: number;
+  /** YYYY-MM-DD tanggal SJ tertua, "" bila tidak ada. */
+  oldestDate: string;
+}
+
+/** Harga/diskon untuk baris yang SUDAH ada di SJ (qty terkunci server). */
+export interface FromDeliveriesLinePayload {
+  productId: number;
+  variantId: number;
+  uom: string;
+  unitPrice?: number;
+  discountPct?: number;
+  discountNominal?: number;
+  discountReason?: string;
+  note?: string;
+  taxable?: boolean;
+}
+
+export type FromDeliveriesPaymentTerms = "cod" | "net";
+
+export interface FromDeliveriesSettlement {
+  mode: "pay_now" | "switch_to_net";
+  method?: "cash" | "transfer" | "check";
+  paymentDate?: string;
+  reference?: string;
+  amountTendered?: number;
+  /** Wajib untuk switch_to_net. */
+  dueDate?: string;
+}
+
+/** Body POST /sales-orders/from-deliveries/preview. */
+export interface FromDeliveriesPreviewPayload {
+  deliveryIds: number[];
+  orderDate?: string;
+  paymentTerms?: FromDeliveriesPaymentTerms;
+  dueDate?: string;
+  taxType?: string;
+  taxRate?: number;
+  notes?: string;
+  assignedUserId?: number;
+  taxInvoiceNumber?: string;
+  taxInvoiceDate?: string;
+  lines?: FromDeliveriesLinePayload[];
+  /** Hanya produk non-stok (jasa) — K6. */
+  extraItems?: SalesOrderLinePayload[];
+}
+
+/** Body POST /sales-orders/from-deliveries: pratinjau + pelunasan + clientRef (wajib, ≤64). */
+export interface FromDeliveriesPayload extends FromDeliveriesPreviewPayload {
+  settlement?: FromDeliveriesSettlement;
+  clientRef: string;
+}
+
+/** Baris pratinjau = baris orderView tanpa id. */
+export type FromDeliveriesPreviewItem = Omit<SalesOrderItem, "id" | "baseUom">;
+
+export interface FromDeliveriesPreview {
+  partyId: number;
+  partyName: string;
+  shipToLabel: string;
+  shipToRecipient: string;
+  shipToPhone: string;
+  shipToAddress: string;
+  /** Tanggal SJ terakhir (YYYY-MM-DD) — saran tanggal faktur pajak. */
+  deliveryDate: string;
+  deliveries: { id: number; number: string; deliveryDate: string }[];
+  items: FromDeliveriesPreviewItem[];
+  subtotal: number;
+  discountTotal: number;
+  taxTotal: number;
+  grandTotal: number;
+  warnings: string[];
+}
+
+/** Respons create: orderView (status completed) + peringatan lunak. */
+export interface FromDeliveriesResult extends SalesOrder {
+  warnings?: string[];
 }

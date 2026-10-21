@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Badge,
   Button,
@@ -42,7 +42,7 @@ import type { HeaderEditValues } from "@/modules/sales/schemas/order-correction.
 import { CancelOrderModal } from "@/modules/sales/components/CancelOrderModal";
 import { HeaderEditModal } from "@/modules/sales/components/HeaderEditModal";
 import { ShortCloseModal } from "@/modules/sales/components/ShortCloseModal";
-import { channelLabel, paymentTermsLabel, pricingSourceLabel } from "@/modules/sales/types";
+import { channelLabel, originLabel, paymentTermsLabel, pricingSourceLabel } from "@/modules/sales/types";
 import type { SalesOrder, SalesOrderItem } from "@/modules/sales/types";
 import { OrderBillingCard } from "@/modules/payment/components/OrderBillingCard";
 import { OrderHistoryCard } from "@/modules/payment/components/OrderHistoryCard";
@@ -63,7 +63,10 @@ import { hasFulfilledDocument, lineKey } from "@/modules/payment/lib/order-histo
 export default function SalesOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const can = useAuthStore((s) => s.can);
+  // Baru saja dibuat dari surat jalan (W-06): tawarkan langkah berikutnya sekali.
+  const justFromDeliveries = (location.state as { fromDeliveries?: boolean } | null)?.fromDeliveries === true;
 
   const orderId = Number(id);
   const invalidId = !Number.isInteger(orderId) || orderId <= 0;
@@ -231,7 +234,8 @@ export default function SalesOrderDetailPage() {
   if (history.data?.hidden.payments) hiddenNotes.push("Pembayaran disembunyikan (tanpa izin Pembayaran)");
   if (history.data?.hidden.returns) hiddenNotes.push("Retur disembunyikan (tanpa izin Retur Jual)");
 
-  const rail = salesOrderRail({ status: order.status, channel: order.channel, billing, events });
+  const fromDelivery = order.origin === "delivery";
+  const rail = salesOrderRail({ status: order.status, channel: order.channel, origin: order.origin, billing, events });
   const customer = order.partyName || "Walk-in";
   const printUrl = `/print/sales/${order.id}`;
   const deliveryUrl = `${ROUTE_PATHS.deliveries}/new?from=${order.id}`;
@@ -316,6 +320,7 @@ export default function SalesOrderDetailPage() {
         meta={
           <>
             <StatusBadge status={order.status} />
+            {fromDelivery && <Badge tone="info">Dari SJ</Badge>}
             {showBillingBadge && <Badge tone={badge.tone}>{badge.label}</Badge>}
           </>
         }
@@ -376,6 +381,23 @@ export default function SalesOrderDetailPage() {
       {actionError && (
         <Notice tone="danger" title="Aksi ditolak">
           {actionError}
+        </Notice>
+      )}
+      {justFromDeliveries && fromDelivery && (
+        <Notice tone="success" title="Order dari surat jalan selesai">
+          <p>Surat jalan sudah tertaut ke order ini. Langkah berikutnya:</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" asChild>
+              <Link to={printUrl} target="_blank" rel="noreferrer">
+                Cetak invoice
+              </Link>
+            </Button>
+            {showPay && (
+              <Button variant="secondary" size="sm" onClick={() => setPaymentOpen(true)} disabled={busy}>
+                Catat pembayaran
+              </Button>
+            )}
+          </div>
         </Notice>
       )}
       {order.status === "cancelled" && order.cancelReason && (
@@ -532,6 +554,7 @@ export default function SalesOrderDetailPage() {
                   { label: "Nomor", value: <DocNumber value={order.number} copyable /> },
                   { label: "Tanggal order", value: formatDate(order.orderDate) },
                   { label: "Kanal", value: channelLabel(order.channel) },
+                  ...(order.origin ? [{ label: "Asal", value: originLabel(order.origin) }] : []),
                   { label: "Termin", value: paymentTermsLabel(order.paymentTerms) },
                   {
                     label: "Jatuh tempo",

@@ -34,7 +34,9 @@ type ListFilter struct {
 	// pre-filter; the balance check happens in the service).
 	OverdueBefore string
 	PartyID       int64
-	From, To      string // order_date, YYYY-MM-DD, half-open on the upper bound
+	// Origin narrows to "standard" or "delivery" (orders built from SJ Langsung).
+	Origin   string
+	From, To string // order_date, YYYY-MM-DD, half-open on the upper bound
 	// OrderBy is a whitelisted "expr ASC|DESC"; empty = newest id first.
 	OrderBy string
 }
@@ -47,6 +49,7 @@ func (f ListFilter) where(branchID int64) (string, []any) {
 		Eq("channel", f.Channel).
 		Eq("payment_terms", f.PaymentTerms).
 		Eq("party_id", f.PartyID).
+		Eq("origin", f.Origin).
 		DateRange("order_date", f.From, f.To).
 		LikeOrIn(f.Search, []string{"number"}, "party_id", f.SearchPartyIDs)
 	if f.OverdueBefore != "" {
@@ -68,7 +71,7 @@ const rawOrderColumns = `id, number, branch_id, party_id, channel, member_code,
 	discount_total, tax_total, grand_total, status, notes,
 	ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
 	ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-	created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at`
+	created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin`
 
 // List returns one page via a deferred join: the page of ids is picked on the
 // narrow index, only those rows are read wide.
@@ -125,7 +128,7 @@ func scanOrders(rows *sql.Rows) ([]*contracts.SalesOrder, error) {
 			&h.DiscountTotal, &h.TaxTotal, &h.GrandTotal, &h.Status, &h.Notes,
 			&h.ShipToAddressID, &h.ShipToLabel, &h.ShipToRecipient, &h.ShipToPhone,
 			&h.ShipToAddress, &h.TaxInvoiceNumber, &h.TaxInvoiceDate, &h.ClientRef,
-			&h.CreatedBy, &h.AssignedUserID, &h.CreditApprovedBy, &h.CreditApprovedAt, &h.CreatedAt); err != nil {
+			&h.CreatedBy, &h.AssignedUserID, &h.CreditApprovedBy, &h.CreditApprovedAt, &h.CreatedAt, &h.Origin); err != nil {
 			return nil, err
 		}
 		out = append(out, toOrder(h))

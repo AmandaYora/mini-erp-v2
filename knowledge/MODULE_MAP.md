@@ -21,7 +21,7 @@ modul di lapisan lebih rendah tidak boleh bergantung pada lapisan lebih tinggi.
 | L4 | `purchasing` | Purchase order ke supplier | L1, `party`, `product`, `stock` |
 | L4 | `sales` | Sales order ke customer (kanal reguler & POS) | L1, `party`, `product`, `stock` |
 | L5 | `goodsreceipt` | Penerimaan barang atas PO | `purchasing`, `stock` |
-| L5 | `delivery` | Pengiriman atas SO, surat jalan, bukti kirim | `sales`, `stock`, `media` |
+| L5 | `delivery` | Pengiriman atas SO, surat jalan, bukti kirim; SJ Langsung tanpa order (ADR-0022) | `sales`, `stock`, `media`, `party` (pelanggan SJ Langsung) |
 | L5 | `payment` | Pembayaran & alokasi, saldo/ledger pihak | `purchasing`, `sales`, `media` |
 | L6 | `salesreturn` | Retur customer atas SO/SJ | `sales`, `delivery` |
 | L6 | `purchasereturn` | Retur ke supplier atas PO/penerimaan | `purchasing`, `goodsreceipt` |

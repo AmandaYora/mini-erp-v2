@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
+	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
 	"mini-erp/internal/modules/finance/infrastructure"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
@@ -68,6 +69,10 @@ type QueueItem struct {
 	PartyID    int64  `json:"partyId,omitempty"`
 	PartyName  string `json:"partyName,omitempty"`
 	Summary    string `json:"summary,omitempty"`
+	// AwaitingOrder (ADR-0022): a direct delivery note whose order is not built
+	// yet. It cannot be journalled, cannot be ignored (the goods are gone and
+	// must be billed) and blocks the month's close until the order exists.
+	AwaitingOrder bool `json:"awaitingOrder,omitempty"`
 
 	// orderKind/orderID resolve party and summary in one batch read.
 	orderKind string
@@ -90,6 +95,7 @@ type queueDoc struct {
 	summary      string
 	orderKind    string
 	orderID      int64
+	awaiting     bool
 }
 
 // queuePage is one page of candidates plus the raw cursor information: last is
@@ -121,6 +127,15 @@ func (s *Service) queueSources(branchID int64) []queueSource {
 			notes, err := s.delivery.ListConfirmedAfter(ctx, branchID, after, limit)
 			pg := queuePage{read: len(notes)}
 			for _, n := range notes {
+				if n.Origin == deliverycontracts.OriginDirect && n.SalesOrderID == 0 {
+					// No order yet: the customer is on the note, the value is
+					// unknown until the order prices it.
+					pg.docs = append(pg.docs, queueDoc{id: n.ID, number: n.Number, date: day(n.DeliveryDate),
+						amountKind: "document", partyID: n.PartyID, partyName: n.PartyName,
+						summary: "SJ Langsung · menunggu order", awaiting: true})
+					pg.last = n.ID
+					continue
+				}
 				pg.docs = append(pg.docs, queueDoc{id: n.ID, number: n.Number, date: day(n.DeliveryDate),
 					amountKind: "order", summary: "Pesanan", orderKind: orderKindSales, orderID: n.SalesOrderID})
 				pg.last = n.ID
@@ -266,7 +281,7 @@ func (s *Service) UnpostedSources(ctx context.Context, branchID int64) ([]QueueI
 				out = append(out, withIgnore(QueueItem{DocType: src.docType, DocID: d.id, Number: d.number, Date: d.date,
 					PeriodClosed: len(d.date) >= 7 && closed[d.date[:7]],
 					Amount:       d.amount, AmountKind: d.amountKind, PartyID: d.partyID, PartyName: d.partyName,
-					Summary: d.summary, orderKind: d.orderKind, orderID: d.orderID}))
+					Summary: d.summary, AwaitingOrder: d.awaiting, orderKind: d.orderKind, orderID: d.orderID}))
 			}
 			after = pg.last
 			if pg.read < QueuePage {

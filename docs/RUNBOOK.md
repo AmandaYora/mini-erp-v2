@@ -251,6 +251,11 @@ curl -s -H "$H" "$API/api/v1/ops/integrity"
   klien hanya menerima 500 envelope + header request-id (F6-5).
 - Shutdown anggun 25 dtk (`SHUTDOWN_TIMEOUT`) < `stop_grace_period: 30s`
   compose; WhatsApp pairing perlu uji ponsel manual (F6-6).
+- **SJ Langsung belum diorder (ADR-0022):** sebelum tutup harian/bulan, periksa panel "SJ menunggu order" di
+  Order Jual (atau `GET /api/v1/deliveries/open-direct?limit=0`). Barang yang sudah keluar lewat SJ Langsung
+  baru dijurnal setelah admin penjualan membuat ordernya (Tambah order → Dari surat jalan); antrean posting
+  menampilkannya sebagai "SJ Langsung · menunggu order", **tidak bisa diabaikan**, dan kesiapan tutup bulan
+  gagal pada butir `direct_unordered`. SJ yang tidak jadi dibatalkan beralasan (stok kembali).
 - **Galat 5xx tak terduga (OP-06):** panic dan respons 5xx (selain 503 dan probe `/healthz`, `/readyz`) dicatat middleware
   `recoverer` ke jejak audit sebagai aksi `error.unexpected` (entitas `error`, "Galat server tak terduga") dan tampil di
   halaman Audit (filter Aksi). Catatan berisi status, pola rute (id dimasker) dan pesan panic yang dipotong 200 karakter dan

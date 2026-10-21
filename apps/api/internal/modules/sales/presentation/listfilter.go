@@ -37,6 +37,7 @@ func parseListFilter(r *http.Request) (application.ListFilter, listquery.Common,
 		PaymentTerms:  q.Get("paymentTerms"),
 		PaymentStatus: q.Get("paymentStatus"),
 		PartyID:       c.PartyID,
+		Origin:        q.Get("origin"),
 		From:          c.From,
 		To:            c.To,
 	}

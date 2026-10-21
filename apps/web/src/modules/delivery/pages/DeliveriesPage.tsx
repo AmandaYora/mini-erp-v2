@@ -1,9 +1,15 @@
 import { Link, useNavigate } from "react-router-dom";
+import { ChevronDown } from "lucide-react";
 import {
   Badge,
   Button,
+  Checkbox,
   DataTable,
   DateRangeFields,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   FormField,
   MultiToggle,
   PageHeader,
@@ -25,7 +31,7 @@ import {
   deliveryListFilterSchema,
   toDeliveryFilterParams,
 } from "@/modules/delivery/schemas/delivery-list-filter.schema";
-import { DELIVERY_STATUSES } from "@/modules/delivery/types";
+import { DELIVERY_STATUSES, isUnorderedDirect } from "@/modules/delivery/types";
 import type { DeliveryNote } from "@/modules/delivery/types";
 import { SalesOrderSearchSelect } from "@/modules/sales/components/SalesOrderSearchSelect";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
@@ -34,14 +40,16 @@ import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 const LIMIT = 20;
 
 // Kolom tabel hanya dari kunci noteView yang benar-benar ada: number,
-// deliveryDate, orderNumber, status, items, documentKind, salesReturnId.
-// Filter (semua server-side): search (nomor/penerima/sopir/plat), status CSV,
-// salesOrderId, salesReturnId, documentKind, from/to.
+// deliveryDate, orderNumber, status, items, documentKind, salesReturnId,
+// origin, partyName. Filter (semua server-side): search (nomor/penerima/
+// sopir/plat), status CSV, salesOrderId, salesReturnId, documentKind, from/to,
+// origin (order|direct), unordered=1 (SJ Langsung belum diorder, ADR-0022).
 
 export default function DeliveriesPage() {
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const canCreate = can("delivery.create");
+  const canCreateDirect = can("delivery.create_direct");
 
   const { filters, setFilters, reset } = useUrlFilters(deliveryListFilterSchema, DELIVERY_LIST_DEFAULTS);
 
@@ -83,11 +91,40 @@ export default function DeliveriesPage() {
       onRemove: () => setFilters({ salesReturnId: 0 }),
     });
   }
+  if (filters.origin) {
+    active.push({
+      key: "origin",
+      label: filters.origin === "direct" ? "Asal: SJ Langsung" : "Asal: SJ order",
+      onRemove: () => setFilters({ origin: "" }),
+    });
+  }
+  if (filters.unordered === "1") {
+    active.push({ key: "unordered", label: "Belum diorder", onRemove: () => setFilters({ unordered: "" }) });
+  }
   const hasFilters = active.length > 0 || Boolean(filters.search || filters.status || filters.from || filters.to);
 
-  const createButton = canCreate ? (
+  // "Buat surat jalan": tautan langsung bila hanya satu jalur; menu bercabang
+  // bila pengguna juga boleh membuat SJ Langsung (tanpa order, ADR-0022).
+  const createButton = canCreateDirect ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button>
+          Buat surat jalan
+          <ChevronDown aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-56">
+        {canCreate && (
+          <DropdownMenuItem onSelect={() => navigate(ROUTE_PATHS.deliveriesNew)}>Dari order jual</DropdownMenuItem>
+        )}
+        <DropdownMenuItem onSelect={() => navigate(ROUTE_PATHS.deliveriesNewDirect)}>
+          Tanpa order (SJ Langsung)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : canCreate ? (
     <Button asChild>
-      <Link to={`${ROUTE_PATHS.deliveries}/new`}>Buat surat jalan</Link>
+      <Link to={ROUTE_PATHS.deliveriesNew}>Buat surat jalan</Link>
     </Button>
   ) : undefined;
 
@@ -95,7 +132,7 @@ export default function DeliveriesPage() {
     <Page>
       <PageHeader
         title="Pengiriman"
-        description="Surat jalan per order jual. Klik baris untuk detail, konfirmasi, dan bukti kirim."
+        description="Surat jalan per order jual atau SJ Langsung tanpa order. Klik baris untuk detail, konfirmasi, dan bukti kirim."
         actions={createButton}
       />
 
@@ -149,6 +186,26 @@ export default function DeliveriesPage() {
                 <option value="replacement">Barang pengganti</option>
               </SelectInput>
             </FormField>
+            <FormField label="Asal">
+              <SelectInput
+                aria-label="Asal surat jalan"
+                value={filters.origin}
+                onChange={(e) => setFilters({ origin: e.target.value as typeof filters.origin })}
+              >
+                <option value="">Semua</option>
+                <option value="order">SJ order</option>
+                <option value="direct">SJ Langsung</option>
+              </SelectInput>
+            </FormField>
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+              <Checkbox
+                aria-label="Belum diorder"
+                checked={filters.unordered === "1"}
+                onCheckedChange={(v) => setFilters({ unordered: v === true ? "1" : "" })}
+              />
+              Belum diorder
+              <span className="text-xs text-muted-foreground">(SJ Langsung tanpa order)</span>
+            </label>
           </>
         }
         moreActiveCount={active.filter((a) => a.key !== "salesReturnId").length}
@@ -188,15 +245,34 @@ export default function DeliveriesPage() {
               ),
             },
             { header: "Tanggal", render: (r) => formatDate(r.deliveryDate) },
-            { header: "Order jual", render: (r) => (r.orderNumber ? <DocNumber value={r.orderNumber} /> : "–") },
+            {
+              header: "Order jual",
+              // SJ Langsung tanpa order: tampilkan pelanggannya (snapshot di SJ).
+              render: (r) =>
+                r.orderNumber ? (
+                  <DocNumber value={r.orderNumber} />
+                ) : r.origin === "direct" ? (
+                  <span>{r.partyName || "–"}</span>
+                ) : (
+                  "–"
+                ),
+            },
             {
               header: "Jenis",
-              render: (r) =>
-                r.documentKind === "replacement" ? (
-                  <Badge tone="info">Pengganti</Badge>
-                ) : (
-                  <Badge tone="neutral">Order</Badge>
-                ),
+              render: (r) => (
+                <span className="inline-flex flex-wrap gap-1">
+                  {r.documentKind === "replacement" ? (
+                    <Badge tone="info">Pengganti</Badge>
+                  ) : r.origin === "direct" ? (
+                    <Badge tone="info">SJ Langsung</Badge>
+                  ) : (
+                    <Badge tone="neutral">Order</Badge>
+                  )}
+                  {isUnorderedDirect({ origin: r.origin, salesOrderId: r.salesOrderId }) && (
+                    <Badge tone="warning">Belum diorder</Badge>
+                  )}
+                </span>
+              ),
             },
             { header: "Penerima", render: (r) => r.recipientName || "–" },
             { header: "Baris", align: "right", render: (r) => <Qty value={r.items.length} /> },

@@ -18,19 +18,27 @@ type ListFilter struct {
 	From, To      string // delivery_date, YYYY-MM-DD, half-open on the upper bound
 	SalesReturnID int64
 	DocumentKind  string
+	// Origin narrows to "order" or "direct" notes (ADR-0022); Unordered keeps
+	// only direct notes that have no order yet.
+	Origin    string
+	Unordered bool
 }
 
 // where is the single source of the filter, shared by ListFiltered and CountFiltered.
 func (f ListFilter) where(branchID int64) (string, []any) {
-	return listquery.New().
+	w := listquery.New().
 		Eq("branch_id", branchID).
 		StatusCSV("status", strings.Join(f.Statuses, ",")).
 		Eq("sales_order_id", f.SalesOrderID).
 		Eq("sales_return_id", f.SalesReturnID).
 		Eq("document_kind", f.DocumentKind).
+		Eq("origin", f.Origin).
 		DateRange("delivery_date", f.From, f.To).
-		Like(f.Search, "number", "recipient_name", "driver_name", "vehicle_plate").
-		SQL()
+		Like(f.Search, "number", "recipient_name", "driver_name", "vehicle_plate")
+	if f.Unordered {
+		w.Raw("origin = 'direct' AND sales_order_id = 0 AND status <> 'cancelled'")
+	}
+	return w.SQL()
 }
 
 // List keeps the narrow signature internal callers use (status may be a CSV).
@@ -43,7 +51,7 @@ func (r *Repository) Count(ctx context.Context, branchID, soID int64, status str
 	return r.CountFiltered(ctx, branchID, ListFilter{SalesOrderID: soID, Statuses: listquery.SplitCSV(status)})
 }
 
-// noteColumns is the 23-column projection the raw list/waiting queries share
+// noteColumns is the 31-column projection the raw list/waiting queries share
 // with the sqlc note queries (same columns, same order, so rows scan into
 // sqlc.GetNoteRow and map through toNote).
 const noteColumns = `id, number, branch_id, sales_order_id, delivery_date,
@@ -51,7 +59,9 @@ const noteColumns = `id, number, branch_id, sales_order_id, delivery_date,
 	recipient_signature_status, recipient_signature_missing_reason,
 	drop_location_note, dispatched_at, dispatched_by, confirmed_at,
 	confirmed_by, document_kind, sales_return_id, status, notes,
-	cancel_reason, cancelled_at, cancelled_by`
+	cancel_reason, cancelled_at, cancelled_by,
+	origin, party_id, ship_to_label, ship_to_recipient, ship_to_phone, ship_to_address,
+	linked_at, linked_by`
 
 func scanNoteRow(row interface {
 	Scan(dest ...any) error
@@ -62,7 +72,9 @@ func scanNoteRow(row interface {
 		&n.RecipientName, &n.RecipientSignatureStatus, &n.RecipientSignatureMissingReason,
 		&n.DropLocationNote, &n.DispatchedAt, &n.DispatchedBy, &n.ConfirmedAt,
 		&n.ConfirmedBy, &n.DocumentKind, &n.SalesReturnID, &n.Status, &n.Notes,
-		&n.CancelReason, &n.CancelledAt, &n.CancelledBy)
+		&n.CancelReason, &n.CancelledAt, &n.CancelledBy,
+		&n.Origin, &n.PartyID, &n.ShipToLabel, &n.ShipToRecipient, &n.ShipToPhone, &n.ShipToAddress,
+		&n.LinkedAt, &n.LinkedBy)
 	return n, err
 }
 

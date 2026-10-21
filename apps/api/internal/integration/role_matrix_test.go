@@ -47,6 +47,7 @@ var roleMatrix = map[string]string{
 	"dashboard.view":                "oask",
 	"delivery.archive":              "oask",
 	"delivery.create":               "oask",
+	"delivery.create_direct":        "o", // ADR-0022 K5: hanya owner; pemilik memberikan per role
 	"delivery.view":                 "oask",
 	"finance.close.force":           "o",
 	"finance.expense.cancel":        "o",

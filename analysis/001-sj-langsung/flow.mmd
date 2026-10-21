@@ -1,0 +1,30 @@
+%% Flow pengguna SJ Langsung (ADR-0022). Jalur SO -> SJ yang ada tidak digambar.
+flowchart TD
+  subgraph Gudang
+    A[Pengiriman: Buat surat jalan > Tanpa order] --> B[Isi pelanggan, alamat kirim, barang, qty, lokasi, sopir<br/>tanpa harga]
+    B --> C{Peringatan lunak:<br/>stok kurang / SJ terbuka pelanggan}
+    C --> D[SJ Langsung: Draf]
+    D --> E[Cetak SJ, dikirim]
+    E --> F[Konfirmasi terima + bukti]
+    F --> G[Stok keluar<br/>SJ: Diterima, Belum diorder]
+    D -. salah .-> X[Batalkan SJ]
+    G -. salah sebelum diorder .-> X2[Batalkan SJ: stok dibalik]
+  end
+
+  subgraph Admin_penjualan[Admin penjualan]
+    G --> H[Panel 'SJ menunggu order' + dashboard]
+    H --> I[Tambah order > Dari surat jalan<br/>atau detail SJ > Buat order dari SJ ini]
+    I --> J[Pilih 1..n SJ pelanggan yang sama]
+    J --> K[Form order: qty terkunci, isi harga, pajak, termin<br/>boleh tambah baris jasa]
+    K --> L[Simpan & selesaikan]
+    L --> M[Order: Selesai<br/>SJ: Diorder]
+  end
+
+  subgraph Kasir_finance[Kasir / finance]
+    M --> N[Catat pembayaran seperti biasa]
+    M --> O[Jurnal SJ terbentuk, bertanggal SJ]
+    G --> P[Antrean posting: Menunggu order]
+    P --> O
+    P --> Q{Kesiapan tutup periode:<br/>SJ Langsung belum diorder = 0?}
+    Q -- tidak --> R[SafeClose tertahan]
+  end

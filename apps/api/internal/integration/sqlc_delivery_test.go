@@ -70,7 +70,7 @@ func TestSqlcDeliveryCreateGetItems(t *testing.T) {
 		ID: id, Number: "SJ-1", BranchID: 1, SalesOrderID: 10, DeliveryDate: "2026-10-05 00:00:00",
 		DriverName: "Budi", VehiclePlate: "B 1234", WarehouseStaffName: "Asep",
 		DropLocationNote: "belakang",
-		DocumentKind:     "order", Status: "draft", Notes: "catatan",
+		DocumentKind:     "order", Origin: "order", Status: "draft", Notes: "catatan",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("note mismatch:\n got %+v\nwant %+v", got, want)

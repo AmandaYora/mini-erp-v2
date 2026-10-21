@@ -126,7 +126,7 @@ func Wire(db *sql.DB, o Options) (*Modules, error) {
 	m.Purchasing = purchasing.NewModule(db, m.Party.Parties(), m.Product.Products(), m.Branch.Branches(), m.Audit.Audit(), m.User.Users())
 	m.Sales = sales.NewModule(db, m.Party.Parties(), m.Product.Products(), m.Party.Pricing(), m.Branch.Branches(), m.Audit.Audit(), m.User.Users())
 	m.GoodsReceipt = goodsreceipt.NewModule(db, m.Purchasing.PurchaseOrders(), m.Product.Products(), m.Stock.Stock(), m.Branch.Branches(), m.Audit.Audit(), m.User.Users())
-	m.Delivery = delivery.NewModule(db, m.Sales.Service(), m.Product.Products(), m.Stock.Stock(), m.Branch.Branches(), m.Media.Media(), m.Audit.Audit(), m.Company.Company())
+	m.Delivery = delivery.NewModule(db, m.Sales.Service(), m.Party.Parties(), m.Product.Products(), m.Stock.Stock(), m.Branch.Branches(), m.Media.Media(), m.Audit.Audit(), m.Company.Company())
 	m.SalesReturn = salesreturn.NewModule(db, m.Sales.SalesOrders(), m.Delivery.Deliveries(), m.Product.Products(), m.Stock.Stock(), m.Branch.Branches(), m.Audit.Audit())
 	m.PurchaseReturn = purchasereturn.NewModule(db, m.Purchasing.PurchaseOrders(), m.GoodsReceipt.GoodsReceipts(), m.Product.Products(), m.Stock.Stock(), m.Branch.Branches(), m.Audit.Audit())
 	m.Payment = payment.NewModule(db, m.Party.Parties(), m.Purchasing.PurchaseOrders(), m.Sales.SalesOrders(),

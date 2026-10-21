@@ -8,7 +8,7 @@ import {
   searchFilter,
 } from "@/shared/lib/list-schema";
 import type { SalesFilterParams } from "@/modules/sales/services/sales.service";
-import { SALES_STATUSES } from "@/modules/sales/types";
+import { SALES_ORIGINS, SALES_STATUSES } from "@/modules/sales/types";
 
 export const SALES_SORT_KEYS = ["id", "date", "number", "total", "status"] as const;
 export const PAYMENT_TERMS = ["cod", "net", "prepaid"] as const;
@@ -23,6 +23,7 @@ export const salesListFilterSchema = z.object({
   paymentTerms: enumOrEmpty(PAYMENT_TERMS),
   paymentStatus: enumOrEmpty(PAYMENT_STATUSES),
   partyId: idFilter,
+  origin: enumOrEmpty(SALES_ORIGINS),
   from: dateFilter,
   to: dateFilter,
   sort: z.enum(SALES_SORT_KEYS),
@@ -39,6 +40,7 @@ export const SALES_LIST_DEFAULTS: SalesListFilter = {
   paymentTerms: "",
   paymentStatus: "",
   partyId: 0,
+  origin: "",
   from: "",
   to: "",
   sort: "id",
@@ -56,6 +58,7 @@ export function toSalesFilterParams(f: SalesListFilter): SalesFilterParams {
     paymentTerms: f.paymentTerms,
     paymentStatus: f.paymentStatus,
     partyId: f.partyId,
+    origin: f.origin,
     from: f.from,
     to: f.to,
     sort: isDefaultSort ? "" : f.sort,

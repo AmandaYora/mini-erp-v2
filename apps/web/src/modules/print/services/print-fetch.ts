@@ -9,24 +9,39 @@ import { purchaseOrderService } from "@/modules/purchasing/services/purchase-ord
 import type { DeliveryNote } from "@/modules/delivery/types";
 import type { SalesOrder } from "@/modules/sales/types";
 import type { Payment } from "@/modules/payment/types";
+import type { ProductOptionRow } from "@/modules/products/types";
 
 export interface DeliveryPrintData {
-  /** Surat jalan (noteView backend — TIDAK membawa nama produk/pelanggan). */
+  /** Surat jalan (noteView backend — TIDAK membawa nama produk). */
   note: DeliveryNote;
   /**
    * Induk SO penuh untuk nama produk + pelanggan + ship-to (C2).
    * Best-effort: null bila gagal (mis. tanpa izin sales.view) — halaman
-   * tetap mencetak ID mentah.
+   * tetap mencetak ID mentah. Selalu null untuk SJ Langsung yang belum
+   * diorder (salesOrderId 0): pelanggan/ship-to dibaca dari SJ sendiri.
    */
   order: SalesOrder | null;
+  /**
+   * Master produk baris SJ (search-options) bila tidak ada SO — hanya untuk
+   * label nama produk; best-effort (produk yang gagal dibaca dilewati).
+   */
+  products?: ProductOptionRow[];
 }
 
 /**
- * Surat jalan + induk SO penuhnya. noteView tidak membawa productName /
- * partyName / ship-to, jadi SO diambil best-effort untuk label cetak.
+ * Surat jalan + induk SO penuhnya. noteView tidak membawa productName, jadi SO
+ * (atau, tanpa SO, master produk) diambil best-effort untuk label cetak.
  */
 export async function fetchDeliveryPrint(id: number): Promise<DeliveryPrintData> {
   const note = await deliveryService.get(id);
+  if (note.salesOrderId === 0) {
+    const rows = await Promise.all(
+      [...new Set(note.items.map((it) => it.productId))].map((pid) =>
+        deliveryService.productOption(pid).catch(() => null),
+      ),
+    );
+    return { note, order: null, products: rows.filter((p): p is ProductOptionRow => p !== null) };
+  }
   const order = await salesService.get(note.salesOrderId).catch(() => null);
   return { note, order };
 }

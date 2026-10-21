@@ -7,6 +7,9 @@ import { draftKey, saveDraft } from "@/shared/lib/draft-storage";
 const create = vi.fn();
 const getOrder = vi.fn();
 const update = vi.fn();
+const openDirect = vi.fn();
+const previewFromDeliveries = vi.fn();
+const createFromDeliveries = vi.fn();
 vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/sales/services/sales.service")>();
   return {
@@ -15,6 +18,9 @@ vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
       create: (...a: unknown[]) => create(...a),
       get: (...a: unknown[]) => getOrder(...a),
       update: (...a: unknown[]) => update(...a),
+      openDirectDeliveries: (...a: unknown[]) => openDirect(...a),
+      previewFromDeliveries: (...a: unknown[]) => previewFromDeliveries(...a),
+      createFromDeliveries: (...a: unknown[]) => createFromDeliveries(...a),
     },
     productOptionService: { search: vi.fn().mockResolvedValue([]) },
   };
@@ -107,6 +113,11 @@ function seedDraft(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   create.mockReset();
   create.mockResolvedValue({ message: "Order dibuat", data: { id: 3 } });
+  openDirect.mockReset();
+  openDirect.mockResolvedValue({ items: [], count: 0, oldestDate: "" });
+  previewFromDeliveries.mockReset();
+  createFromDeliveries.mockReset();
+  sessionStorage.clear();
   createCustomer.mockReset();
   scanLookup.mockReset();
   productDetail.mockReset();
@@ -352,5 +363,162 @@ describe("form order jual — koreksi order terkonfirmasi", () => {
     expect(await screen.findByText(/hanya baca/)).toBeTruthy();
     expect(screen.getByText(/ubah info order/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Simpan" })).toBeNull();
+  });
+});
+
+describe("form order jual — mode dari surat jalan (ADR-0022 W-06)", () => {
+  const previewItem = {
+    productId: 5, variantId: 9, productCode: "BRG-1", productName: "Barang Uji", variantName: "Default", variantCode: "D",
+    uom: "pcs", uomFactor: 1, qty: 4, qtyBase: 4, unitPrice: 50000, discountPct: 0, discountNominal: 0, lineTotal: 200000,
+    stockTracked: true, itemType: "barang", pricingSource: "catalog", basePrice: 50000, discountReason: "", note: "",
+    taxable: true, taxBase: 200000, taxAmount: 0,
+  };
+  const preview = {
+    partyId: 3, partyName: "Budi", shipToLabel: "Gudang", shipToRecipient: "Pak Budi", shipToPhone: "0812", shipToAddress: "Jl. Mawar 1",
+    deliveryDate: "2026-10-18",
+    deliveries: [{ id: 11, number: "SJ-0011", deliveryDate: "2026-10-17" }, { id: 12, number: "SJ-0012", deliveryDate: "2026-10-18" }],
+    items: [previewItem], subtotal: 200000, discountTotal: 0, taxTotal: 0, grandTotal: 200000,
+    warnings: ["Masa faktur pajak berbeda dengan masa SJ"],
+  };
+
+  function renderFrom(path = "/sales-orders/new?fromDeliveries=12,11") {
+    return render(
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/sales-orders/new" element={<SalesOrderFormPage />} />
+          <Route path="/sales-orders/:id" element={<div>detail</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  beforeEach(() => {
+    previewFromDeliveries.mockResolvedValue(preview);
+    createFromDeliveries.mockResolvedValue({ message: "Order dibuat dari surat jalan dan selesai", data: { id: 99, number: "SO-0099", status: "completed" } });
+    useAuthStore.setState({
+      permissions: ["sales.create", "sales.view", "payment.create", "sales.approve"],
+      ready: true,
+      user: { id: 1, username: "u", fullName: "U" },
+    } as never);
+  });
+
+  it("pratinjau mengunci pelanggan dan qty: tanpa pemilih pelanggan, tanpa isian qty, harga bisa diisi", async () => {
+    renderFrom();
+    expect(await screen.findByTestId("locked-customer")).toHaveTextContent("Budi");
+    expect(previewFromDeliveries.mock.calls[0][0]).toMatchObject({ deliveryIds: [11, 12], paymentTerms: "cod" });
+    expect(screen.queryByTestId("party-picker")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Qty Barang Uji")).not.toBeInTheDocument();
+    expect(screen.getByText("SJ-0011")).toBeInTheDocument();
+    expect(screen.getByText("SJ-0012")).toBeInTheDocument();
+    expect(screen.getByLabelText("Harga manual Barang Uji")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-warnings")).toHaveTextContent("Masa faktur pajak");
+    expect(screen.getByTestId("preview-summary")).toHaveTextContent("200.000");
+    // Tanpa pilihan prabayar.
+    expect(screen.queryByRole("option", { name: /Prabayar/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Simpan & selesaikan" })).toBeEnabled();
+  });
+
+  it("order tunai wajib memilih cara pelunasan sebelum disimpan", async () => {
+    renderFrom();
+    await screen.findByTestId("locked-customer");
+    fireEvent.click(screen.getByRole("button", { name: "Simpan & selesaikan" }));
+    expect(await screen.findByText(/Pilih cara pelunasan/)).toBeInTheDocument();
+    expect(createFromDeliveries).not.toHaveBeenCalled();
+    // Jadikan tempo tanpa jatuh tempo juga ditolak.
+    fireEvent.change(screen.getByLabelText(/^Cara pelunasan/), { target: { value: "switch_to_net" } });
+    fireEvent.click(screen.getByRole("button", { name: "Simpan & selesaikan" }));
+    expect(await screen.findByText("Jatuh tempo wajib diisi")).toBeInTheDocument();
+    expect(createFromDeliveries).not.toHaveBeenCalled();
+  });
+
+  it("simpan mengirim clientRef dan memakai ulang clientRef yang sama saat ulang setelah gagal", async () => {
+    createFromDeliveries
+      .mockRejectedValueOnce({ status: 500, message: "Server sibuk" })
+      .mockResolvedValueOnce({ message: "Order dibuat dari surat jalan dan selesai", data: { id: 99, number: "SO-0099" } });
+    renderFrom();
+    await screen.findByTestId("locked-customer");
+    fireEvent.change(screen.getByLabelText(/^Cara pelunasan/), { target: { value: "pay_now" } });
+    fireEvent.change(screen.getByLabelText("Harga manual Barang Uji"), { target: { value: "55000" } });
+    // Harga manual memicu pratinjau ulang (debounce) — tunggu sampai tombol aktif kembali.
+    await waitFor(() => expect(previewFromDeliveries).toHaveBeenCalledTimes(2));
+    expect(previewFromDeliveries.mock.calls[1][0].lines).toEqual([
+      expect.objectContaining({ productId: 5, variantId: 9, uom: "pcs", unitPrice: 55000 }),
+    ]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Simpan & selesaikan" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Simpan & selesaikan" }));
+    await waitFor(() => expect(createFromDeliveries).toHaveBeenCalledTimes(1));
+    const first = createFromDeliveries.mock.calls[0][0];
+    expect(first).toMatchObject({
+      deliveryIds: [11, 12],
+      paymentTerms: "cod",
+      settlement: { mode: "pay_now", method: "cash" },
+      lines: [expect.objectContaining({ unitPrice: 55000 })],
+    });
+    expect(first.clientRef).toMatch(/.+/);
+    expect(await screen.findByText("Server sibuk")).toBeInTheDocument();
+    // Ulang: clientRef sama → server melanjutkan, bukan menggandakan.
+    fireEvent.click(screen.getByRole("button", { name: "Simpan & selesaikan" }));
+    await waitFor(() => expect(createFromDeliveries).toHaveBeenCalledTimes(2));
+    expect(createFromDeliveries.mock.calls[1][0].clientRef).toBe(first.clientRef);
+    expect(await screen.findByText("detail")).toBeInTheDocument();
+    // Sukses membersihkan clientRef tersimpan.
+    expect(sessionStorage.getItem("mini-erp:sjl-client-ref:11,12")).toBeNull();
+  });
+
+  it("termin tempo: jatuh tempo wajib, tanpa blok pelunasan", async () => {
+    renderFrom();
+    await screen.findByTestId("locked-customer");
+    fireEvent.change(screen.getByLabelText(/^Termin/), { target: { value: "net" } });
+    expect(screen.queryByTestId("settlement")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Simpan & selesaikan" }));
+    expect(await screen.findByText(/Jatuh tempo wajib diisi untuk termin tempo/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Jatuh tempo/), { target: { value: "2026-11-20" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Simpan & selesaikan" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Simpan & selesaikan" }));
+    await waitFor(() => expect(createFromDeliveries).toHaveBeenCalledTimes(1));
+    expect(createFromDeliveries.mock.calls[0][0]).toMatchObject({ paymentTerms: "net", dueDate: "2026-11-20" });
+    expect(createFromDeliveries.mock.calls[0][0].settlement).toBeUndefined();
+  });
+
+  it("kena pajak menyarankan tanggal faktur pajak = tanggal SJ", async () => {
+    renderFrom();
+    await screen.findByTestId("locked-customer");
+    fireEvent.click(screen.getByLabelText(/Kena pajak \(PPN\)/));
+    fireEvent.click(screen.getByRole("button", { name: /Detail lain/ }));
+    expect(await screen.findByLabelText("Tgl. faktur pajak")).toHaveValue("2026-10-18");
+  });
+
+  it("pratinjau gagal: galat dengan pesan server dan tombol coba lagi", async () => {
+    previewFromDeliveries.mockRejectedValueOnce({ status: 409, message: "Surat jalan sudah diorder" });
+    renderFrom();
+    expect(await screen.findByText("Surat jalan sudah diorder")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Coba lagi/ }));
+    expect(await screen.findByTestId("locked-customer")).toBeInTheDocument();
+  });
+});
+
+describe("form order jual biasa — banner SJ belum diorder (ADR-0022 W-07)", () => {
+  it("pelanggan dengan SJ Langsung terbuka: banner tidak memblokir dan membuka pemilih", async () => {
+    useAuthStore.setState({
+      permissions: ["sales.create", "sales.view", "delivery.view"],
+      ready: true,
+      user: { id: 1, username: "u", fullName: "U" },
+    } as never);
+    openDirect.mockResolvedValue({ items: [], count: 2, oldestDate: "2026-10-10" });
+    seedDraft({ partyId: 7, pickedCustomer: { value: 7, label: "C7 — Budi" } });
+    renderPage();
+    expect(await screen.findByText(/Pelanggan ini punya 2 SJ belum diorder/)).toBeInTheDocument();
+    expect(openDirect).toHaveBeenCalledWith(7, 0);
+    // Tidak memblokir: simpan biasa tetap jalan.
+    fireEvent.click(screen.getByRole("button", { name: "Simpan order" }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+  });
+
+  it("tanpa izin delivery.view tidak memanggil ringkasan SJ", async () => {
+    seedDraft({ partyId: 7, pickedCustomer: { value: 7, label: "C7 — Budi" } });
+    renderPage();
+    await screen.findByText(/BRG-1/);
+    expect(openDirect).not.toHaveBeenCalled();
+    expect(screen.queryByText(/SJ belum diorder/)).not.toBeInTheDocument();
   });
 });

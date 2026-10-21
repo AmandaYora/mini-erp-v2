@@ -1,0 +1,27 @@
+%% Perubahan skema SJ Langsung (ADR-0022 §2). Relasi lintas modul = ID primitif, tanpa FK.
+erDiagram
+  delivery_notes {
+    bigint id PK
+    bigint sales_order_id "0 selama SJ Langsung belum diorder"
+    varchar document_kind "tetap 'order'"
+    varchar origin "BARU: 'order' (bawaan) | 'direct'"
+    bigint party_id "BARU: pelanggan SJ Langsung (NULL untuk origin order)"
+    varchar ship_to_label "BARU: snapshot alamat kirim"
+    varchar ship_to_recipient "BARU"
+    varchar ship_to_phone "BARU"
+    text ship_to_address "BARU"
+  }
+  delivery_note_items {
+    bigint id PK
+    bigint delivery_id FK
+    bigint product_id
+    varchar uom
+    decimal qty_base
+  }
+  sales_orders {
+    bigint id PK
+    varchar origin "BARU: 'standard' (bawaan) | 'delivery'"
+    varchar client_ref "kunci idempoten orkestrasi"
+  }
+  delivery_notes ||--o{ delivery_note_items : "baris"
+  sales_orders ||..o{ delivery_notes : "sales_order_id (ID primitif, ditautkan belakangan)"

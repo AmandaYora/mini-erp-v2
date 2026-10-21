@@ -6,6 +6,7 @@ import { useAuthStore } from "@/modules/auth/stores/auth.store";
 
 const list = vi.fn();
 const downloadExport = vi.fn();
+const openDirect = vi.fn();
 vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/sales/services/sales.service")>();
   return {
@@ -13,6 +14,7 @@ vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
     salesService: {
       list: (...a: unknown[]) => list(...a),
       downloadExport: (...a: unknown[]) => downloadExport(...a),
+      openDirectDeliveries: (...a: unknown[]) => openDirect(...a),
     },
   };
 });
@@ -58,11 +60,27 @@ function renderPage(path: string) {
   );
 }
 
+const directNote = (id: number, partyId: number, deliveryDate: string) => ({
+  id,
+  number: `SJ-00${id}`,
+  deliveryDate,
+  partyId,
+  partyName: partyId === 3 ? "Budi" : "Citra",
+  driverName: "",
+  vehiclePlate: "",
+  recipientName: "",
+  origin: "direct",
+  salesOrderId: 0,
+  items: [],
+});
+
 beforeEach(() => {
   list.mockReset();
   downloadExport.mockReset();
+  openDirect.mockReset();
   list.mockResolvedValue({ items: [row], meta: { page: 1, limit: 20, total: 1, totalPages: 1 } });
   downloadExport.mockResolvedValue(undefined);
+  openDirect.mockResolvedValue({ items: [], count: 0, oldestDate: "" });
   useAuthStore.setState({ permissions: ["sales.view", "sales.create", "sales.export"], ready: true });
 });
 afterEach(cleanup);
@@ -86,6 +104,7 @@ describe("daftar order jual", () => {
       dir: "asc",
       search: "",
       channel: "",
+      origin: "",
       page: 1,
       limit: 20,
     });
@@ -154,5 +173,70 @@ describe("daftar order jual", () => {
     renderPage("/sales-orders");
     await screen.findByText("SO-0007");
     expect(screen.queryByRole("button", { name: /Ekspor/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("daftar order jual — SJ Langsung (ADR-0022 W-05)", () => {
+  it("panel SJ menunggu order tersembunyi bila jumlahnya 0 dan tanpa izin delivery.view", async () => {
+    renderPage("/sales-orders");
+    await screen.findByText("SO-0007");
+    expect(openDirect).not.toHaveBeenCalled();
+    expect(screen.queryByText(/SJ menunggu order/)).not.toBeInTheDocument();
+
+    cleanup();
+    useAuthStore.setState({ permissions: ["sales.view", "sales.create", "delivery.view"], ready: true });
+    renderPage("/sales-orders");
+    await screen.findByText("SO-0007");
+    await waitFor(() => expect(openDirect).toHaveBeenCalledTimes(1));
+    expect(openDirect.mock.calls[0][0]).toBeNull();
+    expect(openDirect.mock.calls[0][1]).toBe(20);
+    expect(screen.queryByText(/SJ menunggu order/)).not.toBeInTheDocument();
+  });
+
+  it("panel menampilkan SJ dengan umur, tautan Buat order per baris, dan gabungan hanya satu pelanggan", async () => {
+    useAuthStore.setState({ permissions: ["sales.view", "sales.create", "delivery.view"], ready: true });
+    openDirect.mockResolvedValue({
+      items: [directNote(11, 3, "2026-10-01"), directNote(12, 3, "2026-10-02"), directNote(13, 4, "2026-10-03")],
+      count: 3,
+      oldestDate: "2026-10-01",
+    });
+    renderPage("/sales-orders");
+    expect(await screen.findByText(/SJ menunggu order \(3\) · tertua \d+ hari/)).toBeInTheDocument();
+    expect(screen.getByText("SJ-0011")).toBeInTheDocument();
+    const links = screen.getAllByRole("link", { name: "Buat order" });
+    expect(links[0]).toHaveAttribute("href", "/sales-orders/new?fromDeliveries=11");
+    // Centang dua SJ pelanggan yang sama → tombol gabung aktif dengan kedua id.
+    const boxes = screen.getAllByRole("checkbox", { name: /Pilih baris/ });
+    await userEvent.click(boxes[0]);
+    await userEvent.click(boxes[1]);
+    const bulk = await screen.findByRole("button", { name: "Buat order dari 2 SJ" });
+    expect(bulk).toBeEnabled();
+    // Tambah SJ pelanggan lain → ditolak di klien.
+    await userEvent.click(boxes[2]);
+    expect(await screen.findByRole("button", { name: "Buat order dari 3 SJ" })).toBeDisabled();
+    expect(screen.getByText(/satu pelanggan yang sama/)).toBeInTheDocument();
+  });
+
+  it("tombol Tambah order bercabang: Order biasa / Dari surat jalan membuka pemilih", async () => {
+    useAuthStore.setState({ permissions: ["sales.view", "sales.create", "delivery.view"], ready: true });
+    renderPage("/sales-orders");
+    await screen.findByText("SO-0007");
+    expect(screen.getByRole("link", { name: "Tambah order" })).toHaveAttribute("href", "/sales-orders/new");
+    await userEvent.click(screen.getByRole("button", { name: "Pilihan tambah order" }));
+    expect(await screen.findByRole("menuitem", { name: "Order biasa" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Dari surat jalan" }));
+    expect(await screen.findByRole("dialog", { name: "Order dari surat jalan" })).toBeInTheDocument();
+  });
+
+  it("filter Asal dikirim ke server, tampil sebagai chip, dan baris dari SJ berlencana", async () => {
+    list.mockResolvedValue({
+      items: [{ ...row, origin: "delivery" }],
+      meta: { page: 1, limit: 20, total: 1, totalPages: 1 },
+    });
+    renderPage("/sales-orders?origin=delivery");
+    await screen.findByText("SO-0007");
+    expect(list.mock.calls[0][0]).toMatchObject({ origin: "delivery" });
+    expect(screen.getByText("Asal: SJ Langsung")).toBeInTheDocument();
+    expect(screen.getByText("Dari SJ")).toBeInTheDocument();
   });
 });

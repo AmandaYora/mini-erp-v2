@@ -25,7 +25,7 @@ describe("filter Order Jual", () => {
       salesListFilterSchema,
       SALES_LIST_DEFAULTS,
       new URLSearchParams(
-        "search=budi&status=confirmed,completed&paymentTerms=net&paymentStatus=overdue&channel=pos&partyId=4&from=2026-10-01&to=2026-10-31&sort=total&dir=asc&page=2",
+        "search=budi&status=confirmed,completed&paymentTerms=net&paymentStatus=overdue&channel=pos&partyId=4&origin=delivery&from=2026-10-01&to=2026-10-31&sort=total&dir=asc&page=2",
       ),
     );
     expect(f).toEqual({
@@ -35,6 +35,7 @@ describe("filter Order Jual", () => {
       paymentStatus: "overdue",
       channel: "pos",
       partyId: 4,
+      origin: "delivery",
       from: "2026-10-01",
       to: "2026-10-31",
       sort: "total",

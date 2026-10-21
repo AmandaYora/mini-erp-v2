@@ -28,13 +28,38 @@ type Item struct {
 	ReservationKey string
 }
 
-// DeliveryNote is one surat jalan against an SO.
+// Origins of a delivery note (ADR-0022). An order note is drafted against a
+// confirmed SO; a direct note ("SJ Langsung") is drafted for a customer BEFORE
+// any order exists — SalesOrderID stays 0 until the sales module builds the
+// order from it (LinkDirect). After that it behaves like an order note.
+const (
+	OriginOrder  = "order"
+	OriginDirect = "direct"
+)
+
+// DeliveryNote is one surat jalan against an SO (or, for a direct note,
+// against a customer until its order exists).
 type DeliveryNote struct {
-	ID                              int64
-	Number                          string
-	BranchID                        int64
-	SalesOrderID                    int64
-	OrderNumber                     string
+	ID       int64
+	Number   string
+	BranchID int64
+	// SalesOrderID is 0 for a direct note that has no order yet.
+	SalesOrderID int64
+	OrderNumber  string
+	// Origin: OriginOrder | OriginDirect.
+	Origin string
+	// PartyID / PartyName / ShipTo* are the customer snapshot of a DIRECT note
+	// (an order note reads them from its SO). PartyName is filled best-effort
+	// on reads through the party contract.
+	PartyID         int64
+	PartyName       string
+	ShipToLabel     string
+	ShipToRecipient string
+	ShipToPhone     string
+	ShipToAddress   string
+	// LinkedAt / LinkedBy: when and by whom a direct note received its order.
+	LinkedAt                        string
+	LinkedBy                        int64
 	DeliveryDate                    string
 	DriverName                      string
 	VehiclePlate                    string
@@ -127,10 +152,37 @@ type ReplacementSettlement struct {
 	AmountTendered int64
 }
 
+// OpenDirectSummary counts the confirmed direct notes still waiting for an
+// order and names the oldest delivery date (YYYY-MM-DD, empty when none).
+type OpenDirectSummary struct {
+	Count      int64  `json:"count"`
+	OldestDate string `json:"oldestDate"`
+}
+
 // DeliveryClient is the public surface of the delivery module.
 type DeliveryClient interface {
 	// GetByID resolves a note with lines, or nil when missing.
 	GetByID(ctx context.Context, id int64) (*DeliveryNote, error)
+	// GetByIDs resolves many notes with lines in two grouped reads (headers,
+	// lines); unknown ids are absent. Sales reads the source notes of an
+	// order-from-SJ this way.
+	GetByIDs(ctx context.Context, ids []int64) (map[int64]*DeliveryNote, error)
+	// ListOpenDirect lists the branch's confirmed direct notes that have no
+	// order yet, oldest first, optionally for one customer (partyID 0 = all),
+	// without lines, bounded by limit.
+	ListOpenDirect(ctx context.Context, branchID, partyID int64, limit int) ([]*DeliveryNote, error)
+	// OpenDirectSummary counts those notes (partyID 0 = all) in one read.
+	OpenDirectSummary(ctx context.Context, branchID, partyID int64) (OpenDirectSummary, error)
+	// LinkDirect attaches confirmed, unordered direct notes of one customer to
+	// the order the sales module built from them (ADR-0022). It only links and
+	// checks — completing the order stays with the caller. Invariants, all
+	// checked under the order's lock: the order is confirmed, of origin
+	// "delivery", in branchID, with the same customer as every note; Σ base qty
+	// of the notes per product/variant equals the order's stock lines; every
+	// note is a confirmed direct order-kind note that is unordered OR already
+	// linked to this very order (replay). All notes link in one transaction or
+	// none; a note that belongs to another order is a Conflict.
+	LinkDirect(ctx context.Context, actorID, branchID, soID int64, noteIDs []int64) error
 	// DeliveredQty sums confirmed-delivered base qty for one SO line
 	// position. Returns cap the source of every sales return.
 	DeliveredQty(ctx context.Context, soID, productID, variantID int64) (float64, error)
@@ -186,6 +238,7 @@ func PermissionCatalog() []usercontracts.PermissionSeed {
 	return []usercontracts.PermissionSeed{
 		{Code: "delivery.view", Name: "Pengiriman: Lihat"},
 		{Code: "delivery.create", Name: "Pengiriman: Tambah"},
+		{Code: "delivery.create_direct", Name: "Pengiriman: Surat Jalan Langsung (tanpa order)"},
 		{Code: "delivery.archive", Name: "Pengiriman: Batalkan"},
 	}
 }

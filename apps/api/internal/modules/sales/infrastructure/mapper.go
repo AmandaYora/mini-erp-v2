@@ -58,6 +58,7 @@ func toOrder(r sqlc.GetOrderRow) *contracts.SalesOrder {
 		AssignedUserID:   r.AssignedUserID.Int64,
 		CreditApprovedBy: r.CreditApprovedBy.Int64,
 		CreditApprovedAt: dbutil.FormatNullTime(r.CreditApprovedAt),
+		Origin:           r.Origin,
 	}
 }
 

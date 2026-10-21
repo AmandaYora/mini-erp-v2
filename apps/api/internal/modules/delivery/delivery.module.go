@@ -12,6 +12,7 @@ import (
 	"mini-erp/internal/modules/delivery/infrastructure"
 	"mini-erp/internal/modules/delivery/presentation"
 	mediacontracts "mini-erp/internal/modules/media/contracts"
+	partycontracts "mini-erp/internal/modules/party/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
 	stockcontracts "mini-erp/internal/modules/stock/contracts"
 )
@@ -26,6 +27,7 @@ type Module struct {
 func NewModule(
 	db *sql.DB,
 	sales application.Sales,
+	parties partycontracts.PartyClient,
 	products productcontracts.ProductClient,
 	stock stockcontracts.StockClient,
 	branches branchcontracts.BranchClient,
@@ -33,7 +35,7 @@ func NewModule(
 	audit auditcontracts.AuditClient,
 	settings application.Settings,
 ) *Module {
-	svc := application.NewService(infrastructure.NewRepository(db), sales, products, stock, branches, media, audit)
+	svc := application.NewService(infrastructure.NewRepository(db), sales, parties, products, stock, branches, media, audit)
 	svc.SetSettings(settings)
 	return &Module{svc: svc, handler: presentation.NewHandler(svc)}
 }

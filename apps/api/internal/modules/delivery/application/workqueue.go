@@ -58,6 +58,8 @@ type WaitingNote struct {
 	ID           int64  `json:"id"`
 	Number       string `json:"number"`
 	SalesOrderID int64  `json:"salesOrderId"`
+	// Origin "direct" = SJ Langsung without an order yet (SalesOrderID 0).
+	Origin       string `json:"origin"`
 	OrderNumber  string `json:"orderNumber"`
 	PartyName    string `json:"partyName"`
 	DeliveryDate string `json:"deliveryDate"`
@@ -210,11 +212,17 @@ func (s *Service) queueWaiting(ctx context.Context, branchID int64, search, from
 	soIDs := make([]int64, 0, len(waiting))
 	noteIDs := make([]int64, 0, len(waiting))
 	for _, n := range waiting {
-		soIDs = append(soIDs, n.SalesOrderID)
+		if n.SalesOrderID != 0 {
+			soIDs = append(soIDs, n.SalesOrderID)
+		}
 		noteIDs = append(noteIDs, n.ID)
 	}
 	orders, err := s.sales.SummariesByIDs(ctx, soIDs)
 	if err != nil {
+		return nil, err
+	}
+	// Direct notes (ADR-0022) have no order yet: their customer is on the note.
+	if err := s.decorateParties(ctx, waiting); err != nil {
 		return nil, err
 	}
 	signed := map[int64]string{}
@@ -226,14 +234,20 @@ func (s *Service) queueWaiting(ctx context.Context, branchID int64, search, from
 	today := timeutil.NowUTC().In(timeutil.Jakarta)
 	out := make([]WaitingNote, 0, len(waiting))
 	for _, n := range waiting {
-		o := orders[n.SalesOrderID]
-		if o == nil || o.BranchID != branchID {
-			continue
+		var orderNumber, partyName string
+		if isUnorderedDirect(n) {
+			partyName = n.PartyName
+		} else {
+			o := orders[n.SalesOrderID]
+			if o == nil || o.BranchID != branchID {
+				continue
+			}
+			orderNumber, partyName = o.Number, o.PartyName
 		}
 		_, has := signed[n.ID]
 		out = append(out, WaitingNote{
-			ID: n.ID, Number: n.Number, SalesOrderID: n.SalesOrderID,
-			OrderNumber: o.Number, PartyName: o.PartyName,
+			ID: n.ID, Number: n.Number, SalesOrderID: n.SalesOrderID, Origin: n.Origin,
+			OrderNumber: orderNumber, PartyName: partyName,
 			DeliveryDate: n.DeliveryDate, AgeDays: ageDays(n.DeliveryDate, today),
 			DriverName: n.DriverName, VehiclePlate: n.VehiclePlate, HasSignedDocument: has,
 		})

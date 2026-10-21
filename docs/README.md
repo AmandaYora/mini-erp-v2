@@ -49,6 +49,7 @@ Setiap rencana berada di `plan/<slug>/PLAN.md`, lampirannya di folder yang sama.
 | [menuju-pengganti-production](plan/menuju-pengganti-production/PLAN.md) | 2026-10-08 | **Aktif**: Fase 9 (gladi, parallel-run, cutover) dan F8-18 (sqlc `finance`/`stock`). Lampiran rancangan di `design/`; catatan gladi di `CHECKPOINT-2026-10-16.md` |
 | [redesain-ui](plan/redesain-ui/PLAN.md) | 2026-10-16 | Selesai kecuali yang butuh perangkat/pemilik: uji tablet kasir (U5-5), logo resmi (U7-7), tema gelap (ditunda). Lihat "Pembaruan eksekusi 2026-10-21". [PANDUAN-MIGRASI-HALAMAN.md](plan/redesain-ui/PANDUAN-MIGRASI-HALAMAN.md) tetap resep kerja yang berlaku |
 | [penyempurnaan-paritas](plan/penyempurnaan-paritas/PLAN.md) | 2026-10-18 | Selesai 2026-10-20 (`npm run plan:check`); audit penutup di `AUDIT-Z01.md` |
+| [sj-langsung](plan/sj-langsung/PLAN.md) | 2026-10-21 | **Aktif**: backend + frontend terimplementasi 2026-10-21 ([ADR-0022](../knowledge/decisions/ADR-0022-sj-langsung.md), default K1–K7); sisa: e2e (T-01), uji cetak fisik, konfirmasi pemilik/akuntan, rilis setelah cutover |
 
 Rencana yang masih aktif boleh diperbarui di bagian log/checkpoint-nya sendiri. Rencana yang selesai tidak disunting
 lagi; pekerjaan baru = rencana baru.

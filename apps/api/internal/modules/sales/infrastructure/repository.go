@@ -71,9 +71,13 @@ func (r *Repository) CreateOrder(ctx context.Context, o *contracts.SalesOrder, a
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	origin := o.Origin
+	if origin == "" {
+		origin = contracts.OriginStandard
+	}
 	q := r.q.WithTx(tx)
 	res, err := q.InsertOrder(ctx, sqlc.InsertOrderParams{
-		Number: o.Number, BranchID: o.BranchID, PartyID: o.PartyID, Channel: o.Channel,
+		Number: o.Number, BranchID: o.BranchID, PartyID: o.PartyID, Channel: o.Channel, Origin: origin,
 		MemberCode: dbutil.NullString(o.MemberCode), OrderDate: h.orderDate, DueDate: h.dueDate,
 		PaymentTerms: o.PaymentTerms, TaxType: o.TaxType, TaxRate: o.TaxRate, Subtotal: o.Subtotal,
 		DiscountTotal: o.DiscountTotal, TaxTotal: o.TaxTotal, GrandTotal: o.GrandTotal,

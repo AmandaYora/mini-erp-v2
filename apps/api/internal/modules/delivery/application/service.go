@@ -13,6 +13,7 @@ import (
 	"mini-erp/internal/modules/delivery/contracts"
 	"mini-erp/internal/modules/delivery/infrastructure"
 	mediacontracts "mini-erp/internal/modules/media/contracts"
+	partycontracts "mini-erp/internal/modules/party/contracts"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
 	salescontracts "mini-erp/internal/modules/sales/contracts"
@@ -29,6 +30,7 @@ import (
 type Service struct {
 	repo     *infrastructure.Repository
 	sales    Sales
+	parties  partycontracts.PartyClient
 	products productcontracts.ProductClient
 	stock    stockcontracts.StockClient
 	branches branchcontracts.BranchClient
@@ -54,8 +56,9 @@ const EvidenceSetting = "delivery_require_evidence"
 // with a signature status, and at least one delivery photo. POS handovers and
 // replacement shipments are exempt (the goods leave at the counter / are tied
 // to a return). A company may switch the rule off with EvidenceSetting=false.
+// so is nil for a direct note (no order yet): it is a regular shipment.
 func (s *Service) requireEvidence(ctx context.Context, so *salescontracts.SalesOrder, note *contracts.DeliveryNote, in ConfirmInput) error {
-	if so.Channel == salescontracts.ChannelPOS || note.DocumentKind == contracts.DocumentKindReplacement {
+	if (so != nil && so.Channel == salescontracts.ChannelPOS) || note.DocumentKind == contracts.DocumentKindReplacement {
 		return nil
 	}
 	if s.settings != nil {
@@ -126,16 +129,19 @@ type Sales interface {
 }
 
 // NewService wires delivery use cases. All cross-module links are contracts.
+// parties serves the direct notes (ADR-0022): the customer of a note that has
+// no order yet is validated and named through it.
 func NewService(
 	repo *infrastructure.Repository,
 	sales Sales,
+	parties partycontracts.PartyClient,
 	products productcontracts.ProductClient,
 	stock stockcontracts.StockClient,
 	branches branchcontracts.BranchClient,
 	media mediacontracts.MediaClient,
 	audit auditcontracts.AuditClient,
 ) *Service {
-	return &Service{repo: repo, sales: sales, products: products,
+	return &Service{repo: repo, sales: sales, parties: parties, products: products,
 		stock: stock, branches: branches, media: media, audit: audit}
 }
 
@@ -205,12 +211,20 @@ func (s *Service) enrich(ctx context.Context, n *contracts.DeliveryNote) (*contr
 		items = []*contracts.Item{}
 	}
 	n.Items = items
-	so, err := s.sales.GetByID(ctx, n.SalesOrderID)
-	if err != nil {
-		return nil, apperror.Internal(err)
+	if n.SalesOrderID != 0 {
+		so, err := s.sales.GetByID(ctx, n.SalesOrderID)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if so != nil {
+			n.OrderNumber = so.Number
+		}
 	}
-	if so != nil {
-		n.OrderNumber = so.Number
+	if n.Origin == contracts.OriginDirect && n.PartyID != 0 {
+		// Best-effort: an archived customer still reads by name.
+		if p, err := s.parties.GetByID(ctx, n.PartyID); err == nil && p != nil {
+			n.PartyName = p.Name
+		}
 	}
 	return n, nil
 }
@@ -498,7 +512,7 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 	if err != nil || out == nil {
 		return out, err
 	}
-	out.Warnings = s.draftWarnings(ctx, branchID, so, items)
+	out.Warnings = s.draftWarnings(ctx, branchID, so, items, nil)
 	return out, nil
 }
 
@@ -507,14 +521,19 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 // used before you confirm" notice, plus one line per position whose available
 // quantity is already below what the SJ needs. It never blocks and never fails:
 // an unreadable balance simply yields no per-position line.
-func (s *Service) draftWarnings(ctx context.Context, branchID int64, so *salescontracts.SalesOrder, items []*contracts.Item) []string {
-	if so.Channel == salescontracts.ChannelPOS {
+//
+// so is nil for a direct note (ADR-0022): every line is a stock line then and
+// names come from the catalog instead of the order snapshot.
+func (s *Service) draftWarnings(ctx context.Context, branchID int64, so *salescontracts.SalesOrder, items []*contracts.Item, names map[string]string) []string {
+	if so != nil && so.Channel == salescontracts.ChannelPOS {
 		return nil // the cart hold already reserves the goods; the counter ships at once
 	}
 	untracked := map[string]bool{}
-	for _, l := range so.Items {
-		if !l.StockTracked {
-			untracked[lineKey(l.ProductID, l.VariantID)] = true
+	if so != nil {
+		for _, l := range so.Items {
+			if !l.StockTracked {
+				untracked[lineKey(l.ProductID, l.VariantID)] = true
+			}
 		}
 	}
 	type pos struct{ product, variant, location int64 }
@@ -533,9 +552,13 @@ func (s *Service) draftWarnings(ctx context.Context, branchID int64, so *salesco
 	if len(order) == 0 {
 		return nil
 	}
-	names := map[string]string{}
-	for _, l := range so.Items {
-		names[lineKey(l.ProductID, l.VariantID)] = l.ProductName
+	if names == nil {
+		names = map[string]string{}
+	}
+	if so != nil {
+		for _, l := range so.Items {
+			names[lineKey(l.ProductID, l.VariantID)] = l.ProductName
+		}
 	}
 	warnings := []string{"Stok belum dikurangi atau ditahan oleh surat jalan draf; penjualan lain dapat memakainya sebelum Anda mengonfirmasi."}
 	for _, p := range order {
@@ -586,6 +609,10 @@ func (s *Service) Confirm(ctx context.Context, actorID, branchID, id int64, in C
 			return nil, err
 		}
 	}
+	if isUnorderedDirect(n) {
+		// No order yet (ADR-0022): stock out only, nothing to settle or complete.
+		return s.confirmDirect(ctx, actorID, branchID, id, in)
+	}
 	var out *contracts.DeliveryNote
 	err = doclock.Lock("so:"+strconv.FormatInt(n.SalesOrderID, 10), func() error {
 		res, _, err := s.confirmLocked(ctx, actorID, branchID, id, in)
@@ -608,18 +635,25 @@ func (s *Service) confirmLocked(ctx context.Context, actorID, branchID, id int64
 	}
 	switch n.Status {
 	case contracts.StatusConfirmed:
-		// Already final: only the post-final steps may be missing.
+		// Already final: only the post-final steps may be missing. A linked
+		// direct note has none — the sales module completes an order it built
+		// from SJ Langsung itself (ADR-0022).
 		if full, err := s.enrich(ctx, n); err == nil {
 			s.releaseHolds(ctx, actorID, branchID, full)
 		}
-		if err := s.completeOrderIfDone(ctx, actorID, branchID, n.SalesOrderID); err != nil {
-			return nil, false, err
+		if n.Origin != contracts.OriginDirect {
+			if err := s.completeOrderIfDone(ctx, actorID, branchID, n.SalesOrderID); err != nil {
+				return nil, false, err
+			}
 		}
 		out, err := s.GetByID(ctx, n.ID)
 		return out, true, err
 	case contracts.StatusDraft:
 	default:
 		return nil, false, apperror.Conflict("Hanya draft yang bisa dikonfirmasi")
+	}
+	if isUnorderedDirect(n) {
+		return nil, false, apperror.Conflict("Surat jalan langsung belum punya order; muat ulang")
 	}
 	so, err := s.sales.GetByID(ctx, n.SalesOrderID)
 	if err != nil {
@@ -847,6 +881,11 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64, reaso
 	}
 	if n.DocumentKind == contracts.DocumentKindReplacement {
 		return nil, errReplacementManagedByReturn()
+	}
+	if isUnorderedDirect(n) {
+		// A direct note without an order may be voided even after it shipped:
+		// nothing downstream (order, journal) depends on it yet (ADR-0022).
+		return s.cancelDirect(ctx, actorID, branchID, id, reason)
 	}
 	err = doclock.Lock("so:"+strconv.FormatInt(n.SalesOrderID, 10), func() error {
 		return s.cancelDraft(ctx, actorID, branchID, id, reason)

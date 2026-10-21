@@ -52,6 +52,7 @@ export const MODULE_PAGES: Record<string, React.LazyExoticComponent<React.Compon
   "/deliveries": lazy(() => import("@/modules/delivery/pages/DeliveriesPage")),
   "/deliveries/queue": lazy(() => import("@/modules/delivery/pages/QueuePage")),
   "/deliveries/new": lazy(() => import("@/modules/delivery/pages/CreateDeliveryPage")),
+  "/deliveries/new-direct": lazy(() => import("@/modules/delivery/pages/CreateDirectDeliveryPage")),
   "/deliveries/:id": lazy(() => import("@/modules/delivery/pages/DeliveryDetailPage")),
   "/payments": lazy(() => import("@/modules/payment/pages/PaymentsPage")),
   "/payments/:id": lazy(() => import("@/modules/payment/pages/PaymentDetailPage")),

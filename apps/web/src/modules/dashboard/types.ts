@@ -121,6 +121,15 @@ export interface TopMarginProduct {
   costIncomplete: boolean;
 }
 
+// Bentuk JSON backend: GET /deliveries/open-direct?limit=0 (ADR-0022) — ringkasan
+// surat jalan langsung terkonfirmasi yang belum dibuatkan order di cabang aktif.
+// `items` kosong pada limit=0; `oldestDate` YYYY-MM-DD atau "" bila tidak ada.
+export interface OpenDirectSummary {
+  items: unknown[];
+  count: number;
+  oldestDate: string;
+}
+
 // Rentang tren penjualan (F7): 7 hari … 12 bulan.
 export type TrendRangeKey = "7d" | "30d" | "90d" | "12m";
 

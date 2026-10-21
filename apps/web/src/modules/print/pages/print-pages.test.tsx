@@ -236,6 +236,35 @@ describe("surat jalan (sama dengan sistem lama)", () => {
     expect(screen.getByText("STATUS : DIBATALKAN")).toBeTruthy();
     expect(screen.getByText("K 1234 AB")).toBeTruthy();
   });
+
+  it("SJ Langsung tanpa order: pelanggan/penerima/alamat dari SJ, No Nota kosong, nama barang dari master (ADR-0022)", async () => {
+    fetchDelivery.mockResolvedValue({
+      note: note({
+        salesOrderId: 0,
+        orderNumber: "",
+        origin: "direct",
+        partyName: "PT Maju",
+        shipToRecipient: "Pak Anton",
+        shipToPhone: "0812-999",
+        shipToAddress: "Jl. Proyek 1",
+      }),
+      order: null,
+      products: [{ id: 11, code: "SMN", name: "Semen", variants: [{ id: 110, code: "SMN", name: "Semen", isHidden: true }] }],
+    });
+    const { container } = renderAt("/print/delivery/3", "/print/delivery/:id", <DeliveryNotePrintPage />);
+    expect(await screen.findByText("SURAT JALAN")).toBeTruthy();
+    expect(screen.getAllByText("PT Maju").length).toBeGreaterThan(0);
+    expect(screen.getByText("Pak Anton")).toBeTruthy();
+    expect(screen.getByText("0812-999")).toBeTruthy();
+    expect(screen.getByText("Jl. Proyek 1")).toBeTruthy();
+    expect(screen.getByText("Semen")).toBeTruthy();
+    expect(screen.getByText("STATUS : Belum Diorder")).toBeTruthy();
+    // Tata letak sama: label No Nota tetap ada, isinya kosong.
+    expect(screen.getByText("No Nota")).toBeTruthy();
+    expect(screen.queryByText("SO-0005")).toBeNull();
+    const heads = Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent);
+    expect(heads).toEqual(["No", "Qty", "Satuan", "Produk", "Keterangan"]);
+  });
 });
 
 describe("bukti pembayaran (sama dengan sistem lama)", () => {

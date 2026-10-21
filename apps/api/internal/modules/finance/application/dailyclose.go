@@ -31,7 +31,11 @@ const (
 	ReasonMissingCost    = "missing_cost_basis"
 	ReasonMissingOrder   = "missing_source_order"
 	ReasonMissingMapping = "missing_account_mapping"
-	ReasonOther          = "build_failed"
+	// ReasonAwaitingOrder: a direct delivery note (SJ Langsung, ADR-0022) whose
+	// order has not been built yet — the sales admin, not the accountant,
+	// unblocks it.
+	ReasonAwaitingOrder = "awaiting_order"
+	ReasonOther         = "build_failed"
 )
 
 // maxOverviewProbe bounds how many unposted documents the overview tries to
@@ -304,6 +308,8 @@ func (s *Service) dayTotals(ctx context.Context, branchID int64, day string) (Da
 func classifyBuildFailure(msg string) string {
 	m := strings.ToLower(msg)
 	switch {
+	case strings.Contains(m, "menunggu order"):
+		return ReasonAwaitingOrder
 	case strings.Contains(m, "harga modal") || strings.Contains(m, "biaya persediaan"):
 		return ReasonMissingCost
 	case strings.Contains(m, "butuh order") || strings.Contains(m, "order dengan data"):
@@ -323,6 +329,8 @@ func reasonText(code string) (label, hint string) {
 		return "Pesanan asal tanpa data pihak", "Dokumen butuh pesanan asal dengan customer/supplier yang lengkap."
 	case ReasonMissingMapping:
 		return "Pemetaan akun belum lengkap", "Atur pemetaan akun otomatis di halaman Akun."
+	case ReasonAwaitingOrder:
+		return "Surat jalan langsung menunggu order", "Admin penjualan membuat order dari surat jalan di menu Order Jual (Tambah order → Dari surat jalan); jurnal terbentuk setelah ordernya ada."
 	default:
 		return "Tidak bisa dijurnal", "Periksa pesan di tiap dokumen; abaikan dokumen yang memang tidak perlu dijurnal."
 	}

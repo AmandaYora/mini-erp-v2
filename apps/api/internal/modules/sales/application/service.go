@@ -202,7 +202,10 @@ type OrderInput struct {
 	// HeaderOnly restricts an update of a confirmed order to the header-light
 	// fields (refused when anything economic differs).
 	HeaderOnly bool
-	Items      []LineInput
+	// Origin marks an order built from direct delivery notes (ADR-0022); empty
+	// = standard. Set by CreateFromDeliveries only, never by the HTTP payload.
+	Origin string
+	Items  []LineInput
 }
 
 type pricedLine struct {
@@ -523,7 +526,7 @@ func (s *Service) createOrder(ctx context.Context, actorID, branchID int64, in O
 		return nil, err
 	}
 	id, err := s.repo.CreateOrder(ctx, &contracts.SalesOrder{
-		Number: number, BranchID: branchID, PartyID: in.PartyID, Channel: in.Channel,
+		Number: number, BranchID: branchID, PartyID: in.PartyID, Channel: in.Channel, Origin: in.Origin,
 		MemberCode: memberCode, OrderDate: timeutil.DateOrToday(in.OrderDate),
 		DueDate: strings.TrimSpace(in.DueDate), PaymentTerms: in.PaymentTerms,
 		TaxType: in.TaxType, TaxRate: in.TaxRate,
@@ -930,6 +933,9 @@ func (s *Service) prepareFilter(ctx context.Context, f *ListFilter) error {
 		return err
 	}
 	if err := listquery.ValidateEnum("channel", f.Channel, contracts.ChannelRegular, contracts.ChannelPOS); err != nil {
+		return err
+	}
+	if err := listquery.ValidateEnum("origin", f.Origin, contracts.OriginStandard, contracts.OriginDelivery); err != nil {
 		return err
 	}
 	if err := s.preparePaymentFilter(f); err != nil {

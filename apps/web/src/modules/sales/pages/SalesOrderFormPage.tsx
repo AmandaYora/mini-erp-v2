@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Check, ChevronRight, ScanLine, UserPlus } from "lucide-react";
 import {
   AsyncSearchSelect,
@@ -51,6 +51,9 @@ import {
 import { splitItemErrors } from "@/modules/sales/lib/server-errors";
 import type { ItemErrors } from "@/modules/sales/lib/server-errors";
 import { parseManualPrice, toLinePayload } from "@/modules/sales/lib/payload";
+import { FROM_DELIVERIES_PARAM, parseFromDeliveriesParam } from "@/modules/sales/lib/from-deliveries";
+import { FromDeliveriesForm } from "@/modules/sales/components/FromDeliveriesForm";
+import { FromDeliveriesPicker } from "@/modules/sales/components/FromDeliveriesPicker";
 import { customerService } from "@/modules/party/services/party.service";
 import { PartySearchSelect } from "@/modules/party/components/PartySearchSelect";
 import { UserSearchSelect } from "@/modules/users/components/UserSearchSelect";
@@ -188,7 +191,21 @@ function uniqueUoms(p: Product): string[] {
   );
 }
 
+/**
+ * `/sales-orders/new` dan `/sales-orders/:id/edit`. Mode "dari SJ" (ADR-0022 W-06) dipilih
+ * lewat `?fromDeliveries=1,2` hanya saat tambah; tanpa param, form biasa tidak berubah.
+ */
 export default function SalesOrderFormPage() {
+  const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const fromDeliveries = parseFromDeliveriesParam(searchParams.get(FROM_DELIVERIES_PARAM));
+  if (id === undefined && fromDeliveries.length > 0) {
+    return <FromDeliveriesForm key={fromDeliveries.join(",")} deliveryIds={fromDeliveries} />;
+  }
+  return <SalesOrderStandardForm />;
+}
+
+function SalesOrderStandardForm() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
@@ -312,6 +329,23 @@ export default function SalesOrderFormPage() {
   );
   const shipAddresses = partyId === null ? [] : (addrRows ?? []);
   const addrLoading = partyId === null ? false : addrLoadingRaw;
+
+  // W-07 (ADR-0022 §7): pelanggan yang masih punya SJ Langsung belum diorder diberi
+  // banner agar barang yang sudah keluar tidak diorder dua kali. Ringkasan saja
+  // (limit 0); gagal memuat = tanpa banner, bukan galat.
+  const canViewDelivery = can("delivery.view");
+  const { data: openDirect } = useAsyncData(
+    () =>
+      isEdit || !canViewDelivery || partyId === null
+        ? Promise.resolve(null)
+        : salesService.openDirectDeliveries(partyId, 0).then(
+            (r) => r,
+            () => null,
+          ),
+    [isEdit, canViewDelivery, partyId],
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const openDirectCount = !isEdit && partyId !== null && openDirect ? openDirect.count : 0;
 
   // --- opsi produk: pencarian server-side /products/search-options?q= ---
   const loadProductOptions = (search: string): Promise<AsyncSearchOption[]> =>
@@ -774,6 +808,20 @@ export default function SalesOrderFormPage() {
       {submitError && (
         <Notice tone="danger" title={isEdit ? "Gagal menyimpan order" : "Gagal membuat order"}>
           {submitError}
+        </Notice>
+      )}
+
+      {openDirectCount > 0 && (
+        <Notice tone="info" title={`Pelanggan ini punya ${openDirectCount} SJ belum diorder — ambil dari SJ?`}>
+          <p>
+            Barang sudah dikirim lewat surat jalan langsung. Membuat order biasa untuk barang yang sama akan
+            mengeluarkan stok dua kali.
+          </p>
+          <div className="mt-2">
+            <Button variant="secondary" size="sm" onClick={() => setPickerOpen(true)}>
+              Ambil dari SJ
+            </Button>
+          </div>
         </Notice>
       )}
 
@@ -1423,6 +1471,9 @@ export default function SalesOrderFormPage() {
         </StickyFooter>
       </form>
       <ScanDialog open={scanOpen} paused={false} onClose={() => setScanOpen(false)} onScan={handleScan} />
+      {pickerOpen && (
+        <FromDeliveriesPicker open={pickerOpen} initialPartyId={partyId} onClose={() => setPickerOpen(false)} />
+      )}
       <QuickCustomerSheet
         open={quickCustomerOpen}
         requirePhone={paymentTerms === "net"}

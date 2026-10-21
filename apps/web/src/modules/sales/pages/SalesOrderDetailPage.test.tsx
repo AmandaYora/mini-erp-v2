@@ -347,3 +347,39 @@ describe("detail order jual — koreksi salah input", () => {
     expect(screen.getByText(/Rina/)).toBeTruthy();
   });
 });
+
+describe("detail order jual — order dari surat jalan (ADR-0022 W-08)", () => {
+  it("menampilkan lencana Dari SJ, asal SJ Langsung, dan rel tanpa langkah Draf", async () => {
+    getOrder.mockResolvedValue(order({ origin: "delivery", status: "completed", paidAmount: 0, outstandingAmount: 100000 }));
+    renderPage();
+    await screen.findByRole("heading", { name: "SO-0007" });
+    expect(screen.getByText("Dari SJ")).toBeInTheDocument();
+    expect(screen.getByText("SJ Langsung")).toBeInTheDocument();
+    const steps = screen.getByRole("list", { name: "Tahapan" });
+    expect(steps).not.toHaveTextContent("Draf");
+    expect(steps).toHaveTextContent("Dikirim");
+    expect(steps).toHaveTextContent("Selesai");
+  });
+
+  it("baru dibuat dari SJ: tawaran Cetak invoice dan Catat pembayaran", async () => {
+    getOrder.mockResolvedValue(order({ origin: "delivery", status: "completed" }));
+    render(
+      <MemoryRouter initialEntries={[{ pathname: "/sales-orders/7", state: { fromDeliveries: true } }]}>
+        <Routes>
+          <Route path="/sales-orders/:id" element={<SalesOrderDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Order dari surat jalan selesai")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Cetak invoice" })).toHaveAttribute("href", "/print/sales/7");
+    expect(screen.getAllByRole("button", { name: "Catat pembayaran" }).length).toBeGreaterThan(0);
+  });
+
+  it("order biasa tidak berlencana Dari SJ", async () => {
+    getOrder.mockResolvedValue(order({ origin: "standard" }));
+    renderPage();
+    await screen.findByRole("heading", { name: "SO-0007" });
+    expect(screen.queryByText("Dari SJ")).toBeNull();
+    expect(screen.getByText("Order biasa")).toBeInTheDocument();
+  });
+});

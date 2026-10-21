@@ -291,8 +291,9 @@ export default function PostingPage() {
                 {
                   header: "Dokumen",
                   render: (r) => (
-                    <span>
+                    <span className="inline-flex flex-wrap items-center gap-2">
                       <DocNumber value={r.number} /> <span className="text-muted-foreground">{docTypeLabel(r.docType)}</span>
+                      {r.awaitingOrder && <Badge tone="warning">Menunggu order</Badge>}
                     </span>
                   ),
                 },
@@ -327,9 +328,12 @@ export default function PostingPage() {
                       <Button variant="ghost" size="sm" disabled={!canPost} onClick={() => setTarget({ docType: r.docType, docId: r.docId, number: r.number })}>
                         <Eye aria-hidden /> Pratinjau
                       </Button>
-                      <Button variant="ghost" size="sm" disabled={!canPost || busy} onClick={() => setIgnoreTarget(r)}>
-                        <Ban aria-hidden /> Abaikan
-                      </Button>
+                      {/* SJ Langsung tanpa order tidak boleh diabaikan (server menolak): ordernya dibuat atau SJ-nya dibatalkan. */}
+                      {!r.awaitingOrder && (
+                        <Button variant="ghost" size="sm" disabled={!canPost || busy} onClick={() => setIgnoreTarget(r)}>
+                          <Ban aria-hidden /> Abaikan
+                        </Button>
+                      )}
                     </span>
                   ),
                 },

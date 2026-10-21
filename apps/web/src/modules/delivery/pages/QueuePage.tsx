@@ -1,5 +1,7 @@
 // Antrian kerja gudang (J3): SO terkonfirmasi yang masih bersisa + SJ draf
 // yang fisiknya belum kembali. Satu endpoint, dua tab berhitung (T7 konsol kerja).
+// Tab Menunggu juga memuat SJ Langsung (origin "direct", ADR-0022) yang belum
+// punya order: nomor order kosong, pelanggan dari SJ.
 
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -275,10 +277,17 @@ export default function QueuePage() {
                       <Link to={`${ROUTE_PATHS.deliveries}/${r.id}`} className="font-medium text-primary hover:underline">
                         <DocNumber value={r.number} />
                       </Link>
-                      <p className="text-xs text-muted-foreground">{r.orderNumber}</p>
-                      <Badge tone={r.hasSignedDocument ? "success" : "warning"}>
-                        {r.hasSignedDocument ? "SJ ttd terunggah" : "SJ ttd belum diunggah"}
-                      </Badge>
+                      {r.orderNumber ? (
+                        <p className="text-xs text-muted-foreground">{r.orderNumber}</p>
+                      ) : r.origin === "direct" ? (
+                        <p className="text-xs text-muted-foreground">{r.partyName || "–"} · tanpa order</p>
+                      ) : null}
+                      <span className="inline-flex flex-wrap gap-1">
+                        {r.origin === "direct" && !r.orderNumber && <Badge tone="info">SJ Langsung</Badge>}
+                        <Badge tone={r.hasSignedDocument ? "success" : "warning"}>
+                          {r.hasSignedDocument ? "SJ ttd terunggah" : "SJ ttd belum diunggah"}
+                        </Badge>
+                      </span>
                     </div>
                   ),
                 },

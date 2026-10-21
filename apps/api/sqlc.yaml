@@ -79,6 +79,7 @@ sql:
     schema:
       - migrations/000012_delivery.up.sql
       - migrations/000037_delivery_corrections.up.sql
+      - migrations/000042_delivery_direct.up.sql
     queries: internal/modules/delivery/infrastructure/queries
     gen:
       go:
@@ -215,6 +216,7 @@ sql:
       - migrations/000010_sales.up.sql
       - migrations/000019_sales.up.sql
       - migrations/000033_sales_corrections.up.sql
+      - migrations/000043_sales_origin.up.sql
     queries: internal/modules/sales/infrastructure/queries
     gen:
       go:

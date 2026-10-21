@@ -17,7 +17,7 @@ const wireDateTime = "2006-01-02 15:04:05"
 // UTC_TIMESTAMP in sqlc).
 func now() time.Time { return timeutil.NowUTC() }
 
-// toNote maps the 23-column note projection shared by every note query
+// toNote maps the 31-column note projection shared by every note query
 // (sqlc rows and the raw list/waiting paths select the same columns in the
 // same order, so their row types convert to sqlc.GetNoteRow).
 func toNote(r sqlc.GetNoteRow) *contracts.DeliveryNote {
@@ -41,6 +41,19 @@ func toNote(r sqlc.GetNoteRow) *contracts.DeliveryNote {
 		Notes:                           r.Notes.String,
 		CancelReason:                    r.CancelReason.String,
 		CancelledBy:                     r.CancelledBy.Int64,
+		Origin:                          r.Origin,
+		PartyID:                         r.PartyID.Int64,
+		ShipToLabel:                     r.ShipToLabel.String,
+		ShipToRecipient:                 r.ShipToRecipient.String,
+		ShipToPhone:                     r.ShipToPhone.String,
+		ShipToAddress:                   r.ShipToAddress.String,
+		LinkedBy:                        r.LinkedBy.Int64,
+	}
+	if n.Origin == "" {
+		n.Origin = contracts.OriginOrder
+	}
+	if r.LinkedAt.Valid {
+		n.LinkedAt = r.LinkedAt.Time.Format(wireDateTime)
 	}
 	if r.DispatchedAt.Valid {
 		n.DispatchedAt = r.DispatchedAt.Time.Format(wireDateTime)
@@ -70,6 +83,34 @@ func toItem(r sqlc.ListItemsByDeliveryRow) *contracts.Item {
 		QtyBase:        r.QtyBase,
 		ReservationKey: r.ReservationKey.String,
 	}
+}
+
+// toItemOfMany maps the per-note line projection (ListItemsByDeliveries) —
+// the same columns as ListItemsByDelivery plus the owning note id.
+func toItemOfMany(r sqlc.ListItemsByDeliveriesRow) *contracts.Item {
+	return toItem(sqlc.ListItemsByDeliveryRow{
+		ID: r.ID, ProductID: r.ProductID, VariantID: r.VariantID, LocationID: r.LocationID,
+		Uom: r.Uom, UomFactor: r.UomFactor, Qty: r.Qty, QtyBase: r.QtyBase, ReservationKey: r.ReservationKey,
+	})
+}
+
+// oldestDay reads the MIN(delivery_date) aggregate (untyped in the generated
+// row: time.Time with parseTime, []byte otherwise, nil when no row) as a
+// YYYY-MM-DD day.
+func oldestDay(v any) string {
+	switch t := v.(type) {
+	case time.Time:
+		return t.Format("2006-01-02")
+	case []byte:
+		if len(t) >= 10 {
+			return string(t[:10])
+		}
+	case string:
+		if len(t) >= 10 {
+			return t[:10]
+		}
+	}
+	return ""
 }
 
 // actor stores the acting user id as-is (0 = system/seed, kept verbatim).

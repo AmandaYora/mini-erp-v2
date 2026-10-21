@@ -28,7 +28,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE id = ?
 `
@@ -64,6 +64,7 @@ type GetOrderRow struct {
 	CreditApprovedBy sql.NullInt64
 	CreditApprovedAt sql.NullTime
 	CreatedAt        time.Time
+	Origin           string
 }
 
 // Sales order header + lines (F8-18). Twin of purchasing/infrastructure/queries/
@@ -103,6 +104,7 @@ func (q *Queries) GetOrder(ctx context.Context, id int64) (GetOrderRow, error) {
 		&i.CreditApprovedBy,
 		&i.CreditApprovedAt,
 		&i.CreatedAt,
+		&i.Origin,
 	)
 	return i, err
 }
@@ -113,7 +115,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE branch_id = ? AND client_ref = ?
 `
@@ -154,6 +156,7 @@ type GetOrderByClientRefRow struct {
 	CreditApprovedBy sql.NullInt64
 	CreditApprovedAt sql.NullTime
 	CreatedAt        time.Time
+	Origin           string
 }
 
 func (q *Queries) GetOrderByClientRef(ctx context.Context, arg GetOrderByClientRefParams) (GetOrderByClientRefRow, error) {
@@ -190,6 +193,7 @@ func (q *Queries) GetOrderByClientRef(ctx context.Context, arg GetOrderByClientR
 		&i.CreditApprovedBy,
 		&i.CreditApprovedAt,
 		&i.CreatedAt,
+		&i.Origin,
 	)
 	return i, err
 }
@@ -200,7 +204,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE branch_id = ? AND number = ?
 `
@@ -241,6 +245,7 @@ type GetOrderByNumberRow struct {
 	CreditApprovedBy sql.NullInt64
 	CreditApprovedAt sql.NullTime
 	CreatedAt        time.Time
+	Origin           string
 }
 
 func (q *Queries) GetOrderByNumber(ctx context.Context, arg GetOrderByNumberParams) (GetOrderByNumberRow, error) {
@@ -277,6 +282,7 @@ func (q *Queries) GetOrderByNumber(ctx context.Context, arg GetOrderByNumberPara
 		&i.CreditApprovedBy,
 		&i.CreditApprovedAt,
 		&i.CreatedAt,
+		&i.Origin,
 	)
 	return i, err
 }
@@ -355,8 +361,8 @@ INSERT INTO sales_orders
    payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
    grand_total, status, notes, ship_to_address_id, ship_to_label,
    ship_to_recipient, ship_to_phone, ship_to_address,
-   tax_invoice_number, tax_invoice_date, client_ref, created_by, updated_by, assigned_user_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   tax_invoice_number, tax_invoice_date, client_ref, created_by, updated_by, assigned_user_id, origin)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertOrderParams struct {
@@ -386,6 +392,7 @@ type InsertOrderParams struct {
 	CreatedBy        sql.NullInt64
 	UpdatedBy        sql.NullInt64
 	AssignedUserID   sql.NullInt64
+	Origin           string
 }
 
 func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (sql.Result, error) {
@@ -416,6 +423,7 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (sql.R
 		arg.CreatedBy,
 		arg.UpdatedBy,
 		arg.AssignedUserID,
+		arg.Origin,
 	)
 }
 

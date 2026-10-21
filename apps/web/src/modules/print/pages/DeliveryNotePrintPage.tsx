@@ -4,7 +4,9 @@
 // delivery-note-print-page.tsx sistem lama (identitas perusahaan).
 // Data: deliveryService.get + induk SO (nama barang, pelanggan, ship-to,
 // pembuat order, status bayar). SO best-effort: tanpa izin baca SO surat jalan
-// tetap tercetak dengan id barang.
+// tetap tercetak dengan id barang. SJ Langsung tanpa order (ADR-0022): nama
+// pelanggan, penerima, telepon, dan alamat dari SJ sendiri; No Nota dan
+// Tanggal Nota kosong; tata letak tidak berubah (ADR-0018 D12).
 
 import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -30,7 +32,12 @@ import {
 import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import { fetchDeliveryPrint, type DeliveryPrintData } from "@/modules/print/services/print-fetch";
-import { deliveryItemLine, deliveryStatusLabel } from "@/modules/print/lib/delivery-document";
+import {
+  deliveryItemLine,
+  deliveryPartyBlock,
+  deliveryStatusLabel,
+  productLinesForNote,
+} from "@/modules/print/lib/delivery-document";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { continuousDeliveryStyles, deliveryStyles } from "@/modules/print/styles";
 
@@ -74,7 +81,9 @@ export default function DeliveryNotePrintPage() {
     return <div style={{ padding: "2rem" }}>{error ?? "Surat jalan tidak ditemukan."}</div>;
   }
 
-  const { note, order } = data;
+  const { note, order, products } = data;
+  // SJ Langsung yang belum diorder: identitas pihak dari SJ, STATUS "Belum Diorder".
+  const unorderedDirect = note.origin === "direct" && note.salesOrderId === 0;
   const paperMode: PrintPaperMode = readPaperMode(searchParams, paper.isDefault ? "continuous" : "a4");
   const isContinuous = paperMode === "continuous";
   // Form kontinu pendek (5,5") — tidak perlu baris pengisi ala A4.
@@ -82,18 +91,24 @@ export default function DeliveryNotePrintPage() {
   const hideStoreStatic = readHideLetterhead(searchParams, !paper.showLetterhead);
   const showStoreStatic = !isContinuous || !hideStoreStatic;
 
-  const partyName = order !== null && order.partyName.trim() !== "" ? order.partyName : "-";
-  const shipToRecipient = (order?.shipToRecipient ?? "").trim();
+  const { partyName, shipToRecipient } = deliveryPartyBlock({
+    orderPartyName: order?.partyName,
+    orderShipToRecipient: order?.shipToRecipient,
+    notePartyName: note.partyName,
+    noteShipToRecipient: note.shipToRecipient,
+  });
   const contact = resolveShipToContact({
-    shipToAddress: order?.shipToAddress,
-    shipToPhone: order?.shipToPhone,
+    shipToAddress: order?.shipToAddress ?? note.shipToAddress,
+    shipToPhone: order?.shipToPhone ?? note.shipToPhone,
     fallbackAddress: order?.partyAddress,
     fallbackPhone: order?.partyPhone,
   });
+  // Baris SO untuk nama barang; tanpa SO, master produk (best-effort).
+  const nameLines = order?.items ?? (products ? productLinesForNote(note.items, products) : []);
   // Staff = pembuat order; USER = akun yang sedang mencetak.
   const staffName = order?.createdByName?.trim() || "—";
   const userName = user?.fullName?.trim() || "—";
-  const statusText = deliveryStatusLabel(note.status, order?.paymentStatus, order?.paymentTerms);
+  const statusText = deliveryStatusLabel(note.status, order?.paymentStatus, order?.paymentTerms, unorderedDirect);
 
   return (
     <PrintLayout
@@ -140,8 +155,8 @@ export default function DeliveryNotePrintPage() {
         </div>
         <div className="sj-kv">
           <span className="lbl">Tanggal Kirim</span><span>:</span><span>{formatLongDate(note.deliveryDate)}</span>
-          <span className="lbl">No Nota</span><span>:</span><span>{note.orderNumber || order?.number || "-"}</span>
-          <span className="lbl">Tanggal Nota</span><span>:</span><span>{formatLongDate(order?.orderDate)}</span>
+          <span className="lbl">No Nota</span><span>:</span><span>{unorderedDirect ? "" : note.orderNumber || order?.number || "-"}</span>
+          <span className="lbl">Tanggal Nota</span><span>:</span><span>{unorderedDirect ? "" : formatLongDate(order?.orderDate)}</span>
           <span className="lbl">Staff</span><span>:</span><span>{staffName}</span>
           {note.vehiclePlate.trim() !== "" ? (
             <>
@@ -170,7 +185,7 @@ export default function DeliveryNotePrintPage() {
         </thead>
         <tbody>
           {note.items.map((item, idx) => {
-            const line = deliveryItemLine(item, order?.items ?? []);
+            const line = deliveryItemLine(item, nameLines);
             return (
               <tr key={item.id}>
                 <td className="t-c">{idx + 1}</td>

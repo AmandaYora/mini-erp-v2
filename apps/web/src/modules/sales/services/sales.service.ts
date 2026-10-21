@@ -1,7 +1,12 @@
-import { apiGet, apiPage, apiPostFull, apiPutFull, httpClient } from "@/shared/services/http-client";
+import { apiGet, apiPage, apiPost, apiPostFull, apiPutFull, httpClient } from "@/shared/services/http-client";
 import { compactParams, positiveId, sortParams } from "@/shared/lib/list-query";
 import type { SortDir } from "@/shared/lib/list-query";
 import type {
+  FromDeliveriesPayload,
+  FromDeliveriesPreview,
+  FromDeliveriesPreviewPayload,
+  FromDeliveriesResult,
+  OpenDirectResult,
   ProductOption,
   SalesClientRefState,
   SalesOrder,
@@ -18,6 +23,8 @@ export interface SalesListParams {
   /** unpaid | partial | paid | overdue — disaring server (data bayar ada di modul payment). */
   paymentStatus?: string;
   partyId?: number;
+  /** standard | delivery (order dari SJ Langsung). */
+  origin?: string;
   /** YYYY-MM-DD (WIB), inklusif. */
   from?: string;
   to?: string;
@@ -39,6 +46,7 @@ export function buildSalesFilterQuery(p: SalesFilterParams): Record<string, unkn
     paymentTerms: p.paymentTerms,
     paymentStatus: p.paymentStatus,
     partyId: positiveId(p.partyId),
+    origin: p.origin,
     from: p.from,
     to: p.to,
     ...sortParams(p.sort ?? "", p.dir ?? ""),
@@ -87,6 +95,25 @@ export const salesService = {
 
   approveCredit: (id: number, dueDate: string) =>
     apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/approve-credit`, { dueDate }),
+
+  // --- Order dari surat jalan (SJ Langsung, ADR-0022) ---
+
+  /** SJ Langsung terkonfirmasi yang belum diorder (izin delivery.view; dibaca dari modul delivery
+   * lewat HTTP, bukan impor modul). limit 0 = ringkasan saja ({count, oldestDate}). */
+  openDirectDeliveries: (partyId?: number | null, limit = 20, signal?: AbortSignal) =>
+    apiGet<OpenDirectResult>(
+      "/api/v1/deliveries/open-direct",
+      { partyId: positiveId(partyId), limit },
+      signal,
+    ),
+
+  /** Pratinjau order dari SJ: baris stok dari SJ (qty terkunci) diberi harga server, tanpa tulis. */
+  previewFromDeliveries: (body: FromDeliveriesPreviewPayload) =>
+    apiPost<FromDeliveriesPreview>("/api/v1/sales-orders/from-deliveries/preview", body),
+
+  /** Buat + konfirmasi + tautkan + (lunasi) + selesaikan dalam satu langkah idempoten (clientRef). */
+  createFromDeliveries: (body: FromDeliveriesPayload) =>
+    apiPostFull<FromDeliveriesResult>("/api/v1/sales-orders/from-deliveries", body),
 
   /** Unduh daftar order (J1) — blob xlsx/pdf dengan filter yang sama seperti list. */
   downloadExport: async (

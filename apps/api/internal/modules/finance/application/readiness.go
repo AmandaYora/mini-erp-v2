@@ -75,6 +75,8 @@ func (s *Service) Readiness(ctx context.Context, branchID int64, year, month int
 	if err != nil {
 		return nil, err
 	}
+	var directOpen int64
+	var directOldest string
 	for _, q := range queue {
 		switch {
 		case q.Ignored:
@@ -84,6 +86,12 @@ func (s *Service) Readiness(ctx context.Context, branchID int64, year, month int
 			res.LatePeriodDocs++
 		case q.Date == "" || q.Date[:7] <= monthKey:
 			res.Unposted++
+			if q.AwaitingOrder {
+				directOpen++
+				if directOldest == "" || (q.Date != "" && q.Date < directOldest) {
+					directOldest = q.Date
+				}
+			}
 		}
 	}
 	if n, err := s.repo.CountUnbalanced(ctx, branchID, monthStart(year, month), monthEnd(year, month)); err != nil {
@@ -141,6 +149,14 @@ func (s *Service) Readiness(ctx context.Context, branchID int64, year, month int
 	}
 	add("unposted", "Dokumen sudah diposting", state(int64(res.Unposted), CheckFailed),
 		fmt.Sprintf("%d dokumen belum diposting", res.Unposted), int64(res.Unposted))
+	// SJ Langsung without an order (ADR-0022): stock left, nothing billed. Named
+	// apart from the generic unposted count because the sales admin, not the
+	// accountant, clears it (and it can never be ignored).
+	directDetail := fmt.Sprintf("%d surat jalan langsung belum diorder", directOpen)
+	if directOldest != "" {
+		directDetail += " (tertua " + directOldest + ")"
+	}
+	add("direct_unordered", "Surat jalan langsung sudah diorder", state(directOpen, CheckFailed), directDetail, directOpen)
 	add("late_period_docs", "Dokumen di periode tertutup", state(int64(res.LatePeriodDocs), CheckWarning),
 		fmt.Sprintf("%d dokumen jatuh di periode yang sudah ditutup dan belum dijurnal", res.LatePeriodDocs), int64(res.LatePeriodDocs))
 	if res.Ignored > 0 {

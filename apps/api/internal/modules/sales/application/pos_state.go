@@ -18,6 +18,10 @@ const (
 	StepPay             = "pay"
 	StepDone            = "done"
 	StepCancelled       = "cancelled"
+	// StepFinishFromDeliveries: an order built from SJ Langsung (ADR-0022) that
+	// is confirmed but not completed yet — repeat POST /sales-orders/
+	// from-deliveries with the same clientRef to resume the orchestration.
+	StepFinishFromDeliveries = "finish_from_deliveries"
 )
 
 // DeliveryRef is a shipment of the order as the state reader sees it.
@@ -85,6 +89,9 @@ func nextStep(o *contracts.SalesOrder, st *OrderState) string {
 	case contracts.StatusDraft:
 		return StepConfirm
 	case contracts.StatusConfirmed:
+		if o.Origin == contracts.OriginDelivery {
+			return StepFinishFromDeliveries
+		}
 		hasDraft := false
 		for _, d := range st.Deliveries {
 			if d.Status == deliverycontracts.StatusDraft {

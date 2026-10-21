@@ -21,7 +21,7 @@ import {
 } from "@/shared/components/ui";
 import { DocNumber, Money, Page, SavedViews, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { formatDate, statusLabel } from "@/shared/lib/format";
+import { formatDate, statusLabel, todayWIB } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useUrlFilters } from "@/shared/hooks/use-url-filters";
@@ -37,13 +37,19 @@ import {
   toSalesFilterParams,
 } from "@/modules/sales/schemas/sales-list-filter.schema";
 import {
+  SALES_ORIGINS,
   SALES_STATUSES,
   channelLabel as salesChannelLabel,
+  originLabel,
   paymentTermsLabel,
 } from "@/modules/sales/types";
-import type { SalesOrder } from "@/modules/sales/types";
+import type { OpenDirectDelivery, SalesOrder } from "@/modules/sales/types";
+import { FromDeliveriesPicker } from "@/modules/sales/components/FromDeliveriesPicker";
+import { ageDays, fromDeliveriesPath, sameCustomer } from "@/modules/sales/lib/from-deliveries";
 
 const LIMIT = 20;
+/** Panel "SJ menunggu order": cukup yang tertua; selebihnya lewat pemilih per pelanggan. */
+const OPEN_DIRECT_LIMIT = 20;
 
 const PAYMENT_STATUS_LABEL = {
   unpaid: "Belum bayar",
@@ -57,6 +63,10 @@ export default function SalesOrdersPage() {
   const navigate = useNavigate();
   const canCreate = can("sales.create");
   const canExport = can("sales.export");
+  // Panel SJ Langsung menunggu order (ADR-0022 W-05) dibaca dari modul delivery lewat HTTP.
+  const canViewDelivery = can("delivery.view");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickedNotes, setPickedNotes] = useState<Set<string | number>>(() => new Set());
 
   const { filters, setFilters, reset } = useUrlFilters(salesListFilterSchema, SALES_LIST_DEFAULTS);
   const [exporting, setExporting] = useState<null | "xlsx" | "pdf">(null);
@@ -73,6 +83,23 @@ export default function SalesOrdersPage() {
   );
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
+
+  const { data: openDirect } = useAsyncData(
+    (signal) =>
+      canViewDelivery
+        ? salesService.openDirectDeliveries(null, OPEN_DIRECT_LIMIT, signal).then(
+            (r) => r,
+            () => null,
+          )
+        : Promise.resolve(null),
+    [canViewDelivery],
+  );
+  const openNotes = openDirect?.items ?? [];
+  const openCount = openDirect?.count ?? 0;
+  const today = todayWIB();
+  const oldestAge = openDirect ? ageDays(openDirect.oldestDate, today) : 0;
+  const pickedRows = openNotes.filter((n) => pickedNotes.has(n.id));
+  const pickedSameCustomer = sameCustomer(pickedRows.map((n) => n.partyId));
 
   async function handleExport(format: "xlsx" | "pdf") {
     setExporting(format);
@@ -115,12 +142,36 @@ export default function SalesOrdersPage() {
       onRemove: () => setFilters({ paymentStatus: "" }),
     });
   }
+  if (filters.origin) {
+    active.push({
+      key: "origin",
+      label: `Asal: ${originLabel(filters.origin)}`,
+      onRemove: () => setFilters({ origin: "" }),
+    });
+  }
   const hasFilters = active.length > 0 || Boolean(filters.search || filters.status || filters.from || filters.to);
 
+  // Tombol bercabang: "Tambah order" tetap tautan ke form biasa (alur lama tidak berubah);
+  // panah membuka pilihan Order biasa / Dari surat jalan (pemilih pelanggan → SJ).
   const createLink = canCreate ? (
-    <Button asChild>
-      <Link to={`${ROUTE_PATHS.salesOrders}/new`}>Tambah order</Link>
-    </Button>
+    <span className="inline-flex" role="group" aria-label="Tambah order">
+      <Button asChild className="rounded-r-none">
+        <Link to={`${ROUTE_PATHS.salesOrders}/new`}>Tambah order</Link>
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon" className="rounded-l-none border-l border-primary-foreground/30" aria-label="Pilihan tambah order">
+            <ChevronDown aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-48">
+          <DropdownMenuItem onSelect={() => navigate(`${ROUTE_PATHS.salesOrders}/new`)}>Order biasa</DropdownMenuItem>
+          <DropdownMenuItem disabled={!canViewDelivery} onSelect={() => setPickerOpen(true)}>
+            Dari surat jalan{canViewDelivery ? "" : " (butuh izin Surat Jalan)"}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </span>
   ) : undefined;
 
   return (
@@ -151,6 +202,73 @@ export default function SalesOrdersPage() {
           </>
         }
       />
+
+      {canViewDelivery && openCount > 0 && (
+        <SectionCard
+          flush
+          title={`SJ menunggu order (${openCount}) · tertua ${oldestAge} hari`}
+          description="Surat jalan langsung yang sudah dikonfirmasi tetapi belum punya order. Pilih beberapa SJ satu pelanggan untuk digabung."
+        >
+          <DataTable<OpenDirectDelivery>
+            rows={openNotes}
+            rowKey={(r) => r.id}
+            selectable={canCreate}
+            selectedKeys={pickedNotes}
+            onSelectionChange={setPickedNotes}
+            bulkActions={(keys) => (
+              <>
+                <Button
+                  size="sm"
+                  disabled={!pickedSameCustomer}
+                  onClick={() => navigate(fromDeliveriesPath(openNotes.filter((n) => keys.has(n.id)).map((n) => n.id)))}
+                >
+                  Buat order dari {keys.size} SJ
+                </Button>
+                {!pickedSameCustomer && (
+                  <span className="text-xs text-destructive">Pilih SJ dari satu pelanggan yang sama.</span>
+                )}
+              </>
+            )}
+            onRowClick={(r) => navigate(`${ROUTE_PATHS.deliveries}/${r.id}`)}
+            emptyTitle="Tidak ada surat jalan menunggu order"
+            columns={[
+              {
+                header: "Nomor",
+                render: (r) => (
+                  <Link to={`${ROUTE_PATHS.deliveries}/${r.id}`} className="font-medium text-primary hover:underline">
+                    <DocNumber value={r.number} />
+                  </Link>
+                ),
+              },
+              { header: "Pelanggan", render: (r) => r.partyName || `Customer #${r.partyId}` },
+              { header: "Tanggal SJ", render: (r) => formatDate(r.deliveryDate) },
+              {
+                header: "Umur",
+                align: "right",
+                render: (r) => {
+                  const age = ageDays(r.deliveryDate, today);
+                  return <span className={age > 3 ? "font-semibold text-warning" : undefined}>{age} hari</span>;
+                },
+              },
+              {
+                header: "",
+                align: "right",
+                render: (r) =>
+                  canCreate ? (
+                    <Button variant="secondary" size="sm" asChild>
+                      <Link to={fromDeliveriesPath([r.id])}>Buat order</Link>
+                    </Button>
+                  ) : null,
+              },
+            ]}
+          />
+          {openCount > openNotes.length && (
+            <p className="px-4 py-2 text-xs text-muted-foreground">
+              Menampilkan {openNotes.length} tertua dari {openCount}. SJ lain bisa dipilih lewat "Dari surat jalan".
+            </p>
+          )}
+        </SectionCard>
+      )}
 
       <Toolbar
         right={<SavedViews listKey="sales-orders" columnsKey="sales-orders" />}
@@ -228,6 +346,20 @@ export default function SalesOrdersPage() {
                 <option value="pos">POS</option>
               </SelectInput>
             </FormField>
+            <FormField label="Asal">
+              <SelectInput
+                aria-label="Asal"
+                value={filters.origin}
+                onChange={(e) => setFilters({ origin: e.target.value as typeof filters.origin })}
+              >
+                <option value="">Semua</option>
+                {SALES_ORIGINS.map((o) => (
+                  <option key={o} value={o}>
+                    {originLabel(o)}
+                  </option>
+                ))}
+              </SelectInput>
+            </FormField>
           </>
         }
         moreActiveCount={active.length}
@@ -280,7 +412,10 @@ export default function SalesOrdersPage() {
             {
               header: "Kanal",
               render: (r) => (
-                <Badge tone={r.channel === "pos" ? "info" : "neutral"}>{salesChannelLabel(r.channel)}</Badge>
+                <span className="inline-flex flex-wrap gap-1">
+                  <Badge tone={r.channel === "pos" ? "info" : "neutral"}>{salesChannelLabel(r.channel)}</Badge>
+                  {r.origin === "delivery" && <Badge tone="info">Dari SJ</Badge>}
+                </span>
               ),
             },
             {
@@ -314,6 +449,7 @@ export default function SalesOrdersPage() {
         />
         <Pagination page={filters.page} limit={LIMIT} total={total} onPageChange={(p) => setFilters({ page: p })} />
       </SectionCard>
+      {pickerOpen && <FromDeliveriesPicker open={pickerOpen} onClose={() => setPickerOpen(false)} />}
     </Page>
   );
 }

@@ -1,0 +1,28 @@
+%% Order dari SJ (ADR-0022 §4): satu langkah berorkestrasi, idempoten lewat client_ref (ADR-0016).
+sequenceDiagram
+  actor Admin as Admin penjualan
+  participant Web as apps/web (form order dari SJ)
+  participant Sales as sales (POST /sales-orders/from-deliveries)
+  participant Delivery as delivery (contracts)
+  participant Payment as payment (contracts)
+  participant Finance as finance (antrean posting)
+
+  Admin->>Web: pilih SJ, isi harga & termin, Simpan & selesaikan
+  Web->>Sales: deliveryIds, harga per baris, termin, clientRef
+  Sales->>Delivery: GetByID per SJ (confirmed, origin=direct, SO=0, pelanggan & cabang sama)
+  Sales->>Sales: bangun baris dari SJ (qty terkunci) + harga; validasi batas harga
+  alt client_ref sudah ada (ulang setelah gagal)
+    Sales->>Sales: pakai SO yang ada, lanjut dari langkah yang belum
+  else baru
+    Sales->>Sales: buat SO origin=delivery, konfirmasi
+  end
+  Sales->>Delivery: LinkDirect(soID, noteIDs)
+  Delivery->>Delivery: CAS sales_order_id 0 -> soID (status confirmed, pelanggan cocok)
+  Delivery->>Delivery: cek sum SJ = qty order per produk
+  Delivery->>Sales: completeOrderIfDone -> SetStatus(completed)
+  opt termin tunai, bayar sekarang
+    Sales->>Payment: RecordForOrder(clientRef "sjl:<soID>")
+  end
+  Sales-->>Web: SO (Selesai) + SJ tertaut
+  Finance->>Delivery: ListConfirmedAfter (SJ kini punya SO)
+  Finance->>Finance: buildDelivery (harga SO, tanggal SJ) -> jurnal

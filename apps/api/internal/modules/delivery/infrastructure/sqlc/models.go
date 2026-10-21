@@ -38,6 +38,14 @@ type DeliveryNote struct {
 	CancelReason                    sql.NullString
 	CancelledAt                     sql.NullTime
 	CancelledBy                     sql.NullInt64
+	Origin                          string
+	PartyID                         sql.NullInt64
+	ShipToLabel                     sql.NullString
+	ShipToRecipient                 sql.NullString
+	ShipToPhone                     sql.NullString
+	ShipToAddress                   sql.NullString
+	LinkedAt                        sql.NullTime
+	LinkedBy                        sql.NullInt64
 }
 
 type DeliveryNoteItem struct {

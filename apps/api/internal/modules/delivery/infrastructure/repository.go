@@ -20,6 +20,11 @@ type Repository struct {
 	q  *sqlc.Queries
 }
 
+// Tx is the open transaction an audit hook writes through (ADR-0011): the
+// trail row co-commits with the CAS it rides. Use cases name this alias so the
+// application layer never imports database/sql itself (arch-check Rule E).
+type Tx = sql.Tx
+
 // NewRepository wires the module's storage.
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db, q: sqlc.New(db)}
@@ -185,6 +190,10 @@ func (r *Repository) CreateNote(ctx context.Context, n *contracts.DeliveryNote, 
 	if kind == "" {
 		kind = contracts.DocumentKindOrder
 	}
+	origin := n.Origin
+	if origin == "" {
+		origin = contracts.OriginOrder
+	}
 	q := r.q.WithTx(tx)
 	res, err := q.InsertNote(ctx, sqlc.InsertNoteParams{
 		Number:             n.Number,
@@ -197,6 +206,12 @@ func (r *Repository) CreateNote(ctx context.Context, n *contracts.DeliveryNote, 
 		DropLocationNote:   dbutil.NullString(n.DropLocationNote),
 		DocumentKind:       kind,
 		SalesReturnID:      dbutil.NullInt64(n.SalesReturnID),
+		Origin:             origin,
+		PartyID:            dbutil.NullInt64(n.PartyID),
+		ShipToLabel:        dbutil.NullString(n.ShipToLabel),
+		ShipToRecipient:    dbutil.NullString(n.ShipToRecipient),
+		ShipToPhone:        dbutil.NullString(n.ShipToPhone),
+		ShipToAddress:      dbutil.NullString(n.ShipToAddress),
 		Notes:              dbutil.NullString(n.Notes),
 		ClientRef:          dbutil.NullString(n.ClientRef),
 		CreatedBy:          actor(actorID),

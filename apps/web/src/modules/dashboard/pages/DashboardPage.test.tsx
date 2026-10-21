@@ -11,6 +11,7 @@ const orderStatus = vi.fn();
 const topSellers = vi.fn();
 const topMargin = vi.fn();
 const whatsappChannel = vi.fn();
+const openDirect = vi.fn();
 vi.mock("@/modules/dashboard/services/dashboard.service", () => ({
   dashboardService: {
     summary: (...a: unknown[]) => summary(...a),
@@ -21,10 +22,13 @@ vi.mock("@/modules/dashboard/services/dashboard.service", () => ({
     topSellers: (...a: unknown[]) => topSellers(...a),
     topMargin: (...a: unknown[]) => topMargin(...a),
     whatsappChannel: (...a: unknown[]) => whatsappChannel(...a),
+    openDirect: (...a: unknown[]) => openDirect(...a),
   },
 }));
 
 import DashboardPage from "@/modules/dashboard/pages/DashboardPage";
+import { addDays } from "@/modules/dashboard/lib/dashboard";
+import { todayWIB } from "@/shared/lib/format";
 
 const period = { from: "2026-10-01", to: "2026-10-19", revenue: 1_000_000, expense: 200_000, profit: 800_000 };
 
@@ -46,7 +50,7 @@ function makeSummary(over: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  for (const m of [summary, salesTrend, criticalStock, priorityOrders, orderStatus, topSellers, topMargin, whatsappChannel]) m.mockReset();
+  for (const m of [summary, salesTrend, criticalStock, priorityOrders, orderStatus, topSellers, topMargin, whatsappChannel, openDirect]) m.mockReset();
   summary.mockResolvedValue(makeSummary());
   salesTrend.mockResolvedValue([]);
   criticalStock.mockResolvedValue([]);
@@ -58,8 +62,9 @@ beforeEach(() => {
   topSellers.mockResolvedValue([]);
   topMargin.mockResolvedValue([]);
   whatsappChannel.mockResolvedValue({ connected: true, phone: "628123" });
+  openDirect.mockResolvedValue({ items: [], count: 0, oldestDate: "" });
   useAuthStore.setState({
-    permissions: ["dashboard.view", "reporting.view", "assistant.view"],
+    permissions: ["dashboard.view", "reporting.view", "assistant.view", "delivery.view"],
     ready: true,
     user: { fullName: "Dimas Prasetio" } as never,
   });
@@ -105,6 +110,28 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("Produk dipantau")).toBeInTheDocument();
     expect(screen.queryByText("WhatsApp asisten")).not.toBeInTheDocument();
     expect(whatsappChannel).not.toHaveBeenCalled();
+  });
+
+  it("SJ Langsung belum diorder tampil dengan umur tertua dan menuju daftar order (ADR-0022)", async () => {
+    openDirect.mockResolvedValue({ items: [], count: 3, oldestDate: addDays(todayWIB(), -5) });
+    renderPage();
+    const tile = await screen.findByRole("button", { name: /SJ Langsung belum diorder/ });
+    expect(tile).toHaveTextContent("3");
+    expect(tile).toHaveTextContent("Tertua 5 hari");
+    expect(openDirect).toHaveBeenCalledTimes(1);
+  });
+
+  it("tanpa SJ Langsung yang menunggu, kartunya tidak tampil", async () => {
+    renderPage();
+    expect(await screen.findByText("Produk dipantau")).toBeInTheDocument();
+    expect(screen.queryByText(/SJ Langsung belum diorder/)).not.toBeInTheDocument();
+  });
+
+  it("tanpa izin delivery.view endpoint SJ Langsung tidak dipanggil", async () => {
+    useAuthStore.setState({ permissions: ["dashboard.view", "reporting.view"], ready: true });
+    renderPage();
+    expect(await screen.findByText("Produk dipantau")).toBeInTheDocument();
+    expect(openDirect).not.toHaveBeenCalled();
   });
 
   it("basis biaya lengkap tampil hijau tanpa peringatan estimasi", async () => {

@@ -43,7 +43,7 @@ func orderView(o *contracts.SalesOrder) map[string]any {
 		"id": o.ID, "number": o.Number, "branchId": o.BranchID,
 		"partyId": o.PartyID, "partyName": o.PartyName,
 		"partyPhone": o.PartyPhone, "partyAddress": o.PartyAddress,
-		"channel": o.Channel, "memberCode": o.MemberCode,
+		"channel": o.Channel, "origin": o.Origin, "memberCode": o.MemberCode,
 		"orderDate": o.OrderDate, "dueDate": o.DueDate, "paymentTerms": o.PaymentTerms,
 		"taxType": o.TaxType, "taxRate": o.TaxRate,
 		"subtotal": o.Subtotal, "discountTotal": o.DiscountTotal,
@@ -340,6 +340,150 @@ func (h *Handler) ShortClose(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Sisa order ditutup", orderView(o))
 }
 
+// fromDeliveriesPayload is the body of preview and create "order dari surat
+// jalan" (ADR-0022): the notes, the header, prices per note line, extra
+// non-stock lines and the cash settlement.
+type fromDeliveriesPayload struct {
+	DeliveryIDs      []int64 `json:"deliveryIds" validate:"required"`
+	OrderDate        string  `json:"orderDate"`
+	PaymentTerms     string  `json:"paymentTerms"`
+	DueDate          string  `json:"dueDate"`
+	TaxType          string  `json:"taxType"`
+	TaxRate          float64 `json:"taxRate"`
+	Notes            string  `json:"notes"`
+	AssignedUserID   int64   `json:"assignedUserId"`
+	TaxInvoiceNumber string  `json:"taxInvoiceNumber"`
+	TaxInvoiceDate   string  `json:"taxInvoiceDate"`
+	Lines            []struct {
+		ProductID       int64   `json:"productId" validate:"required"`
+		VariantID       int64   `json:"variantId" validate:"required"`
+		UOM             string  `json:"uom" validate:"required"`
+		UnitPrice       *int64  `json:"unitPrice"`
+		DiscountPct     float64 `json:"discountPct"`
+		DiscountNominal int64   `json:"discountNominal"`
+		DiscountReason  string  `json:"discountReason"`
+		Note            string  `json:"note"`
+		Taxable         *bool   `json:"taxable"`
+	} `json:"lines"`
+	ExtraItems []linePayload `json:"extraItems"`
+	Settlement *struct {
+		Mode           string `json:"mode"`
+		Method         string `json:"method"`
+		PaymentDate    string `json:"paymentDate"`
+		Reference      string `json:"reference"`
+		AmountTendered int64  `json:"amountTendered"`
+		DueDate        string `json:"dueDate"`
+	} `json:"settlement"`
+	ClientRef string `json:"clientRef"`
+}
+
+func toFromDeliveriesInput(in fromDeliveriesPayload) application.FromDeliveriesInput {
+	out := application.FromDeliveriesInput{
+		DeliveryIDs: in.DeliveryIDs, OrderDate: in.OrderDate, PaymentTerms: in.PaymentTerms, DueDate: in.DueDate,
+		TaxType: in.TaxType, TaxRate: in.TaxRate, Notes: in.Notes, AssignedUserID: in.AssignedUserID,
+		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate, ClientRef: in.ClientRef,
+	}
+	for _, l := range in.Lines {
+		out.Lines = append(out.Lines, application.FromDeliveriesLine{
+			ProductID: l.ProductID, VariantID: l.VariantID, UOM: l.UOM, UnitPrice: l.UnitPrice,
+			DiscountPct: l.DiscountPct, DiscountNominal: l.DiscountNominal,
+			DiscountReason: l.DiscountReason, Note: l.Note, Taxable: l.Taxable,
+		})
+	}
+	for _, e := range in.ExtraItems {
+		out.ExtraItems = append(out.ExtraItems, application.LineInput{
+			ProductID: e.ProductID, VariantID: e.VariantID, UOM: e.UOM, Qty: e.Qty,
+			DiscountPct: e.DiscountPct, DiscountNominal: e.DiscountNominal,
+			UnitPrice: e.UnitPrice, DiscountReason: e.DiscountReason, Note: e.Note, Taxable: e.Taxable,
+		})
+	}
+	if in.Settlement != nil {
+		out.Settlement = &application.FromDeliveriesSettlement{
+			Mode: in.Settlement.Mode, Method: in.Settlement.Method, PaymentDate: in.Settlement.PaymentDate,
+			Reference: in.Settlement.Reference, AmountTendered: in.Settlement.AmountTendered, DueDate: in.Settlement.DueDate,
+		}
+	}
+	return out
+}
+
+// FromDeliveriesPreview handles POST /api/v1/sales-orders/from-deliveries/preview:
+// the priced order the notes would produce, without writing.
+func (h *Handler) FromDeliveriesPreview(w http.ResponseWriter, r *http.Request) {
+	var in fromDeliveriesPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	pv, err := h.svc.PreviewFromDeliveries(r.Context(), authcontracts.BranchID(r), toFromDeliveriesInput(in))
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Pratinjau order dari surat jalan", fromDeliveriesPreviewView(pv))
+}
+
+func fromDeliveriesPreviewView(pv *application.FromDeliveriesPreview) map[string]any {
+	items := make([]any, 0, len(pv.Items))
+	for _, it := range pv.Items {
+		items = append(items, map[string]any{
+			"productId": it.ProductID, "variantId": it.VariantID,
+			"productCode": it.ProductCode, "productName": it.ProductName,
+			"variantName": it.VariantName, "variantCode": it.VariantCode,
+			"uom": it.UOM, "uomFactor": it.UOMFactor, "qty": it.Qty, "qtyBase": it.QtyBase,
+			"unitPrice": it.UnitPrice, "discountPct": it.DiscountPct, "discountNominal": it.DiscountNominal,
+			"lineTotal": it.LineTotal, "stockTracked": it.StockTracked, "itemType": it.ItemType,
+			"pricingSource": it.PricingSource, "basePrice": it.BasePrice,
+			"discountReason": it.DiscountReason, "note": it.Note,
+			"taxable": it.Taxable, "taxBase": it.TaxBase, "taxAmount": it.TaxAmount,
+		})
+	}
+	return map[string]any{
+		"partyId": pv.PartyID, "partyName": pv.PartyName,
+		"shipToLabel": pv.ShipToLabel, "shipToRecipient": pv.ShipToRecipient,
+		"shipToPhone": pv.ShipToPhone, "shipToAddress": pv.ShipToAddress,
+		"deliveryDate": pv.DeliveryDate, "deliveries": pv.Notes, "items": items,
+		"subtotal": pv.Subtotal, "discountTotal": pv.DiscountTotal, "taxTotal": pv.TaxTotal, "grandTotal": pv.GrandTotal,
+		"warnings": pv.Warnings,
+	}
+}
+
+// FromDeliveries handles POST /api/v1/sales-orders/from-deliveries: builds,
+// confirms, links, settles and completes the order in one idempotent call.
+// Paying on the spot needs payment.create; converting to net terms needs
+// sales.approve (the same rules as the delivery COD settlement).
+func (h *Handler) FromDeliveries(w http.ResponseWriter, r *http.Request) {
+	var in fromDeliveriesPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	sess := authcontracts.SessionFromContext(r.Context())
+	allowed := func(mode string) bool {
+		if sess == nil {
+			return false
+		}
+		if mode == application.SettleSwitchToNet {
+			return sess.HasPermission("sales.approve")
+		}
+		return sess.HasPermission("payment.create")
+	}
+	res, err := h.svc.CreateFromDeliveries(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), toFromDeliveriesInput(in), allowed)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	view := orderView(res.Order)
+	if len(res.Warnings) > 0 {
+		view["warnings"] = res.Warnings
+	}
+	if res.Replayed {
+		view["replayed"] = true
+		response.OK(w, "Order dari surat jalan sudah dibuat sebelumnya", view)
+		return
+	}
+	response.Created(w, "Order dibuat dari surat jalan dan selesai", view)
+}
+
 // ApproveCredit handles POST /api/v1/sales-orders/{id}/approve-credit.
 func (h *Handler) ApproveCredit(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
@@ -367,6 +511,8 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("GET /api/v1/sales-orders", perm("sales.view", authcontracts.Guard(h.List, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders", perm("sales.create", authcontracts.Guard(h.Create, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/by-client-ref/{ref}/state", perm("sales.view", authcontracts.Guard(h.State, branchGuard)))
+	mux.Handle("POST /api/v1/sales-orders/from-deliveries/preview", perm("sales.create", authcontracts.Guard(h.FromDeliveriesPreview, branchGuard)))
+	mux.Handle("POST /api/v1/sales-orders/from-deliveries", perm("sales.create", authcontracts.Guard(h.FromDeliveries, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/{id}", perm("sales.view", authcontracts.Guard(h.Get, branchGuard)))
 	mux.Handle("PUT /api/v1/sales-orders/{id}", perm("sales.update", authcontracts.Guard(h.Update, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/confirm", perm("sales.update", authcontracts.Guard(h.Confirm, branchGuard)))

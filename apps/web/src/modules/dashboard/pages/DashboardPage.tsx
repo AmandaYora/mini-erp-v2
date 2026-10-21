@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Info } from "lucide-react";
 import {
   CardSkeleton,
@@ -18,6 +19,7 @@ import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
+import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { dashboardService } from "@/modules/dashboard/services/dashboard.service";
 import { ActionCard } from "@/modules/dashboard/components/ActionCard";
 import { OrderStatusCard } from "@/modules/dashboard/components/OrderStatusCard";
@@ -89,6 +91,7 @@ function KpiRow({ summary, source, overdueOrders }: { summary: DashboardSummary;
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [source, setSource] = useState<Source>("ledger");
   const [trendRange, setTrendRange] = useState<TrendRangeKey>("30d");
   const user = useAuthStore((s) => s.user);
@@ -111,6 +114,12 @@ export default function DashboardPage() {
   // Kartu status WhatsApp hanya untuk peran yang boleh melihat asisten (DB-01).
   const canAssistant = useAuthStore((s) => s.permissions.includes("assistant.view"));
   const whatsapp = useAsyncData(() => (canAssistant ? dashboardService.whatsappChannel() : Promise.resolve(null)), [canAssistant]);
+  // SJ Langsung yang belum diorder (ADR-0022): hanya untuk peran yang boleh melihat surat jalan;
+  // tampil hanya bila ada (N > 0), tautan ke daftar order (daftar tunggunya ada di sana).
+  const canDelivery = useAuthStore((s) => s.can("delivery.view"));
+  const openDirect = useAsyncData(() => (canDelivery ? dashboardService.openDirect() : Promise.resolve(null)), [canDelivery]);
+  const directCount = openDirect.data && !openDirect.error ? openDirect.data.count : 0;
+  const directAgeDays = directCount > 0 && openDirect.data?.oldestDate ? Math.max(0, overdueDays(openDirect.data.oldestDate, today)) : 0;
   const critical = useAsyncData(() => dashboardService.criticalStock(), []);
   const priority = useAsyncData(() => dashboardService.priorityOrders(), []);
   const sellers = useAsyncData(() => dashboardService.topSellers(), []);
@@ -176,24 +185,37 @@ export default function DashboardPage() {
         <p className="text-xs text-muted-foreground">{SOURCE_NOTE[source]}</p>
       </div>
 
-      {data && (
+      {(data || directCount > 0) && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-testid="dashboard-status-cards">
-          <SummaryCard
-            label="Produk dipantau"
-            value={formatNumber(data.operations.trackedCount)}
-            tone="brand"
-            hint={`${formatNumber(data.operations.criticalCount)} di bawah stok minimum`}
-          />
-          <SummaryCard
-            label="Basis biaya margin"
-            value={data.operations.costBasis === "estimated" ? "Estimasi" : "Lengkap"}
-            tone={data.operations.costBasis === "estimated" ? "warning" : "success"}
-            hint={
-              (data.operations.missingCostCount ?? 0) > 0
-                ? `${formatNumber(data.operations.missingCostCount ?? 0)} produk memakai HPP estimasi — margin indikatif`
-                : "Semua HPP berdasar biaya riil"
-            }
-          />
+          {data && (
+            <>
+              <SummaryCard
+                label="Produk dipantau"
+                value={formatNumber(data.operations.trackedCount)}
+                tone="brand"
+                hint={`${formatNumber(data.operations.criticalCount)} di bawah stok minimum`}
+              />
+              <SummaryCard
+                label="Basis biaya margin"
+                value={data.operations.costBasis === "estimated" ? "Estimasi" : "Lengkap"}
+                tone={data.operations.costBasis === "estimated" ? "warning" : "success"}
+                hint={
+                  (data.operations.missingCostCount ?? 0) > 0
+                    ? `${formatNumber(data.operations.missingCostCount ?? 0)} produk memakai HPP estimasi — margin indikatif`
+                    : "Semua HPP berdasar biaya riil"
+                }
+              />
+            </>
+          )}
+          {directCount > 0 && (
+            <SummaryCard
+              label="SJ Langsung belum diorder"
+              value={formatNumber(directCount)}
+              tone="warning"
+              hint={directAgeDays > 0 ? `Tertua ${formatNumber(directAgeDays)} hari · buat ordernya di Order Jual` : "Buat ordernya di Order Jual"}
+              onClick={() => navigate(ROUTE_PATHS.salesOrders)}
+            />
+          )}
           {canAssistant && (
             <SummaryCard
               label="WhatsApp asisten"

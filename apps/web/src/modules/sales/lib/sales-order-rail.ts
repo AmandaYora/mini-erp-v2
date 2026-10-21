@@ -16,9 +16,20 @@ export const SALES_ORDER_STEPS: StepperStep[] = [
   { key: "done", label: "Selesai" },
 ];
 
+/** Order dari SJ Langsung (ADR-0022): barang sudah keluar sebelum order ada, jadi rel
+ * dimulai dari Dikirim dan tidak pernah menunggu surat jalan. */
+export const SALES_ORDER_FROM_DELIVERY_STEPS: StepperStep[] = [
+  { key: "shipped", label: "Dikirim" },
+  { key: "confirmed", label: "Terkonfirmasi" },
+  { key: "paid", label: "Lunas" },
+  { key: "done", label: "Selesai" },
+];
+
 export interface SalesOrderRailInput {
   status: string;
   channel: string;
+  /** standard | delivery; kosong = standard. */
+  origin?: string;
   billing: BillingView;
   events: readonly HistoryEvent[];
 }
@@ -32,11 +43,14 @@ export interface SalesOrderRail {
 
 /** Langkah aktif = kemajuan terjauh yang bisa dibuktikan dari data yang ada. */
 export function salesOrderRailCurrent(i: SalesOrderRailInput): string {
-  if (i.status === "draft") return "draft";
+  const fromDelivery = i.origin === "delivery";
+  if (i.status === "draft") return fromDelivery ? "shipped" : "draft";
   if (i.status === "completed") return "done";
-  if (i.status === "cancelled") return i.events.length > 0 ? "confirmed" : "draft";
-  // Order POS diserahkan di kasir: tidak ada surat jalan, dianggap sudah dikirim.
-  const shipped = i.channel === "pos" || i.events.some((e) => e.kind === "delivery" && e.status === "confirmed");
+  if (i.status === "cancelled") return fromDelivery ? "shipped" : i.events.length > 0 ? "confirmed" : "draft";
+  // Order POS diserahkan di kasir dan order dari SJ Langsung lahir setelah barang keluar:
+  // keduanya tanpa menunggu surat jalan, dianggap sudah dikirim.
+  const shipped =
+    i.channel === "pos" || fromDelivery || i.events.some((e) => e.kind === "delivery" && e.status === "confirmed");
   const paid = i.billing.available && i.billing.status === "paid";
   if (shipped && paid) return "paid";
   if (shipped) return "shipped";
@@ -54,7 +68,7 @@ export function salesOrderRelated(events: readonly HistoryEvent[]): RelatedDocum
 
 export function salesOrderRail(i: SalesOrderRailInput): SalesOrderRail {
   return {
-    steps: SALES_ORDER_STEPS,
+    steps: i.origin === "delivery" ? SALES_ORDER_FROM_DELIVERY_STEPS : SALES_ORDER_STEPS,
     current: salesOrderRailCurrent(i),
     stopped: i.status === "cancelled",
     related: salesOrderRelated(i.events),

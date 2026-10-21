@@ -3,6 +3,7 @@ import type {
   CriticalStockItem,
   DashboardSummary,
   DashboardTrendPoint,
+  OpenDirectSummary,
   OrderStatusCounts,
   PriorityOrder,
   TopMarginProduct,
@@ -49,4 +50,9 @@ export const dashboardService = {
   // GET /api/v1/dashboard/top-margin — 5 margin tertinggi bulan berjalan.
   topMargin: (limit = 5) =>
     apiGet<TopMarginProduct[]>("/api/v1/dashboard/top-margin", { limit }),
+
+  // GET /api/v1/deliveries/open-direct?limit=0 — hitungan SJ Langsung yang belum
+  // diorder (ADR-0022); izin delivery.view, bukan dashboard.view.
+  openDirect: () =>
+    apiGet<OpenDirectSummary>("/api/v1/deliveries/open-direct", { limit: 0 }),
 };

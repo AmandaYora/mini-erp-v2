@@ -79,3 +79,21 @@ describe("QueuePage (DL-02)", () => {
     expect(await screen.findByText("SJ ttd belum diunggah")).toBeTruthy();
   });
 });
+
+describe("QueuePage — SJ Langsung di tab Menunggu (ADR-0022)", () => {
+  it("baris SJ Langsung tanpa order menampilkan pelanggan dan lencana SJ Langsung", async () => {
+    workQueue.mockResolvedValue({
+      createSj: [],
+      waitingReturn: [
+        { id: 12, number: "SJ-12", salesOrderId: 0, orderNumber: "", partyName: "PT Maju", origin: "direct", deliveryDate: "2026-01-06 00:00:00", ageDays: 1, driverName: "Joko", vehiclePlate: "", hasSignedDocument: true },
+      ],
+      limit: 100,
+    });
+    open();
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Menunggu konfirmasi/ }), { button: 0 });
+    fireEvent.click(screen.getByRole("tab", { name: /Menunggu konfirmasi/ }));
+    expect(await screen.findByText("SJ Langsung")).toBeTruthy();
+    expect(screen.getAllByText(/PT Maju/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/tanpa order/)).toBeTruthy();
+  });
+});
