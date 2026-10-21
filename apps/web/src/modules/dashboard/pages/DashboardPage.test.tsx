@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -37,7 +37,8 @@ function makeSummary(over: Record<string, unknown> = {}) {
     inventoryValue: 3_000_000,
     operations: {
       salesToday: 0, salesMonth: 0, salesOrdersToday: 0, salesOrdersMonth: 0, ordersToday: 0, ordersMonth: 0,
-      purchasesToday: 0, purchasesMonth: 0, outstandingReceivable: 0, outstandingPayable: 0,
+      purchasesToday: 0, purchasesMonth: 0, purchaseOrdersToday: 0, purchaseOrdersMonth: 0,
+      outstandingReceivable: 0, outstandingPayable: 0,
       criticalCount: 3, trackedCount: 42, missingCostCount: 2, costBasis: "estimated",
       ...over,
     },
@@ -111,6 +112,25 @@ describe("DashboardPage", () => {
     renderPage();
     expect(await screen.findByText("Lengkap")).toBeInTheDocument();
     expect(screen.getByText("Semua HPP berdasar biaya riil")).toBeInTheDocument();
+  });
+
+  it("sumber Order: pembelian = nilai rupiah order beli dengan jumlah order beli (bukan order jual)", async () => {
+    summary.mockResolvedValue(
+      makeSummary({
+        purchasesToday: 2_500_000,
+        purchasesMonth: 9_000_000,
+        purchaseOrdersToday: 2,
+        purchaseOrdersMonth: 5,
+        ordersToday: 7,
+      }),
+    );
+    renderPage();
+    await screen.findByText("Omzet hari ini");
+    fireEvent.click(screen.getByRole("radio", { name: "Order" }));
+    expect(await screen.findByText("Pembelian hari ini")).toBeInTheDocument();
+    expect(screen.getByText(/Rp\s?2\.500\.000/)).toBeInTheDocument();
+    expect(screen.getByText(/^2 order beli · Bulan ini Rp\s?9\.000\.000$/)).toBeInTheDocument();
+    expect(screen.queryByText(/7 order beli/)).not.toBeInTheDocument();
   });
 
   it("Perlu tindakan memuat pesanan jual dan beli dengan alasan dan umur", async () => {

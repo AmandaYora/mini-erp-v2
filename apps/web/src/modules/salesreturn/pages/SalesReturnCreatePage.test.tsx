@@ -134,3 +134,16 @@ describe("halaman Buat Retur Jual: langkah Tinjau menampilkan penyelesaian (K-04
     expect(list.textContent).not.toContain("refund");
   });
 });
+
+describe("halaman Buat Retur Jual: galat validasi server", () => {
+  it("menampilkan pesan per-field dari errors[], bukan hanya 'Validasi gagal'", async () => {
+    preview.mockRejectedValue({
+      status: 422,
+      message: "Validasi gagal",
+      errors: [{ field: "items[0].qty", message: "melebihi sisa yang bisa diretur" }],
+    });
+    await toReviewStep();
+    await userEvent.click(screen.getByRole("button", { name: "Pratinjau" }));
+    expect(await screen.findByText("Validasi gagal — melebihi sisa yang bisa diretur")).toBeInTheDocument();
+  });
+});

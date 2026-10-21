@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/shared/components/ui";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { financeService } from "@/modules/finance/services/finance.service";
 import type { UncostedItem } from "@/modules/finance/types";
@@ -26,7 +26,7 @@ export function MissingCostNotice({ message, canPost }: MissingCostNoticeProps) 
       toast.fromServer(sync.message, "Sinkronisasi biaya selesai");
       setItems((await financeService.uncosted()) ?? []);
     } catch (err) {
-      toast.danger("Gagal sinkron biaya", toApiError(err).message);
+      toast.danger("Gagal sinkron biaya", formatApiError(err));
     } finally {
       setBusy(false);
     }

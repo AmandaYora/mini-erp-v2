@@ -17,7 +17,7 @@ import {
 import { FormSection } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { companyService } from "@/modules/company/services/company.service";
 import {
@@ -161,7 +161,7 @@ export default function DocumentProfileForm({
       setDraft(saved);
       onSaved();
     } catch (err) {
-      const msg = toApiError(err).message;
+      const msg = formatApiError(err);
       setError(msg);
       toast.danger("Gagal menyimpan profil dokumen", msg);
     } finally {

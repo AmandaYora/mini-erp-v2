@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { CheckoutSheet } from "@/modules/pos/components/CheckoutSheet";
+import { PAY_LATER_NEEDS_CUSTOMER_MESSAGE } from "@/modules/pos/lib/checkout";
 
 // K1: kasir tanpa izin payment.create tidak boleh memulai "bayar sekarang" (order akan tertinggal
 // setengah jalan karena konfirmasi SJ tunai mewajibkan pembayaran). Bayar Nanti tetap bisa.
@@ -45,6 +46,7 @@ function formPos(over: Record<string, unknown> = {}) {
     newTransaction: vi.fn(),
     handleCheckout: vi.fn(),
     canPay: true,
+    payLaterBlock: null,
     ...over,
   } as never;
 }
@@ -80,5 +82,26 @@ describe("checkout POS tanpa izin pembayaran (K1)", () => {
   it("dengan izin: Proses Bayar aktif", () => {
     renderSheet(formPos());
     expect(screen.getByRole("button", { name: "Proses Bayar" })).toBeEnabled();
+  });
+});
+
+describe("Bayar Nanti hanya untuk pelanggan terdaftar", () => {
+  it("walk-in: opsi Bayar Nanti nonaktif dengan penjelasan", () => {
+    const pos = formPos({ customerId: null, payLaterBlock: PAY_LATER_NEEDS_CUSTOMER_MESSAGE });
+    renderSheet(pos);
+    const payLater = screen.getByRole("button", { name: "Bayar Nanti" });
+    expect(payLater).toBeDisabled();
+    expect(payLater).toHaveAccessibleDescription(PAY_LATER_NEEDS_CUSTOMER_MESSAGE);
+    fireEvent.click(payLater);
+    expect((pos as { setMode: ReturnType<typeof vi.fn> }).setMode).not.toHaveBeenCalled();
+  });
+
+  it("dengan pelanggan: Bayar Nanti bisa dipilih", () => {
+    const pos = formPos({ customerId: 7 });
+    renderSheet(pos);
+    const payLater = screen.getByRole("button", { name: "Bayar Nanti" });
+    expect(payLater).toBeEnabled();
+    fireEvent.click(payLater);
+    expect((pos as { setMode: ReturnType<typeof vi.fn> }).setMode).toHaveBeenCalledWith("pay_later");
   });
 });

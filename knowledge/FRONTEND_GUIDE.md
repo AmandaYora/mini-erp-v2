@@ -53,6 +53,11 @@ Setiap aksi tulis yang gagal **wajib** menampilkan `message` asli dari API
 menyimpan data" tanpa alasan. Ini memperbaiki pola berulang di sistem lama (KI-04, KI-17, KI-29,
 KI-43 di [../docs/legacy-reference/known-issues.md](../docs/legacy-reference/known-issues.md)).
 
+Galat validasi datang sebagai `{message: "Validasi gagal", errors: [{field, message}]}`. Handler tulis
+yang tidak memetakan `errors[]` ke input form wajib menampilkan `formatApiError(err)`
+(`shared/services/http-client.ts`: `message` + pesan per-field), bukan `toApiError(err).message` —
+tanpa itu pengguna hanya melihat "Validasi gagal".
+
 ## Ketahanan Muat & Galat (OP-01/OP-03)
 
 - Halaman lazy didaftarkan di `app/routes/route-pages.ts`, yang memakai `lazyWithRetry` (`shared/lib/chunk-recovery.ts`) sebagai pengganti `React.lazy`: chunk basi pasca-deploy → muat ulang SEKALI (penjaga cap waktu di `sessionStorage`, cooldown `CHUNK_RELOAD_COOLDOWN_MS` = 30 dtk; tanpa `sessionStorage` TIDAK memuat ulang agar tak loop), lalu kartu galat. `vite:preloadError` dipasang di `main.tsx`. Tes: `chunk-recovery.test.tsx`, `route-error.test.tsx`, e2e E11.

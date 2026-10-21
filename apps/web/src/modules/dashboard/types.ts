@@ -25,8 +25,12 @@ export interface DashboardOperations {
   salesOrdersMonth: number;
   ordersToday: number;
   ordersMonth: number;
+  /** Rupiah: total nilai order beli (selain batal) bertanggal periode itu. */
   purchasesToday: number;
   purchasesMonth: number;
+  /** Jumlah order beli yang sama (bukan order jual — itu ordersToday/ordersMonth). */
+  purchaseOrdersToday: number;
+  purchaseOrdersMonth: number;
   outstandingReceivable: number;
   outstandingPayable: number;
   criticalCount: number;

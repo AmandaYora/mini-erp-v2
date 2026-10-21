@@ -135,6 +135,7 @@ describe("form pembayaran — PPN opsional (K-03)", () => {
       notes: "",
       customerId: null,
       customerDetail: null,
+      payLaterBlock: null,
       setTaxed,
       setTaxIncluded,
       setTaxRate,

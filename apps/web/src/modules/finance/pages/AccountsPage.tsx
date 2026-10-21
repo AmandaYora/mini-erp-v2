@@ -18,7 +18,7 @@ import {
 } from "@/shared/components/ui";
 import { ActionMenu, Page, Toolbar, useUrlTab } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -91,7 +91,7 @@ export default function AccountsPage() {
       setEditing(null);
       reload();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -105,7 +105,7 @@ export default function AccountsPage() {
       setArchiveTarget(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal mengarsipkan akun", toApiError(err).message);
+      toast.danger("Gagal mengarsipkan akun", formatApiError(err));
     }
   }
 
@@ -119,7 +119,7 @@ export default function AccountsPage() {
       setMappingKey(null);
       reload();
     } catch (err) {
-      setMappingError(toApiError(err).message);
+      setMappingError(formatApiError(err));
     } finally {
       setMappingSubmitting(false);
     }

@@ -22,7 +22,7 @@ import {
 import { DocNumber, Money, Page, SavedViews, Toolbar, useUrlTab } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate } from "@/shared/lib/format";
-import { isAbort, toApiError } from "@/shared/services/http-client";
+import { formatApiError, isAbort, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
@@ -182,7 +182,7 @@ export default function PaymentsPage() {
       setFilters({ page: 1 });
       reload();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -206,7 +206,7 @@ export default function PaymentsPage() {
       setFilters({ page: 1 });
       reload();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -223,7 +223,7 @@ export default function PaymentsPage() {
       setBalanceKey((k) => k + 1);
       reload();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

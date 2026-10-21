@@ -12,7 +12,7 @@ import {
 import { ArchiveViewToggle, DocNumber, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 import { toast } from "@/shared/stores/toast.store";
@@ -75,7 +75,7 @@ export default function SuppliersPage() {
       if (filters.page !== 1) setFilters({ page: 1 });
       else reload();
     } catch (err) {
-      setModalError(toApiError(err).message);
+      setModalError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

@@ -19,7 +19,7 @@ import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { TableSkeleton } from "@/shared/components/ui";
 import { todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -190,7 +190,7 @@ export default function PeriodsPage() {
       setReadiness(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal memproses periode", toApiError(err).message);
+      toast.danger("Gagal memproses periode", formatApiError(err));
     } finally {
       setConfirming(false);
     }

@@ -34,7 +34,7 @@ type Source = "ledger" | "order";
 const SOURCE_NOTE: Record<Source, string> = {
   ledger: "Pembukuan: dari jurnal yang sudah diposting (omzet, laba, kas, dan piutang buku).",
   order:
-    "Order: dihitung dari dokumen order, bukan jurnal. Penjualan = order selesai bersih retur; piutang dan hutang dihitung per order, tidak pernah di bawah nol.",
+    "Order: dihitung dari dokumen order, bukan jurnal. Penjualan = order selesai bersih retur; pembelian = nilai order beli bertanggal periode itu (selain yang dibatalkan); piutang dan hutang dihitung per order, tidak pernah di bawah nol.",
 };
 
 function KpiRow({ summary, source, overdueOrders }: { summary: DashboardSummary; source: Source; overdueOrders: number | null }) {
@@ -75,7 +75,7 @@ function KpiRow({ summary, source, overdueOrders }: { summary: DashboardSummary;
       <SummaryCard
         label="Pembelian hari ini"
         value={formatIDR(ops.purchasesToday)}
-        hint={`${formatNumber(ops.ordersToday)} order · Bulan ini ${formatIDR(ops.purchasesMonth)}`}
+        hint={`${formatNumber(ops.purchaseOrdersToday)} order beli · Bulan ini ${formatIDR(ops.purchasesMonth)}`}
       />
       <SummaryCard label="Hutang berjalan" value={formatIDR(ops.outstandingPayable)} tone="warning" />
       <SummaryCard

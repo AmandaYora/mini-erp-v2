@@ -13,7 +13,7 @@ import {
 import { ActionMenu, ArchiveViewToggle, DocNumber, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatIDR } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 import { toast } from "@/shared/stores/toast.store";
@@ -131,7 +131,7 @@ export default function MemberTypesPage() {
       setEditing(null);
       reload();
     } catch (err) {
-      setModalError(toApiError(err).message);
+      setModalError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -151,7 +151,7 @@ export default function MemberTypesPage() {
       setConfirm(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal", toApiError(err).message);
+      toast.danger("Gagal", formatApiError(err));
     } finally {
       setBusy(false);
     }

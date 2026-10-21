@@ -6,7 +6,7 @@ import { Money, Page, StickyFooter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
@@ -59,7 +59,7 @@ export default function JournalFormPage() {
       toast.fromServer(res.message, "Jurnal manual dicatat", res.data.number);
       navigate(`${ROUTE_PATHS.financeJournals}/${res.data.id}`);
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

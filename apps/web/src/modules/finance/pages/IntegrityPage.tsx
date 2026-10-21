@@ -13,7 +13,7 @@ import {
 import { Money, Page } from "@/shared/components/patterns";
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { formatDate, formatIDR, formatNumber } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { financeService } from "@/modules/finance/services/finance.service";
@@ -35,7 +35,7 @@ export default function IntegrityPage() {
       setConfirmOpen(false);
       reload();
     } catch (err) {
-      toast.danger("Gagal menghitung ulang rollup", toApiError(err).message);
+      toast.danger("Gagal menghitung ulang rollup", formatApiError(err));
     } finally {
       setRebuilding(false);
     }

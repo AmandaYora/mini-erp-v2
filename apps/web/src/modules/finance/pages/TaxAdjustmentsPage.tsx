@@ -4,7 +4,7 @@ import { Badge, Button, DataTable, DateInput, FormField, PageHeader, Pagination,
 import { DocNumber, Money, Page } from "@/shared/components/patterns";
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { formatDate, formatIDR, formatNumber, monthStartWIB, todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -68,7 +68,7 @@ export default function TaxAdjustmentsPage() {
         try {
           await financeService.attachTaxAdjustment(res.data.id, extra.file);
         } catch (err) {
-          toast.danger("Koreksi tercatat, lampiran gagal diunggah", toApiError(err).message);
+          toast.danger("Koreksi tercatat, lampiran gagal diunggah", formatApiError(err));
         }
       }
       toast.fromServer(res.message, "Koreksi fiskal dicatat", res.data.number);
@@ -77,7 +77,7 @@ export default function TaxAdjustmentsPage() {
       reloadList();
       reloadFiscal();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

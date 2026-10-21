@@ -4,7 +4,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { loginSchema } from "@/modules/auth/schemas/login.schema";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { Button, FormField, PasswordInput, TextInput } from "@/shared/components/ui";
 import { Notice } from "@/shared/components/feedback/notice";
 import { LoadingState } from "@/shared/components/feedback/LoadingState";
@@ -58,7 +58,7 @@ export default function LoginPage() {
         navigate(next, { replace: true });
       }
     } catch (err) {
-      setFormError(toApiError(err).message);
+      setFormError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

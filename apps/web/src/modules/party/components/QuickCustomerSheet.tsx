@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { SearchSelectOption } from "@/shared/components/ui";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { rowsToAttrs } from "@/shared/lib/key-value";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { PartyFormModal } from "@/modules/party/components/PartyFormModal";
 import type { PartyFormValues } from "@/modules/party/schemas/party.schema";
@@ -59,7 +59,7 @@ export function QuickCustomerSheet({ open, requirePhone = false, onClose, onCrea
       toast.fromServer(res.message, "Pelanggan dibuat");
       onCreated(res.data);
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

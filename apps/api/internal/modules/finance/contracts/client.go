@@ -122,7 +122,11 @@ type FinanceClient interface {
 	// BalancesByKey is AccountBalances addressed by account MAPPING KEY (cash,
 	// bank, receivable, payable, inventory…) instead of chart code: a renumbered
 	// or re-mapped chart keeps the dashboard right. Unmapped keys read zero.
-	BalancesByKey(ctx context.Context, branchID int64, keys []string) (map[string]int64, error)
+	//
+	// asOf (YYYY-MM-DD, WIB calendar day, inclusive) caps the footing like the
+	// balance sheet of that date: journals dated after it (future-dated entries)
+	// are left out. Empty asOf = lifetime footing.
+	BalancesByKey(ctx context.Context, branchID int64, keys []string, asOf string) (map[string]int64, error)
 	// NetProfit returns revenue/expense/profit for a date range (inclusive,
 	// YYYY-MM-DD). Contra accounts net naturally (debits offset credits).
 	NetProfit(ctx context.Context, branchID int64, from, to string) (revenue, expense, profit int64, err error)

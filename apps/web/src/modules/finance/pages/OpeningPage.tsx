@@ -15,7 +15,7 @@ import { DescriptionList, DocNumber, Money, Page, Stepper, StickyFooter } from "
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate, todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -100,7 +100,7 @@ export default function OpeningPage() {
       setPreview(res.data);
       setPending(parsed.values);
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -142,7 +142,7 @@ export default function OpeningPage() {
       toast.fromServer(res.message, "Harga modal dilengkapi", res.data.number);
       reload();
     } catch (err) {
-      toast.danger("Gagal melengkapi harga modal", toApiError(err).message);
+      toast.danger("Gagal melengkapi harga modal", formatApiError(err));
     } finally {
       setCompleting(false);
     }

@@ -85,6 +85,18 @@ export function CartPanel({ pos }: { pos: PosCartApi }) {
         onChange={() => setCustomerOpen(true)}
       />
       <PermissionStatus pos={pos} />
+      {pos.discountNotice && (
+        <div className="border-b border-border p-3">
+          <Notice tone="warning" title="Diskon disesuaikan dengan harga baru">
+            {pos.discountNotice}
+            <div className="mt-2">
+              <Button variant="secondary" className="h-10" onClick={pos.dismissDiscountNotice}>
+                Mengerti
+              </Button>
+            </div>
+          </Notice>
+        </div>
+      )}
 
       {started && completed === null && (
         <div className="border-b border-border p-3">

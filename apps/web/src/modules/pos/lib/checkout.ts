@@ -64,6 +64,28 @@ function optionalFields(
   return out;
 }
 
+// Termin net (Bayar Nanti) hanya untuk pelanggan terdaftar yang bisa dihubungi:
+// sales/application/service.go validateHeader menolak net tanpa partyId dan net
+// untuk customer tanpa nomor telepon. Opsi ini dinonaktifkan di POS sebelum kasir
+// menekan Bayar, bukan dibiarkan ditolak server.
+export const PAY_LATER_NEEDS_CUSTOMER_MESSAGE =
+  "Bayar Nanti hanya untuk pelanggan terdaftar — pilih pelanggan dulu, atau gunakan Bayar Sekarang untuk penjualan umum/walk-in.";
+export const PAY_LATER_NEEDS_PHONE_MESSAGE =
+  "Pelanggan ini belum punya nomor telepon — Bayar Nanti butuh nomor telepon. Lengkapi data pelanggan, atau gunakan Bayar Sekarang.";
+
+/** Alasan Bayar Nanti tidak tersedia (null = tersedia). `customerPhone` undefined =
+ * detail pelanggan belum termuat (jangan memblokir; server tetap otoritas). */
+export function payLaterBlockReason(input: {
+  customerId: number | null;
+  customerPhone?: string | null;
+}): string | null {
+  if (input.customerId === null || input.customerId <= 0) return PAY_LATER_NEEDS_CUSTOMER_MESSAGE;
+  if (input.customerPhone !== undefined && (input.customerPhone ?? "").trim() === "") {
+    return PAY_LATER_NEEDS_PHONE_MESSAGE;
+  }
+  return null;
+}
+
 /** Bangun body POST /sales-orders channel pos. Melempar Error berbahasa
  * Indonesia bila input melanggar aturan termin backend. */
 export function buildPosOrderPayload(input: BuildPosOrderInput): PosOrderPayload {
@@ -74,6 +96,9 @@ export function buildPosOrderPayload(input: BuildPosOrderInput): PosOrderPayload
     throw new Error("Keranjang kosong — minimal 1 baris item.");
   }
   if (input.mode === "pay_later") {
+    if (input.partyId <= 0) {
+      throw new Error(PAY_LATER_NEEDS_CUSTOMER_MESSAGE);
+    }
     const dueDate = (input.dueDate ?? "").trim();
     if (dueDate === "") {
       throw new Error("Jatuh tempo wajib diisi untuk Bayar Nanti.");
