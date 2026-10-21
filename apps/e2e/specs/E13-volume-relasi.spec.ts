@@ -312,6 +312,6 @@ test.describe.serial("E13 volume 50 PO + 100 penjualan dan integritas relasi pel
       items: [{ productId: p.id, variantId: p.variantId, uom: "pcs", qty: 1 }],
     });
     expect(again.status).toBeGreaterThanOrEqual(400);
-    // Pembayaran piutang pihak terarsip: lihat E07 test.fixme (K2, README).
+    // Pembayaran piutang pihak terarsip tetap diterima: lihat E07 (K2).
   });
 });

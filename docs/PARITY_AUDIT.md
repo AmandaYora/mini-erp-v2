@@ -50,7 +50,7 @@ Gelombang 1 (kritis), Gelombang 2 (kerja harian) dan Gelombang 3 (ketahanan oper
 (`node scripts/verify.mjs`, e2e 52 lulus / 2 dilewati / 0 gagal). Baris-baris di bawah dan di seluruh dokumen ini sudah
 diselaraskan dengan kode **per 2026-10-19**, bukan dengan klaim lama; setiap baris yang berubah menyebut ID tugas PLAN yang
 menutupnya, atau menyatakan **terbuka** / **diterima sebagai gap** beserta rujukan keputusannya
-([ADR-0018](../knowledge/decisions/ADR-0018-keputusan-paritas.md) D1–D7, PLAN §7). Teks lama yang dipertahankan sebagai arsip
+([ADR-0018](../knowledge/decisions/ADR-0018-keputusan-paritas.md) D1–D8, PLAN §7). Teks lama yang dipertahankan sebagai arsip
 ditandai "arsip".
 
 ### 0A.1 Empat belas klaim yang dikoreksi
@@ -85,6 +85,7 @@ ditandai "arsip".
 | ~~Paket pajak hanya cabang sesi~~ | **Tertutup** — N-53 (`branch=all` + `finance.report.all_branches`) | PLAN N-53 |
 | Penyesuaian pajak tanpa draft/final/arsip | **Diterima gap** | ADR-0018 D6, FN-07 |
 | Hak menu Kategori mensyaratkan `product_categories.manage` (legacy: `product.view`) | **Diterima gap** | ADR-0018 D7, PM-01 |
+| Kasir bawaan tanpa izin bayar → checkout POS tunai meninggalkan order yatim (legacy BR-18, e2e K1) | **Tertutup** 2026-10-21 — role kasir bawaan membawa `payment.create`/`payment.view`; POS menolak bayar sekarang tanpa izin sebelum membuat dokumen (e2e E02 K1). Pilihan izin menunggu konfirmasi pemilik | ADR-0018 D8 |
 | Kolom inline "Info tambahan:"/"Atribut:" pada impor produk = error (bukan peringatan + migrasi otomatis) | Menunggu tinjauan pemilik | PLAN §7 PR-08 |
 | Perlakuan akuntansi saldo kredit retur dan pemakaian uang muka | Default dipakai, **perlu konfirmasi akuntan** | PLAN §7 K-04a, N-41 |
 | Cabang pesan WhatsApp masuk tetap seluruh perusahaan (otorisasi nomor bersifat company-wide; hanya konsol uji dibatasi akses cabang) | **Diterima gap** | PLAN §7 AS-01 |

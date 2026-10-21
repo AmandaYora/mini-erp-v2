@@ -155,7 +155,9 @@ export interface CheckoutPlan {
   method: PayMethod;
   /** Uang diterima (tunai). Diabaikan untuk transfer. */
   tendered: number;
-  /** Punya izin payment.create. Tanpa izin: order tetap selesai, bayar manual. */
+  /** Punya izin payment.create. Tanpa izin, bayar sekarang ditolak SEBELUM dokumen apa pun dibuat:
+   * konfirmasi SJ order tunai mewajibkan settlement, jadi order akan tertinggal setengah jalan
+   * (KI legacy BR-18 / e2e K1). Bayar Nanti tetap bisa. */
   canPay: boolean;
   deliveryItems: () => PosDeliveryLinePayload[];
   /** Dipanggil sebelum order dikonfirmasi; string = hentikan dengan pesan itu
@@ -182,6 +184,10 @@ export type CheckoutOutcome =
       orderCreated: boolean;
     };
 
+/** Pesan bila bayar sekarang diminta tanpa izin payment.create (K1). */
+export const NO_PAY_PERMISSION_MESSAGE =
+  "Akun ini belum punya izin mencatat pembayaran, jadi pembayaran langsung tidak bisa diproses. Pilih Bayar Nanti, atau minta administrator menambahkan izin “Pembayaran: Tambah” ke role Anda.";
+
 /** Jalankan checkout dari titik yang ditentukan `state` (null = awal). */
 export async function runCheckout(
   api: CheckoutApi,
@@ -205,6 +211,11 @@ export async function runCheckout(
     order,
     orderCreated,
   });
+
+  // K1: tanpa izin pembayaran, bayar sekarang pasti gagal di konfirmasi SJ — hentikan di awal.
+  if (plan.payNow && !plan.canPay && step !== "done") {
+    return fail(step, null, NO_PAY_PERMISSION_MESSAGE);
+  }
 
   for (;;) {
     switch (step) {

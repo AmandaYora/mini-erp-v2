@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  NO_PAY_PERMISSION_MESSAGE,
   buildPosOrderPayload,
   remainingSteps,
   resolveStartStep,
@@ -177,11 +178,20 @@ describe("runCheckout", () => {
     expect(srv.calls.at(-1)).toBe("confirmDelivery+pay_now:-");
   });
 
-  it("tanpa izin bayar: SJ dikonfirmasi tanpa settlement dan ditandai pending", async () => {
+  it("tanpa izin bayar: bayar sekarang ditolak sebelum dokumen apa pun dibuat (K1)", async () => {
     const srv = fakeServer();
     const out = await runCheckout(srv.api, plan({ canPay: false }), null);
+    expect(srv.calls).toEqual([]);
+    expect(out.ok).toBe(false);
+    expect(!out.ok && out.blocked).toBe(NO_PAY_PERMISSION_MESSAGE);
+    expect(!out.ok && out.orderCreated).toBe(false);
+  });
+
+  it("tanpa izin bayar: Bayar Nanti tetap selesai tanpa settlement", async () => {
+    const srv = fakeServer();
+    const out = await runCheckout(srv.api, plan({ canPay: false, payNow: false }), null);
     expect(srv.calls.at(-1)).toBe("confirmDelivery");
-    expect(out.ok && out.paymentPending).toBe(true);
+    expect(out.ok && out.paymentPending).toBe(false);
   });
 
   it("gagal di tiap langkah lalu dilanjutkan dari nextStep sampai selesai (tiap langkah sekali)", async () => {

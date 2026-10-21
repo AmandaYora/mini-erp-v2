@@ -154,10 +154,6 @@ func runE2E(cfg *config.Config) {
 		"finance.expense.view", "finance.expense.create", "finance.tax_adjustment.view", "finance.tax_adjustment.manage",
 		"customers.view", "suppliers.view", "products.view",
 	})
-	// The default kasir role has no payment.create, and a COD checkout then fails
-	// at "confirm delivery" (see apps/e2e/README.md, known issue K1). The suite
-	// grants it so the cash POS flow can be exercised.
-	check(users.AddRolePermissions(ctx, 0, roleID("kasir"), []string{"payment.create", "payment.view"}))
 	mk := func(username, full string, role int64, branchIDs ...int64) {
 		acc := make([]usercontracts.BranchAccess, 0, len(branchIDs))
 		for i, b := range branchIDs {

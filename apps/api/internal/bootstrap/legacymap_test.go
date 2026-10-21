@@ -92,4 +92,10 @@ func TestMapLegacyExamples(t *testing.T) {
 	if has(kasir, "payment.create") || has(kasir, "sales.archive") {
 		t.Errorf("kasir legacy tanpa payment.*: paritas dilanggar: %v", kasir)
 	}
+	// K1: default role kasir revamp SENGAJA menambah izin pembayaran di atas
+	// peta legacy (tanpanya checkout POS tunai meninggalkan order yatim).
+	grants := DefaultGrants()["kasir"]
+	if !has(grants, "payment.create") || !has(grants, "payment.view") || has(grants, "payment.archive") {
+		t.Errorf("default kasir wajib payment.create + payment.view (tanpa archive): %v", grants)
+	}
 }

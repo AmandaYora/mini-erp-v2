@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { call, ok, productByCode, partyByCode, stockQty, today } from "../helpers/api";
+import { branches, call, ok, productByCode, partyByCode, rawLogin, stockQty, today } from "../helpers/api";
+import { PASSWORD } from "../helpers/env";
 import { loginAs } from "../helpers/ui";
 
 async function posOrderCount(): Promise<number> {
@@ -15,7 +16,7 @@ test.describe.serial("E02 POS", () => {
     await loginAs(page, "kasir");
     await page.goto("/pos");
 
-    const scan = page.getByLabel("Barcode");
+    const scan = page.getByLabel("Pindai QR / kode");
     await scan.fill(p.barcode);
     await scan.press("Enter");
     await expect(page.getByText(p.name).first()).toBeVisible();
@@ -63,7 +64,7 @@ test.describe.serial("E02 POS", () => {
     const p = await productByCode("P008"); // 3.500, satu buah
     await loginAs(page, "kasir");
     await page.goto("/pos");
-    const scan = page.getByLabel("Barcode");
+    const scan = page.getByLabel("Pindai QR / kode");
     await scan.fill(p.barcode);
     await scan.press("Enter");
     await expect(page.getByText(p.name).first()).toBeVisible();
@@ -89,11 +90,47 @@ test.describe.serial("E02 POS", () => {
     expect(order.grandTotal).toBe(3885);
   });
 
-  // K1: peran kasir bawaan tanpa payment.create. UI menjanjikan "order tetap bisa
-  // dibuat, bayar manual", tetapi konfirmasi SJ order tunai tanpa settlement ditolak.
-  test.fixme("kasir tanpa izin pembayaran: konfirmasi SJ tunai harus tetap bisa (K1)", async () => {
-    // Repro: login kasir bawaan (tanpa payment.create) -> POS tunai -> "Gagal mengonfirmasi
-    // surat jalan / pembayaran". API: POST /deliveries/:id/confirm {} -> 400 "order tunai belum
-    // lunas"; dengan settlement pay_now -> 403.
+  // K1 (legacy BR-18): konfirmasi SJ order tunai mewajibkan pembayaran, jadi kasir tanpa
+  // payment.create dulu meninggalkan order yatim. Kini (1) role kasir BAWAAN membawa
+  // payment.create/view — seed e2e tidak lagi menambahkannya, jadi tes tunai di atas memakai
+  // izin bawaan; (2) role tanpa izin itu ditolak SEBELUM dokumen apa pun dibuat.
+  test("kasir tanpa izin pembayaran: bayar sekarang ditolak di awal, tanpa order yatim (K1)", async ({ page }) => {
+    const roles = await ok<any[]>("admin", "GET", "/roles");
+    const kasir = await ok<any>("admin", "GET", `/roles/${roles.find((r) => r.code === "kasir").id}`);
+    expect(kasir.permissions).toEqual(expect.arrayContaining(["payment.create", "payment.view"]));
+
+    const n = Date.now() % 1_000_000;
+    const role = await ok<any>("admin", "POST", "/roles", {
+      code: `kasir_k1_${n}`,
+      name: `Kasir tanpa bayar ${n}`,
+      description: "uji e2e K1",
+    });
+    await ok("admin", "PUT", `/roles/${role.id}/permissions`, {
+      permissions: kasir.permissions.filter((c: string) => !c.startsWith("payment.")),
+    });
+    const hq = (await branches()).find((b) => b.code === "HQ");
+    const username = `kasirk1${n}`;
+    await ok("admin", "POST", "/users", {
+      username,
+      fullName: "Kasir K1",
+      password: PASSWORD,
+      roleIds: [role.id],
+      branches: [{ branchId: hq.id, isDefault: true }],
+    });
+    const login = await rawLogin(username, PASSWORD);
+    await page.addInitScript(([a, r]) => {
+      localStorage.setItem("mini-erp.access-token", a);
+      localStorage.setItem("mini-erp.refresh-token", r);
+    }, [login.accessToken, login.refreshToken]);
+
+    const p = await productByCode("P009");
+    const ordersBefore = await posOrderCount();
+    await page.goto("/pos");
+    await page.getByRole("button", { name: `Tambah ${p.name}` }).first().click();
+    await page.getByRole("button", { name: /^Bayar ·/ }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Bayar sekarang tidak tersedia untuk akun ini")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Proses Bayar" })).toBeDisabled();
+    expect(await posOrderCount()).toBe(ordersBefore);
   });
 });

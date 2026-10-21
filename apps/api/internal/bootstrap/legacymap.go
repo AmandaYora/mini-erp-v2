@@ -218,6 +218,16 @@ func legacyKasir() []string {
 	}
 }
 
+// kasirPaymentGrants are granted to the default kasir role on top of its
+// legacy codes. Legacy kasir had no payment.* (BR-18 in
+// docs/legacy-reference/15-pos), so a cash POS checkout created the order and
+// then failed at "confirm delivery" (a cash order needs its settlement):
+// an orphan order. Taking payment is the cashier's job, so the default role
+// carries it; payment.view lets the POS find the payment for the receipt.
+// Being a default grant, it reaches existing databases once on the next start
+// (authz_seed_applied) and is never re-added if an admin removes it.
+var kasirPaymentGrants = []string{"payment.create", "payment.view"}
+
 // DefaultGrants maps role code -> revamp codes granted once on first seed.
 // Admin/staff/kasir keep their customizations afterwards (tracked in
 // authz_seed_applied); owner/superadmin re-sync to everything each run.
@@ -225,7 +235,7 @@ func DefaultGrants() map[string][]string {
 	return map[string][]string{
 		"admin": MapLegacyCodes(legacyAdmin()),
 		"staff": MapLegacyCodes(legacyStaff()),
-		"kasir": MapLegacyCodes(legacyKasir()),
+		"kasir": append(MapLegacyCodes(legacyKasir()), kasirPaymentGrants...),
 	}
 }
 

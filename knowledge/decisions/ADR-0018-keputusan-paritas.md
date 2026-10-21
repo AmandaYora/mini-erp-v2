@@ -1,8 +1,8 @@
-# ADR-0018: Keputusan pemilik untuk program penyempurnaan paritas (D1–D7)
+# ADR-0018: Keputusan pemilik untuk program penyempurnaan paritas (D1–D8)
 
 ## Status
 Accepted (2026-10-18). Rencana: `docs/plan/penyempurnaan-paritas/PLAN.md` §1. Temuan:
-`docs/ANALISIS-PARITAS-2026-10-16.md` §5.
+`docs/ANALISIS-PARITAS-2026-10-16.md` §5. Revisi 2026-10-21: D8 ditambahkan (temuan e2e K1).
 
 ## Context
 Audit paritas independen menemukan beberapa perbedaan dari sistem legacy yang bukan bug,
@@ -22,6 +22,7 @@ dan dapat diubah dengan menerbitkan revisi ADR ini.
 | D5 | Domain `android-pos-shell` saat cutover | Default dipakai | Didokumentasikan saja; tidak ada perubahan kode (OP-05). |
 | D6 | Penyesuaian pajak: model jurnal bertipe vs draft/final | Default dipakai | Model jurnal bertipe dipertahankan (`DB_SCHEMA.md:304`). Lampiran, catatan, dan klasifikasi koreksi ditambahkan hanya sebagai kolom pelengkap (FN-07). |
 | D7 | Hak menu "Kategori" | Default dipakai | Menu tetap mensyaratkan `product_categories.manage`; pemilih kategori di form produk tetap lewat `products.view`. Perbedaan dengan legacy (`product.view`) didokumentasikan (PM-01). |
+| D8 | Izin bawaan role `kasir` untuk pembayaran (K1, legacy BR-18) | Default dipakai | Role kasir bawaan mendapat `payment.create` + `payment.view` di atas peta izin legacy (`kasirPaymentGrants`, `internal/bootstrap/legacymap.go`). Alasannya: konfirmasi SJ order tunai mewajibkan pembayaran, jadi tanpa izin itu checkout POS tunai meninggalkan order yatim (cacat yang sama ada di legacy). Hibah bawaan berlaku sekali per kode, sehingga ikut ke database yang sudah ada (termasuk hasil ETL) pada start berikutnya. Admin yang mencabutnya tidak akan ditimpa ulang. POS menolak "bayar sekarang" sebelum membuat dokumen bila izin itu tidak ada; Bayar Nanti tetap bisa. **Mohon konfirmasi pemilik** bila kasir tidak boleh melihat menu Pembayaran (alternatif: hanya `payment.create`). |
 
 ## Consequences
 - Tugas terdampak mengerjakan *default* di atas; bila pemilik menjawab lain, tugas dibuka ulang
@@ -29,6 +30,9 @@ dan dapat diubah dengan menerbitkan revisi ADR ini.
 - D1 adalah satu-satunya keputusan yang menghapus kemampuan legacy; ia tetap tercatat sebagai
   "Dibuang sengaja" di tabel penutupan (Z-01) sampai pemilik mengonfirmasi.
 - D4 mengubah kelengkapan laporan pajak, bukan perilaku default order.
+- D8 menyimpang dari peta izin legacy untuk role kasir. Uji `legacymap_test.go` tetap menjaga peta legacy apa adanya,
+  dan secara terpisah mewajibkan tambahan pembayaran pada hibah bawaan. Matriks role
+  (`role_matrix_test.go`, e2e E12) ikut memuat kasir.
 
 ## Perbedaan dengan legacy yang diterima (PM-01 / D7)
 

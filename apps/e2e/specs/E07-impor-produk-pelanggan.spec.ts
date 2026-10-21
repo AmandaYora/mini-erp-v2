@@ -83,9 +83,10 @@ test.describe.serial("E07 impor produk + CRUD pelanggan", () => {
     expect(again.status).toBeGreaterThanOrEqual(400);
   });
 
-  // K2 (README): legacy BR-05/E-16 membolehkan bayar piutang pihak terarsip; revamp menolak
-  // "pihak sudah diarsipkan" (payment/application/service.go:352). Dihidupkan saat diputuskan.
-  test.fixme("pembayaran piutang pihak terarsip diterima (K2)", async () => {
+  // K2: legacy BR-05/E-16 membolehkan bayar piutang pihak terarsip. Revamp sempat menolaknya
+  // ("pihak sudah diarsipkan"); kini arsip hanya menghentikan order BARU, piutang tetap tertagih
+  // (payment/application/service.go, komentar "legacy BR-05").
+  test("pembayaran piutang pihak terarsip diterima (K2)", async () => {
     const c = await ok<any>("admin", "POST", "/customers", { name: "Pelanggan Arsip K2", phone: "081299990002" });
     const p = await productByCode("P017");
     const so = await createSO("admin", c.id, [{ p, qty: 1 }], { paymentTerms: "net", dueDate: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10) });

@@ -1,11 +1,9 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { AlertTriangle, ChevronRight, Info, ShoppingCart, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui";
 import { Notice } from "@/shared/components/feedback/notice";
 import { cn } from "@/shared/lib/cn";
 import { formatIDR, formatNumber } from "@/shared/lib/format";
-import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { CartLineRow } from "@/modules/pos/components/CartLineRow";
 import { CustomerSheet } from "@/modules/pos/components/CustomerSheet";
 import { PosCustomerPanel } from "@/modules/pos/components/PosCustomerPanel";
@@ -47,11 +45,8 @@ function PermissionStatus({ pos }: { pos: PosCartApi }) {
         )}
         {!canPay && (
           <Notice tone="warning" title="Tanpa izin pencatatan pembayaran">
-            Order tetap bisa dibuat dan dikonfirmasi, tetapi pembayaran harus dicatat manual di{" "}
-            <Link to={ROUTE_PATHS.payments} className="font-semibold text-primary underline">
-              menu Pembayaran
-            </Link>
-            .
+            Bayar langsung (tunai/transfer) tidak bisa diproses dari akun ini — hanya Bayar Nanti. Minta administrator
+            menambahkan izin &quot;Pembayaran: Tambah&quot; ke role Anda.
           </Notice>
         )}
         {readiness.notices.length > 0 && (
@@ -112,7 +107,7 @@ export function CartPanel({ pos }: { pos: PosCartApi }) {
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
             <ShoppingCart aria-hidden className="size-10" />
             <p className="text-base font-semibold text-foreground">Keranjang kosong</p>
-            <p className="text-sm">Ketuk produk di kiri atau pindai barcode untuk menambah.</p>
+            <p className="text-sm">Ketuk produk di kiri atau pindai QR produk untuk menambah.</p>
           </div>
         ) : (
           <ul className="divide-y divide-border">

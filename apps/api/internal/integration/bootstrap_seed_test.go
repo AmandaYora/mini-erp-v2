@@ -94,3 +94,64 @@ func TestEnsureAuthzIdempotent(t *testing.T) {
 		t.Fatalf("admin codes = %d, want %d (hanya yang dicabut hilang)", len(after), len(rest))
 	}
 }
+
+// TestKasirPaymentGrantReachesExistingDB (ADR-0018 D8, e2e K1): database yang
+// di-seed SEBELUM kasir membawa izin pembayaran (kasir tanpa payment.*, tanpa
+// jejak authz_seed_applied untuknya) menerimanya sekali pada start berikutnya;
+// bila admin lalu mencabutnya, seed tidak memberikannya ulang.
+func TestKasirPaymentGrantReachesExistingDB(t *testing.T) {
+	freshDB(t)
+	users := testMods.user.Service()
+	if err := bootstrap.EnsureAuthz(ctx(), users); err != nil {
+		t.Fatalf("ensure 1: %v", err)
+	}
+	kasir, err := users.GetRoleByCode(ctx(), "kasir")
+	if err != nil || kasir == nil {
+		t.Fatalf("kasir: %v %v", kasir, err)
+	}
+	codes := func() map[string]bool {
+		list, err := users.GetPermissionCodes(ctx(), []int64{kasir.ID})
+		if err != nil {
+			t.Fatalf("kasir codes: %v", err)
+		}
+		out := map[string]bool{}
+		for _, c := range list {
+			out[c] = true
+		}
+		return out
+	}
+	without := func() []string {
+		var keep []string
+		for c := range codes() {
+			if c != "payment.create" && c != "payment.view" {
+				keep = append(keep, c)
+			}
+		}
+		return keep
+	}
+
+	// Keadaan database lama: kasir tanpa izin pembayaran dan belum pernah dihibahi.
+	if err := users.SetRolePermissions(ctx(), 0, kasir.ID, without()); err != nil {
+		t.Fatalf("kembalikan kasir ke peta lama: %v", err)
+	}
+	if _, err := testMods.db.Exec(`DELETE FROM authz_seed_applied WHERE role_code = 'kasir' AND permission_code IN ('payment.create', 'payment.view')`); err != nil {
+		t.Fatalf("hapus jejak seed: %v", err)
+	}
+	if err := bootstrap.EnsureAuthz(ctx(), users); err != nil {
+		t.Fatalf("ensure 2: %v", err)
+	}
+	if got := codes(); !got["payment.create"] || !got["payment.view"] {
+		t.Fatalf("start berikutnya wajib menghibahkan payment.create/view ke kasir lama: %v", got)
+	}
+
+	// Admin mencabutnya: start berikutnya tidak menimpa keputusan admin.
+	if err := users.SetRolePermissions(ctx(), 0, kasir.ID, without()); err != nil {
+		t.Fatalf("cabut izin pembayaran kasir: %v", err)
+	}
+	if err := bootstrap.EnsureAuthz(ctx(), users); err != nil {
+		t.Fatalf("ensure 3: %v", err)
+	}
+	if got := codes(); got["payment.create"] || got["payment.view"] {
+		t.Fatalf("izin yang dicabut admin diberikan ulang oleh seed: %v", got)
+	}
+}

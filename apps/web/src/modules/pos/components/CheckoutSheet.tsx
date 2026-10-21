@@ -19,6 +19,7 @@ import { formatIDR, formatNumber } from "@/shared/lib/format";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { lineTotal } from "@/modules/pos/lib/cart";
+import { NO_PAY_PERMISSION_MESSAGE } from "@/modules/pos/lib/checkout";
 import { invoiceHref, paymentProofHref, posReceiptHref } from "@/modules/pos/lib/receipt-links";
 import { quickCashOptions } from "@/modules/pos/lib/quick-cash";
 import type { PosCartApi } from "@/modules/pos/hooks/use-pos-cart";
@@ -92,6 +93,12 @@ function PaymentForm({ pos }: { pos: PosCartApi }) {
           { value: "pay_later", label: "Bayar Nanti" },
         ]}
       />
+
+      {mode === "pay_now" && !pos.canPay && (
+        <Notice tone="warning" title="Bayar sekarang tidak tersedia untuk akun ini">
+          {NO_PAY_PERMISSION_MESSAGE}
+        </Notice>
+      )}
 
       {mode === "pay_later" ? (
         <>
@@ -454,7 +461,11 @@ export function CheckoutSheet({ pos }: { pos: PosCartApi }) {
               >
                 Batal
               </Button>
-              <Button className="h-14 flex-1 text-lg font-semibold" disabled={processing} onClick={() => void pos.handleCheckout()}>
+              <Button
+                className="h-14 flex-1 text-lg font-semibold"
+                disabled={processing || (mode === "pay_now" && !pos.canPay)}
+                onClick={() => void pos.handleCheckout()}
+              >
                 {processing ? "Memproses…" : started ? "Lanjutkan" : mode === "pay_later" ? "Buat Piutang" : "Proses Bayar"}
               </Button>
             </>

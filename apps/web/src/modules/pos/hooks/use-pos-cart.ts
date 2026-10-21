@@ -14,6 +14,7 @@ import {
 } from "@/modules/pos/lib/cart";
 import {
   CHECKOUT_STEP_LABEL,
+  NO_PAY_PERMISSION_MESSAGE,
   buildPosOrderPayload,
   runCheckout,
   type CheckoutApi,
@@ -607,6 +608,12 @@ export function usePosCart() {
     }
     const values = parsed.data;
     const payLater = values.mode === "pay_later";
+    if (!payLater && !canPay) {
+      // K1: tanpa izin pembayaran, bayar sekarang tidak bisa diselesaikan server — tolak sebelum
+      // keranjang dikunci atau dokumen apa pun dibuat.
+      setCheckoutError(NO_PAY_PERMISSION_MESSAGE);
+      return;
+    }
     if (!payLater && values.method === "cash" && values.tendered < estimateTotal) {
       setCheckoutError(`Tunai kurang — minimal ${formatIDR(estimateTotal)} (estimasi).`);
       return;
