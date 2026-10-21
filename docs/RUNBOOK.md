@@ -223,7 +223,9 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
   -d '{"docType":"delivery","docId":<id>,"reason":"<alasan>"}' $API/api/v1/finance/posting/ignore
 # 4. negative_inventory dari histori legacy TIDAK diperbaiki costrebuild (histori migrasi tidak ditulis ulang,
 #    ADR-0020; §6b): catat posisinya untuk akuntan dan telaah sebabnya (oversell/inflow hilang di legacy).
-# 5. Bukti akhir (arsipkan): tidak ada status failed; inventory_recon konsisten (ADR-0020: selisih tak terjelaskan
+# 5. Bukti akhir (arsipkan): tidak ada status failed selain `unposted` untuk dokumen bertanggal setelah hari-H
+#    (gladi 2026-10-21: SJ-BLR/2026/02446 bertanggal 25 Okt — dijurnal tutup harian 25 Okt; bulan Oktober memang
+#    belum boleh ditutup sebelum berakhir); inventory_recon konsisten (ADR-0020: selisih tak terjelaskan
 #    = selisih bawaan legacy V-27 di verify.md, dalam toleransi; gladi 2026-10-21 sesudah posting: Rp297)
 curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-1.json
 curl -s -H "$H" "$API/api/v1/ops/integrity"

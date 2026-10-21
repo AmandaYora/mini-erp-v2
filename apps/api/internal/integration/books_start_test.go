@@ -20,7 +20,7 @@ func TestEntryBeforeBooksStartIsRefused(t *testing.T) {
 	if _, err := testMods.db.Exec(`INSERT INTO finance_periods (branch_id, year, month, status) VALUES (?, 2026, 4, 'closed')`, fx.branchID); err != nil {
 		t.Fatalf("seed closed period: %v", err)
 	}
-	lines := []financeapp.ManualLine{{AccountCode: "1000", Debit: 1000}, {AccountCode: "2000", Credit: 1000}}
+	lines := []financeapp.ManualLine{{AccountCode: "1000", Debit: 1000}, {AccountCode: "3000", Credit: 1000}}
 
 	_, err := fin.Manual(ctx(), 0, fx.branchID, "2026-03-15", "sebelum buku", lines)
 	if err == nil || !strings.Contains(mustAppErr(t, err).Message, "awal pembukuan") {
@@ -46,7 +46,7 @@ func TestFutureDatedDocumentsRefused(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
 	tomorrow := timeutil.NowUTC().In(timeutil.Jakarta).AddDate(0, 0, 1).Format("2006-01-02")
-	lines := []financeapp.ManualLine{{AccountCode: "1000", Debit: 1000}, {AccountCode: "2000", Credit: 1000}}
+	lines := []financeapp.ManualLine{{AccountCode: "1000", Debit: 1000}, {AccountCode: "3000", Credit: 1000}}
 	if _, err := testMods.finance.Service().Manual(ctx(), 0, fx.branchID, tomorrow, "besok", lines); err == nil {
 		t.Fatal("future-dated manual journal accepted")
 	}
