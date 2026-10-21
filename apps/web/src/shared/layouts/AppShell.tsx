@@ -425,7 +425,9 @@ function AppHeader({ pathname }: { pathname: string }) {
 export default function AppShell() {
   const { pathname } = useLocation();
   const permissions = useAuthStore((s) => s.permissions);
-  const [defaultOpen] = useState<boolean>(() => {
+  // Dikendalikan di sini: SidebarProvider tidak mengubah state internalnya bila diberi
+  // onOpenChange, jadi `open` harus ikut diberikan agar tombol collapse bekerja.
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) !== "1";
     } catch {
@@ -464,8 +466,9 @@ export default function AppShell() {
 
   return (
     <SidebarProvider
-      defaultOpen={defaultOpen}
+      open={sidebarOpen}
       onOpenChange={(open) => {
+        setSidebarOpen(open);
         try {
           localStorage.setItem(SIDEBAR_KEY, open ? "0" : "1");
         } catch {
