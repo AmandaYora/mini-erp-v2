@@ -32,7 +32,7 @@ func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, _ string) (int6
 	return 0, 0, nil
 }
 
-func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string) (map[string]int64, error) {
+func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string, _ string) (map[string]int64, error) {
 	net := map[string]int64{"cash": 1000, "receivable": 500, "payable": -300, "inventory": 700}
 	out := map[string]int64{}
 	for _, k := range keys {

@@ -44,6 +44,10 @@ type Summary struct {
 //   - Sales are the grand totals (tax included) of orders COMPLETED in the
 //     period, net of confirmed returns (return-only: minus the total; exchange:
 //     replacement total minus returned total) — the legacy definition.
+//   - Orders* count the non-cancelled SALES orders dated in the period.
+//   - Purchases* are rupiah: the summed grand totals of the non-cancelled
+//     purchase orders dated in the period (drafts included);
+//     PurchaseOrders* count those same orders.
 //   - Outstanding receivable/payable are per order, never below zero: an
 //     overpaid order does not offset another order's debt.
 type Operations struct {
@@ -55,6 +59,8 @@ type Operations struct {
 	OrdersMonth           int64 `json:"ordersMonth"`
 	PurchasesToday        int64 `json:"purchasesToday"`
 	PurchasesMonth        int64 `json:"purchasesMonth"`
+	PurchaseOrdersToday   int64 `json:"purchaseOrdersToday"`
+	PurchaseOrdersMonth   int64 `json:"purchaseOrdersMonth"`
 	OutstandingReceivable int64 `json:"outstandingReceivable"`
 	OutstandingPayable    int64 `json:"outstandingPayable"`
 	CriticalCount         int64 `json:"criticalCount"`

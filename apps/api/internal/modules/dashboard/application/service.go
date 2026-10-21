@@ -100,9 +100,11 @@ func (s *Service) Summary(ctx context.Context, branchID int64) (*dashboardcontra
 		}
 	}
 
+	// Balances as of today (WIB), like the balance sheet of today: journals
+	// dated in the future must not inflate today's cash/receivable/payable.
 	balances, err := s.finance.BalancesByKey(ctx, branchID, []string{
 		"cash", "bank", "receivable", "payable", "inventory",
-	})
+	}, day)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -134,13 +136,13 @@ func (s *Service) Summary(ctx context.Context, branchID int64) (*dashboardcontra
 // operations reads the live-document figures: sales completed (net of
 // returns), order counts, per-order outstanding and critical-stock counts.
 //
-// Query count: constant in the data size — 2 completed-sales reads, 2 + 2
-// order counts, 2 return adjustments, 1 critical summary, plus one grouped
+// Query count: constant in the data size — 2 completed-sales reads, 2 sales
+// order counts, 2 purchase value+count reads (ReportOrders: one totals query
+// plus a 1-row page), 2 return adjustments, 1 critical summary, plus one grouped
 // payment read per 1.000 open orders (receivable and payable).
 func (s *Service) operations(ctx context.Context, branchID int64, monthStart, today string) (*dashboardcontracts.Operations, error) {
 	ops := &dashboardcontracts.Operations{}
 	var err error
-	var n int64
 	if ops.SalesToday, ops.SalesOrdersToday, err = s.sales.CompletedSales(ctx, branchID, today, today); err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -165,14 +167,15 @@ func (s *Service) operations(ctx context.Context, branchID int64, monthStart, to
 	if ops.OrdersMonth, err = s.sales.CountOrders(ctx, branchID, monthStart, today); err != nil {
 		return nil, apperror.Internal(err)
 	}
-	if n, err = s.purchasing.CountOrders(ctx, branchID, today, today); err != nil {
-		return nil, apperror.Internal(err)
+	// Purchases: value (grand totals) AND count of the non-cancelled purchase
+	// orders dated in the period — one aggregate read each (ReportOrders'
+	// totals cover the whole filter, the 1-row page is incidental).
+	if ops.PurchasesToday, ops.PurchaseOrdersToday, err = s.purchaseTotals(ctx, branchID, today, today); err != nil {
+		return nil, err
 	}
-	ops.PurchasesToday = n
-	if n, err = s.purchasing.CountOrders(ctx, branchID, monthStart, today); err != nil {
-		return nil, apperror.Internal(err)
+	if ops.PurchasesMonth, ops.PurchaseOrdersMonth, err = s.purchaseTotals(ctx, branchID, monthStart, today); err != nil {
+		return nil, err
 	}
-	ops.PurchasesMonth = n
 	if ops.CriticalCount, ops.TrackedCount, err = s.stock.CriticalSummary(ctx, branchID); err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -193,6 +196,16 @@ func (s *Service) operations(ctx context.Context, branchID int64, monthStart, to
 		}
 	}
 	return ops, nil
+}
+
+// purchaseTotals returns the summed grand total and the count of the
+// non-cancelled purchase orders dated within [from, to].
+func (s *Service) purchaseTotals(ctx context.Context, branchID int64, from, to string) (value, count int64, err error) {
+	rep, err := s.purchasing.ReportOrders(ctx, branchID, "", from, to, 1, 1)
+	if err != nil {
+		return 0, 0, apperror.Internal(err)
+	}
+	return rep.GrandTotal, rep.Total, nil
 }
 
 // outstanding sums, over every confirmed/completed order, what is still owed

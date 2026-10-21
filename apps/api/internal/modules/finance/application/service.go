@@ -23,6 +23,7 @@ import (
 	salesreturncontracts "mini-erp/internal/modules/salesreturn/contracts"
 	stockcontracts "mini-erp/internal/modules/stock/contracts"
 	"mini-erp/internal/shared/apperror"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Mapping keys for automatic postings. Unknown keys are rejected (typos must
@@ -551,16 +552,20 @@ func (s *Service) AccountBalance(ctx context.Context, branchID int64, code strin
 // indexed) and one footing over the branch's history. Codes with no account
 // read as zero — an unseeded chart is not an error here, matching what
 // AccountBalance's NotFound meant to its dashboard callers.
-func (s *Service) BalancesByKey(ctx context.Context, branchID int64, keys []string) (map[string]int64, error) {
+func (s *Service) BalancesByKey(ctx context.Context, branchID int64, keys []string, asOf string) (map[string]int64, error) {
 	out := make(map[string]int64, len(keys))
 	if len(keys) == 0 {
 		return out, nil
+	}
+	to, err := asOfUpperBound(asOf)
+	if err != nil {
+		return nil, err
 	}
 	maps, err := s.repo.ListMappings(ctx)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	footings, err := s.repo.AccountFootings(ctx, branchID, "", "")
+	footings, err := s.repo.AccountFootings(ctx, branchID, "", to)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -572,6 +577,21 @@ func (s *Service) BalancesByKey(ctx context.Context, branchID int64, keys []stri
 		}
 	}
 	return out, nil
+}
+
+// asOfUpperBound turns an inclusive WIB calendar day into the footing's upper
+// bound — the same "<day> 23:59:59" BalanceSheet and TrialBalanceAsOf use, so a
+// dashboard capped at today equals the balance sheet of today. Empty = no bound.
+func asOfUpperBound(asOf string) (string, error) {
+	asOf = strings.TrimSpace(asOf)
+	if asOf == "" {
+		return "", nil
+	}
+	day, err := timeutil.ParseDateInput(asOf)
+	if err != nil {
+		return "", apperror.Validation("", []apperror.FieldError{{Field: "asOf", Message: "format tanggal harus YYYY-MM-DD"}})
+	}
+	return day.Format("2006-01-02") + " 23:59:59", nil
 }
 
 // AccountBalances returns lifetime net balances for several chart codes in one read.

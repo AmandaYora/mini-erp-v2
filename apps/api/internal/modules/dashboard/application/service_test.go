@@ -29,6 +29,8 @@ type fakeFinance struct {
 	// trendToday, when set, is echoed as the last point of DailyTrend so a
 	// test can assert which day Summary reads as "today".
 	trendToday string
+	// balancesAsOf records the asOf day BalancesByKey was asked for.
+	balancesAsOf string
 }
 
 func (f *fakeFinance) OpeningPosted(_ context.Context, _ int64) (bool, error) { return false, nil }
@@ -52,8 +54,9 @@ func (f *fakeFinance) AccountBalance(_ context.Context, _ int64, code string) (i
 	return 0, 0, nil
 }
 
-func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string) (map[string]int64, error) {
+func (f *fakeFinance) BalancesByKey(_ context.Context, _ int64, keys []string, asOf string) (map[string]int64, error) {
 	f.balancesCalls++
+	f.balancesAsOf = asOf
 	net := map[string]int64{"cash": 1000, "receivable": 500, "payable": -300, "inventory": 700}
 	out := map[string]int64{}
 	for _, k := range keys {
@@ -284,6 +287,9 @@ type fakePurchasing struct {
 	drafts []*purchasingcontracts.OrderSummary
 	open   []purchasingcontracts.OrderTotal
 	names  map[int64]*purchasingcontracts.OrderSummary
+	// periods answers ReportOrders(status "") per "from|to": the non-cancelled
+	// value (GrandTotal) and count (Total) of that range.
+	periods map[string]purchasingcontracts.OrderReport
 }
 
 func (f *fakePurchasing) SummariesByIDs(_ context.Context, ids []int64) (map[int64]*purchasingcontracts.OrderSummary, error) {
@@ -339,7 +345,11 @@ func (f *fakePurchasing) OpenOrderTotals(_ context.Context, _, after int64, _ in
 	return out, nil
 }
 
-func (f *fakePurchasing) ReportOrders(_ context.Context, _ int64, status, _, _ string, _, _ int) (*purchasingcontracts.OrderReport, error) {
+func (f *fakePurchasing) ReportOrders(_ context.Context, _ int64, status, from, to string, _, _ int) (*purchasingcontracts.OrderReport, error) {
+	if status == "" {
+		rep := f.periods[from+"|"+to]
+		return &rep, nil
+	}
 	if status == "draft" {
 		return &purchasingcontracts.OrderReport{Rows: f.drafts, Total: int64(len(f.drafts))}, nil
 	}
@@ -519,6 +529,35 @@ func TestSummaryUnchanged(t *testing.T) {
 	}
 	if sum.InventoryValue != 700 {
 		t.Fatalf("inventory value = %d, want 700", sum.InventoryValue)
+	}
+}
+
+// TestSummaryPurchasesAndBalancesAsOfToday: "Pembelian" is rupiah (summed
+// grand totals of the period's purchase orders) with its own order count —
+// never the purchase ORDER COUNT shown as money — and the key balances are
+// read as of today (WIB), so future-dated journals do not inflate them.
+func TestSummaryPurchasesAndBalancesAsOfToday(t *testing.T) {
+	today := timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
+	monthStart := today[:8] + "01"
+	fin := &fakeFinance{trendToday: "echo"}
+	pu := &fakePurchasing{periods: map[string]purchasingcontracts.OrderReport{
+		today + "|" + today:      {Total: 2, GrandTotal: 250000},
+		monthStart + "|" + today: {Total: 5, GrandTotal: 900000},
+	}}
+	svc := newService(fin, &fakeStock{}, &fakeSales{}, pu)
+	sum, err := svc.Summary(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := sum.Operations
+	if ops.PurchasesToday != 250000 || ops.PurchaseOrdersToday != 2 {
+		t.Fatalf("purchases today = %d (%d PO), want 250000 (2 PO)", ops.PurchasesToday, ops.PurchaseOrdersToday)
+	}
+	if ops.PurchasesMonth != 900000 || ops.PurchaseOrdersMonth != 5 {
+		t.Fatalf("purchases month = %d (%d PO), want 900000 (5 PO)", ops.PurchasesMonth, ops.PurchaseOrdersMonth)
+	}
+	if fin.balancesAsOf != today {
+		t.Fatalf("balances asOf = %q, want today %q (balance sheet of today)", fin.balancesAsOf, today)
 	}
 }
 
