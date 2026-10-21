@@ -201,7 +201,11 @@ export interface AdjustmentPayload {
   reason: string;
   approver: string;
   approverPassword: string;
+  /** "opening_correction": koreksi stok awal yang salah (ke ekuitas, bukan laba; ADR-0024). */
+  purpose?: AdjustmentPurpose;
 }
+
+export type AdjustmentPurpose = "opening_correction";
 
 export interface TransferPayload {
   toBranchId: number;

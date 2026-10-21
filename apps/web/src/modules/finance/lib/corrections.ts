@@ -15,6 +15,7 @@ export function gateLabel(key: string): string {
 const OFFSET_LABELS: Record<string, string> = {
   cogs: "HPP",
   adjustment: "Selisih stok",
+  opening_correction: "Koreksi saldo awal",
   writeoff: "Hapus stok",
   purchase_return_difference: "Selisih retur beli",
 };

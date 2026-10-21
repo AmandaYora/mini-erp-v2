@@ -486,8 +486,11 @@ func (v *verifier) payments() {
 
 var adjRe = regexp.MustCompile(`acct=(\d+);branch=(\d+);side=(\w+);prior=(\d)`)
 
+// safeCode is an account code that may be inlined into a query.
+var safeCode = regexp.MustCompile(`^[0-9A-Za-z._-]+$`)
+
 func (v *verifier) trialBalance() {
-	const id, desc = "V-11", "neraca saldo per cabang x akun (s.d. freeze; laba rugi tahun lalu ditutup ke ekuitas; tanpa koreksi migrasi)"
+	const id, desc = "V-11", "neraca saldo per cabang x akun (s.d. freeze; laba rugi tahun lalu ditutup ke ekuitas; tanpa koreksi migrasi; penyesuaian stok legacy di Koreksi Saldo Awal dihitung di akun asalnya)"
 	head, err := v.one(v.l.SQL, v.lq("SELECT code FROM {branches} WHERE {co} = :c AND is_default = 1 ORDER BY id_branch LIMIT 1"))
 	if err != nil {
 		v.fail(id, desc, err)
@@ -632,8 +635,18 @@ func (v *verifier) trialBalance() {
 		}
 	}
 	_ = head
+	// Legacy stock adjustments book their stock-difference leg on Koreksi
+	// Saldo Awal (ADR-0024); counted back on the legacy account, the balances
+	// must still be legacy's own.
+	acctExpr := "a.code"
+	for code, m := range metaOf {
+		if m.sys == "stock_difference" && safeCode.MatchString(code) {
+			acctExpr = fmt.Sprintf("CASE WHEN e.source_doc_type = 'legacy_je' AND e.memo LIKE '[L:stock_adjustment:%%' AND a.code = '%s' THEN '%s' ELSE a.code END",
+				transform.OpeningCorrectionCode, code)
+		}
+	}
 	// Migration corrections (ADR-0018 D11) are not legacy balances; V-26 checks them.
-	got, err := queryMap(v.ctx, v.t, `SELECT b.code, a.code, SUM(l.debit) - SUM(l.credit) FROM finance_journal_lines l JOIN finance_journal_entries e ON e.id=l.entry_id
+	got, err := queryMap(v.ctx, v.t, `SELECT b.code, `+acctExpr+`, SUM(l.debit) - SUM(l.credit) FROM finance_journal_lines l JOIN finance_journal_entries e ON e.id=l.entry_id
 		JOIN finance_accounts a ON a.id=l.account_id JOIN branches b ON b.id=e.branch_id
 		WHERE COALESCE(e.source_doc_type, '') <> 'migration_correction' GROUP BY 1,2`)
 	if err != nil {

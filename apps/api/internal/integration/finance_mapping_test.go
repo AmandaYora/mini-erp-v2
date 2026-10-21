@@ -44,11 +44,12 @@ func TestChartSeedUsesLegacyCodesAndAllKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mappings: %v", err)
 	}
-	if len(maps) != 18 {
-		t.Fatalf("mappings = %d, want 18", len(maps))
+	if len(maps) != 19 {
+		t.Fatalf("mappings = %d, want 19", len(maps))
 	}
 	want := map[string]string{"cash": "1000", "bank": "1010", "receivable": "1100", "payable": "2000",
-		"ppn_out": "2100", "customer_advance": "2200", "rounding_difference": "5200", "purchase_return_difference": "5300"}
+		"ppn_out": "2100", "customer_advance": "2200", "rounding_difference": "5200", "purchase_return_difference": "5300",
+		"opening_correction": "3100"}
 	for k, code := range want {
 		if maps[k] == nil || maps[k].Code != code {
 			t.Fatalf("mapping %s = %+v, want account %s", k, maps[k], code)

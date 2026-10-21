@@ -36,6 +36,7 @@ function scanBackend() {
   for (const file of goFiles(MODULES_DIR)) {
     const src = readFileSync(file, "utf8");
     for (const m of src.matchAll(new RegExp(String.raw`Action:\s*"${KEY}"`, "g"))) actions.add(m[1]);
+    for (const m of src.matchAll(new RegExp(String.raw`\.Action\s*=\s*"${KEY}"`, "g"))) actions.add(m[1]);
     for (const m of src.matchAll(new RegExp(String.raw`Entity:\s*"${ENT}"`, "g"))) entities.add(m[1]);
     for (const m of src.matchAll(new RegExp(String.raw`\btrail(?:Diff)?\(\s*ctx,\s*"${KEY}",\s*"${ENT}"`, "g"))) {
       actions.add(m[1]);

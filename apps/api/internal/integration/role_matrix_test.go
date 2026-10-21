@@ -101,6 +101,7 @@ var roleMatrix = map[string]string{
 	"salesreturn.refund":            "oa",
 	"salesreturn.view":              "oask",
 	"stock.adjust":                  "oask",
+	"stock.adjust_opening":          "o",
 	"stock.approve":                 "oa",
 	"stock.reserve":                 "oask",
 	"stock.transfer":                "oa",

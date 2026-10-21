@@ -112,10 +112,11 @@ type restatedRow struct {
 // account its journal booked the cost against. An outflow kind missing here
 // is never restated.
 var restateOffsets = map[string]string{
-	"delivery":        "cogs",
-	"adjustment":      "adjustment",
-	"write_off":       "writeoff",
-	"purchase_return": "purchase_return_difference",
+	"delivery":           "cogs",
+	"adjustment":         "adjustment",
+	"opening_correction": "opening_correction",
+	"write_off":          "writeoff",
+	"purchase_return":    "purchase_return_difference",
 }
 
 // RestateCostOptions drives RestateCost.

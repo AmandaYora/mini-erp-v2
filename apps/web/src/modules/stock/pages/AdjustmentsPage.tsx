@@ -26,7 +26,7 @@ import { VariantSelect } from "@/modules/stock/components/VariantSelect";
 import { StockLocationSelect } from "@/modules/stock/components/StockLocationSelect";
 import { parseQty, physicalDelta, resultingQty } from "@/modules/stock/lib/adjustment";
 import type { AdjustmentMode } from "@/modules/stock/schemas/stock.schema";
-import type { StockBalance, StockLocation } from "@/modules/stock/types";
+import type { AdjustmentPurpose, StockBalance, StockLocation } from "@/modules/stock/types";
 
 interface Line {
   key: number;
@@ -43,6 +43,12 @@ const MODE_OPTIONS: { value: AdjustmentMode; label: string }[] = [
   { value: "set", label: "Set ke jumlah fisik" },
   { value: "in", label: "Penambahan" },
   { value: "out", label: "Pengurangan" },
+];
+// Tujuan koreksi (ADR-0024): selisih stok masuk laba rugi; koreksi saldo awal
+// membetulkan stok awal yang salah input dan dibukukan ke ekuitas.
+const PURPOSE_OPTIONS: { value: "" | AdjustmentPurpose; label: string }[] = [
+  { value: "", label: "Selisih stok (opname, hilang, rusak)" },
+  { value: "opening_correction", label: "Koreksi saldo awal (stok awal salah)" },
 ];
 const isBlank = (l: Line) => l.productId === null && l.locationId === null && l.physical.trim() === "";
 
@@ -63,9 +69,11 @@ function CellError({ message }: { message?: string }) {
 export default function AdjustmentsPage() {
   const can = useAuthStore((s) => s.can);
   const canAdjust = can("stock.adjust");
+  const canOpening = can("stock.adjust_opening");
 
   const [lines, setLines] = useState<Line[]>(() => [newLine()]);
   const [mode, setMode] = useState<AdjustmentMode>("set");
+  const [purpose, setPurpose] = useState<"" | AdjustmentPurpose>("");
   const [reason, setReason] = useState("");
   const [approver, setApprover] = useState("");
   const [approverPassword, setApproverPassword] = useState("");
@@ -192,6 +200,7 @@ export default function AdjustmentsPage() {
             reason: reason.trim(),
             approver: approver.trim(),
             approverPassword,
+            ...(purpose ? { purpose } : {}),
           });
           done.add(p.line.key);
         } catch (err) {
@@ -248,16 +257,43 @@ export default function AdjustmentsPage() {
       <form id="adjustment-form" className="flex flex-col gap-6" onSubmit={(e) => void handleSubmit(e)} noValidate>
         <fieldset disabled={!canAdjust || saving} className="flex min-w-0 flex-col gap-6">
           <SectionCard title="Barang yang dikoreksi" description="Satu baris per produk, varian, dan lokasi.">
-            <div className="mb-4 w-64 max-w-full">
-              <FormField label="Mode koreksi" htmlFor="adjust-mode">
-                <SelectInput id="adjust-mode" value={mode} onChange={(e) => setMode(e.target.value as AdjustmentMode)}>
-                  {MODE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </SelectInput>
-              </FormField>
+            <div className="mb-4 flex flex-wrap gap-4">
+              <div className="w-64 max-w-full">
+                <FormField label="Mode koreksi" htmlFor="adjust-mode">
+                  <SelectInput id="adjust-mode" value={mode} onChange={(e) => setMode(e.target.value as AdjustmentMode)}>
+                    {MODE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </SelectInput>
+                </FormField>
+              </div>
+              {canOpening && (
+                <div className="w-80 max-w-full">
+                  <FormField
+                    label="Tujuan koreksi"
+                    htmlFor="adjust-purpose"
+                    helperText={
+                      purpose
+                        ? "Untuk stok awal yang salah input/impor. Dibukukan ke Koreksi Saldo Awal (ekuitas), tidak memengaruhi laba."
+                        : "Selisih stok dibukukan ke laba rugi (akun Selisih Stok)."
+                    }
+                  >
+                    <SelectInput
+                      id="adjust-purpose"
+                      value={purpose}
+                      onChange={(e) => setPurpose(e.target.value as "" | AdjustmentPurpose)}
+                    >
+                      {PURPOSE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </SelectInput>
+                  </FormField>
+                </div>
+              )}
             </div>
             <CellError message={errors.lines} />
             <LineItemsEditor<Line>

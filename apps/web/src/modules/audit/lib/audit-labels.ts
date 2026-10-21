@@ -118,6 +118,7 @@ export const ACTION_LABELS: Record<string, string> = {
 
   // Stok
   "stock_adjustments.create": "Koreksi stok",
+  "stock_adjustments.opening_correction": "Koreksi saldo awal stok",
   "stock.approver_failed": "Pemberitahuan persetujuan koreksi stok gagal",
   "stock_locations.create": "Tambah lokasi stok",
   "stock_locations.update": "Ubah lokasi stok",

@@ -98,3 +98,45 @@ func TestStockDifferencesAreJournalled(t *testing.T) {
 		t.Fatalf("write-off legs = %v, want Dr 5100 / Cr 1200 50000", legs)
 	}
 }
+
+// ADR-0024: an opening-stock correction is journalled against equity
+// (3100 Koreksi Saldo Awal), never against profit, needs its own permission,
+// and applies only to a position that received an opening stock.
+func TestOpeningCorrectionMovesEquity(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	p := productWith(t, "SALDOAWAL", 0, 1)
+	seedInCost(t, fx, p.ID, p.Variants[0].ID, fx.locationID, 100, 10000)
+	svc := testMods.stock.Service()
+	for _, id := range queuedStockMovements(t, fx.branchID) {
+		postedLegs(t, "stock_movement", id)
+	}
+	fix := stockapp.AdjustInput{
+		ProductID: p.ID, VariantID: p.Variants[0].ID, Location: fx.locationID,
+		Mode: "set", QtyAfter: 2, Reason: "stok awal impor salah", Purpose: stockapp.AdjustPurposeOpening,
+	}
+	if err := svc.Adjust(ctx(), 0, fx.branchID, fix); err == nil {
+		t.Fatal("opening correction without stock.adjust_opening was accepted")
+	}
+	fix.OpeningAllowed = true
+	if err := svc.Adjust(ctx(), 0, fx.branchID, fix); err != nil {
+		t.Fatalf("opening correction: %v", err)
+	}
+	ids := queuedStockMovements(t, fx.branchID)
+	if len(ids) != 1 {
+		t.Fatalf("queued = %v, want 1", ids)
+	}
+	legs := postedLegs(t, "stock_movement", ids[0])
+	if _, onProfit := legs["5100"]; onProfit || legs["3100"][0] != 980000 || legs["1200"][1] != 980000 {
+		t.Fatalf("opening correction legs = %v, want Dr 3100 / Cr 1200 980000 and nothing on 5100", legs)
+	}
+
+	// A product that never had an opening stock cannot take the equity route.
+	q := productWith(t, "TANPAAWAL", 5000, 1)
+	if err := svc.Adjust(ctx(), 0, fx.branchID, stockapp.AdjustInput{
+		ProductID: q.ID, VariantID: q.Variants[0].ID, Location: fx.locationID,
+		Mode: "in", QtyDelta: 4, Reason: "lebih", Purpose: stockapp.AdjustPurposeOpening, OpeningAllowed: true,
+	}); err == nil {
+		t.Fatal("opening correction accepted for a product without opening stock")
+	}
+}

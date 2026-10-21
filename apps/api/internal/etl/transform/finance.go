@@ -13,6 +13,15 @@ import (
 	"mini-erp/internal/etl/row"
 )
 
+// OpeningCorrectionCode is the equity account the ETL adds for corrections of
+// the opening balance (ADR-0024): legacy stock adjustments (the opening stock
+// was being counted and fixed) and the profit legs of migration corrections
+// land here, so profit shows only the business itself.
+const OpeningCorrectionCode = "3100"
+
+// openingCorrectionKey is the pseudo system key of that account.
+const openingCorrectionKey = "opening_correction"
+
 type acct struct {
 	newID   int64
 	code    string
@@ -100,6 +109,16 @@ func (s *state) accounts() {
 			s.emit("finance_account_mappings", row.Row{"mapping_key": mk, "account_id": id})
 		}
 	}
+	if prev, taken := seenCode[OpeningCorrectionCode]; taken {
+		s.find(report.Blocker, "ACCT_OPENING_CORRECTION", "finance_accounts", prev,
+			"kode akun %s sudah dipakai legacy: akun Koreksi Saldo Awal (ADR-0024) butuh keputusan kode lain", OpeningCorrectionCode)
+		return
+	}
+	id := s.nextID("finance_accounts")
+	s.openingCorr = &acct{newID: id, code: OpeningCorrectionCode, typ: "equity", sysKey: openingCorrectionKey, bs: true}
+	s.emit("finance_accounts", row.Row{"id": id, "code": OpeningCorrectionCode, "name": "Koreksi Saldo Awal", "type": "modal",
+		"is_cash": 0, "status": "active", "created_at": fmtUTC(s.epoch()), "updated_at": fmtUTC(s.epoch())})
+	s.emit("finance_account_mappings", row.Row{"mapping_key": openingCorrectionKey, "account_id": id})
 }
 
 type dimKey struct {
@@ -346,6 +365,11 @@ func (s *state) journals() {
 			}
 		}
 	}
+	// Legacy stock adjustments were the owner counting and fixing the opening
+	// stock (bulk import at qty 100, ADR-0018 D10): their stock-difference leg
+	// is a correction of the opening balance, so it moves to Koreksi Saldo
+	// Awal instead of profit (ADR-0024). Every line is in adjustments.csv.
+	var reclassN, reclassNet int64
 	for _, c := range current {
 		lid := c.src.Int("id_finance_journal_entry")
 		ev := c.src.Str("event_key")
@@ -367,9 +391,20 @@ func (s *state) journals() {
 			"scope": 0, "requeue": 0,
 		})
 		for _, l := range c.lines {
-			s.emit("finance_journal_lines", row.Row{"id": nextLine(), "entry_id": id, "account_id": l.acct.newID, "product_id": l.product, "variant_id": l.variant,
+			a := l.acct
+			if ev == "stock_adjustment" && a.sysKey == "stock_difference" && s.openingCorr != nil {
+				a = s.openingCorr
+				s.log.Adjust("finance_journal_lines", lid, "account", l.acct.code, a.code, "opening_stock_correction")
+				reclassN++
+				reclassNet += l.debit - l.credit
+			}
+			s.emit("finance_journal_lines", row.Row{"id": nextLine(), "entry_id": id, "account_id": a.newID, "product_id": l.product, "variant_id": l.variant,
 				"party_id": l.party, "debit": l.debit, "credit": l.credit, "description": l.desc})
 		}
+	}
+	if reclassN > 0 {
+		s.find(report.Info, "OPENING_STOCK_RECLASS", "finance_journal_lines", 0,
+			"%d baris jurnal penyesuaian stok legacy dipindah dari selisih stok ke Koreksi Saldo Awal %s (netto debit Rp%d; ADR-0024)", reclassN, OpeningCorrectionCode, reclassNet)
 	}
 }
 

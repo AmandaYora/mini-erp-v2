@@ -13,8 +13,8 @@ func TestDefaultChartCoversAllMappingKeys(t *testing.T) {
 		}
 		codes[a.code] = true
 	}
-	if len(mappingKeys) != 18 {
-		t.Fatalf("mapping keys = %d, want 18", len(mappingKeys))
+	if len(mappingKeys) != 19 {
+		t.Fatalf("mapping keys = %d, want 19", len(mappingKeys))
 	}
 	for _, k := range mappingKeys {
 		code, ok := mappings[k]

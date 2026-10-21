@@ -217,7 +217,7 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/stock/allocations/suggest` | Saran alokasi + shortfall |
 | `POST` | `/api/v1/stock/reservations/hold` | Tahan stok (idempoten per kunci, TTL) |
 | `POST` | `/api/v1/stock/reservations/release` | Lepas tahanan (idempoten) |
-| `POST` | `/api/v1/stock/adjustments` | Koreksi (di atas ambang perlu approver stock.approve) |
+| `POST` | `/api/v1/stock/adjustments` | Koreksi (di atas ambang perlu approver stock.approve); `purpose: "opening_correction"` = koreksi saldo awal ke ekuitas 3100 (izin stock.adjust_opening, produk harus punya stok awal; ADR-0024) |
 | `GET` | `/api/v1/stock/transfers` | Daftar dokumen transfer. Query `status`, `direction` (`out` ke cabang lain, `in` dari cabang lain, `internal` dalam cabang; relatif cabang sesi, ST-06); baris memuat `driverName`, `vehiclePlate`, `transferDate` |
 | `POST` | `/api/v1/stock/transfers` | Buat draf transfer (nomor TRF-…); `driverName` (wajib bila antar cabang, BR-20), `vehiclePlate`, `transferDate` (YYYY-MM-DD, default hari ini WIB) tersimpan di dokumen dan tercetak di `/print/transfers/{id}` (ST-02); `toBranchId` selain cabang sesi wajib cabang yang dapat diakses user, jika tidak `403` (K-06) |
 | `POST` | `/api/v1/stock/transfers/move-location` | Pindah lokasi satu cabang dalam satu panggilan; transfer yang dikembalikan sudah diterima |

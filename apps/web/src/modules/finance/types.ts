@@ -99,7 +99,7 @@ export function accountTypeLabel(t: string): string {
   }
 }
 
-// Kunci pemetaan valid (application/service.go: mappingKeys) — 18 kunci.
+// Kunci pemetaan valid (application/service.go: mappingKeys) — 19 kunci.
 export const MAPPING_KEYS = [
   "cash",
   "bank",
@@ -119,6 +119,7 @@ export const MAPPING_KEYS = [
   "adjustment",
   "rounding_difference",
   "purchase_return_difference",
+  "opening_correction",
 ] as const;
 
 const MAPPING_LABELS: Record<string, string> = {
@@ -140,6 +141,7 @@ const MAPPING_LABELS: Record<string, string> = {
   adjustment: "Penyesuaian Persediaan",
   rounding_difference: "Pembulatan / Selisih Posting",
   purchase_return_difference: "Selisih Retur Pembelian",
+  opening_correction: "Koreksi Saldo Awal",
 };
 
 export function mappingKeyLabel(key: string): string {
@@ -167,6 +169,7 @@ export const MAPPING_ACCOUNT_TYPES: Record<string, readonly AccountType[]> = {
   opening_equity: ["modal"],
   rounding_difference: ["beban"],
   purchase_return_difference: ["beban"],
+  opening_correction: ["modal"],
 };
 
 /** Kunci pemetaan yang belum menunjuk akun aktif. */

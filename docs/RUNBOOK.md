@@ -36,8 +36,8 @@ vs berkas di `/app/migrations`); pesannya menyebut perintah migrate di atas.
 jangan `up` ulang membabi buta.
 
 Rantai migrasi saat ini: baseline per modul `000001`–`000018` ditambah migrasi bernomor `000019`, `000020`, `000021`, `000022`,
-`000023`, `000031`–`000037`, `000039`–`000043` (nomor 000024–000030 dan 000038 sengaja kosong). Sesudah `migrate up`,
-`schema_migrations.version` harus **43** dengan
+`000023`, `000031`–`000037`, `000039`–`000044` (nomor 000024–000030 dan 000038 sengaja kosong). Sesudah `migrate up`,
+`schema_migrations.version` harus **44** dengan
 `dirty=0`; riwayat kolom/tabel baru dan dampak ETL ada di [DB_SCHEMA.md §8](DB_SCHEMA.md#8-riwayat-migrasi-bernomor-sesudah-baseline).
 Migrasi baru memakai nomor berikutnya yang bebas (`ls apps/api/migrations`) dan wajib punya `.down.sql`.
 
@@ -199,7 +199,7 @@ Rincian ada di §5 (jalur balik), §5b (ETL) dan [DEPLOYMENT.md](DEPLOYMENT.md).
 - [ ] Temuan ETL ditindaklanjuti (§5b butir 7): akuntan menelaah `report/cost_baseline_review.csv` dan REVENUE_UNBOOKED_CANCELLED; operasional mengumpulkan SJ bertanda tangan untuk DN_IN_TRANSIT dan menyelesaikan order DRAFT_ORDER_PAID.
 - [ ] Backup DB revamp dan dump legacy final terverifikasi (`gzip -t`, sha256); legacy di-freeze (read-only).
 - [ ] Gladi ETL lulus pada dump terbaru (§5b butir 6): `rehearse pass=true`, hash dua kali jalan sama, `load --resume` `inserted=0`.
-- [ ] `migrate up` (versi 43, `dirty=0`), `seed init`, ETL final, `etl verify` hijau; `GET /readyz` OK; rekonsiliasi saldo & stok (Readiness/rollups) cocok.
+- [ ] `migrate up` (versi 44, `dirty=0`), `seed init`, ETL final, `etl verify` hijau; `GET /readyz` OK; rekonsiliasi saldo & stok (Readiness/rollups) cocok.
 - [ ] Urutan saldo: impor stok awal -> saldo awal keuangan (Persediaan dihitung server dari ledger biaya, K-05) -> dokumen berjalan; `GET /finance/close/readiness` tanpa blocker `inventory_recon`, dan produk berstok tanpa harga modal dilengkapi lewat `POST /finance/opening/complete`.
 - [ ] `GET /api/v1/ops/integrity` (keadaan antara alur multi-langkah) kosong; tak ada dokumen macet di antrean posting yang belum dijurnal atau diabaikan dengan alasan (`finance/posting-sources`).
 - [ ] **Sesudah restore, sebelum akses dibuka**: jalankan antrean posting dan rekonsiliasi (langkah di bawah) sampai readiness bulan freeze tanpa `failed`.

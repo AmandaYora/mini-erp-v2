@@ -52,8 +52,8 @@ describe("posting queue helpers", () => {
 });
 
 describe("mapping keys", () => {
-  it("has 18 keys, all labelled", () => {
-    expect(MAPPING_KEYS).toHaveLength(18);
+  it("has 19 keys, all labelled", () => {
+    expect(MAPPING_KEYS).toHaveLength(19);
     for (const k of MAPPING_KEYS) expect(mappingKeyLabel(k)).not.toBe(k);
   });
 
@@ -72,7 +72,7 @@ describe("mapping keys", () => {
     });
     expect(missing).not.toContain("cash");
     expect(missing).toContain("bank");
-    expect(missing).toHaveLength(17);
+    expect(missing).toHaveLength(18);
   });
 });
 

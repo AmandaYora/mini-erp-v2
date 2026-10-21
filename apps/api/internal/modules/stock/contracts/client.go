@@ -69,6 +69,10 @@ const (
 	RefDamagedArrival = "damaged_arrival"
 	RefWriteOff       = "write_off"
 	RefOpening        = "opening"
+	// RefOpeningCorrection is an adjustment that fixes a wrong opening stock
+	// count (ADR-0024): journaled against equity (Koreksi Saldo Awal), never
+	// against profit.
+	RefOpeningCorrection = "opening_correction"
 
 	CancelSuffix = "_cancel"
 )
@@ -194,6 +198,7 @@ func PermissionCatalog() []usercontracts.PermissionSeed {
 		{Code: "stock.transfer", Name: "Stok: Transfer & Pindah Lokasi"},
 		{Code: "stock.adjust", Name: "Stok: Koreksi"},
 		{Code: "stock.approve", Name: "Stok: Setujui Koreksi"},
+		{Code: "stock.adjust_opening", Name: "Stok: Koreksi Saldo Awal"},
 		{Code: "stock.reserve", Name: "Stok: Tahan (Keranjang POS)"},
 	}
 }

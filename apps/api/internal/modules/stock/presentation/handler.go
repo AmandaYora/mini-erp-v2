@@ -335,15 +335,18 @@ func (h *Handler) Adjust(w http.ResponseWriter, r *http.Request) {
 		Reason    string  `json:"reason" validate:"required"`
 		Approver  string  `json:"approver"`
 		ApproverP string  `json:"approverPassword"`
+		Purpose   string  `json:"purpose"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
+	sess := authcontracts.SessionFromContext(r.Context())
 	if err := h.svc.Adjust(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), application.AdjustInput{
 		ProductID: in.ProductID, VariantID: in.VariantID, Location: in.Location,
 		Mode: in.Mode, QtyAfter: in.QtyAfter, QtyDelta: in.QtyDelta,
 		Reason: in.Reason, Approver: in.Approver, ApproverP: in.ApproverP,
+		Purpose: in.Purpose, OpeningAllowed: sess != nil && sess.HasPermission("stock.adjust_opening"),
 	}); err != nil {
 		response.FailErr(w, err)
 		return

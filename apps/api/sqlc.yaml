@@ -96,6 +96,7 @@ sql:
       - migrations/000016_finance.up.sql
       - migrations/000031_finance_fn.up.sql
       - migrations/000035_finance_corrections.up.sql
+      - migrations/000044_finance_opening_correction.up.sql
     queries: internal/modules/finance/infrastructure/queries
     gen:
       go:

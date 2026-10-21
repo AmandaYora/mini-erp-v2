@@ -414,6 +414,10 @@ func (s *Service) ListTransfersDir(ctx context.Context, branchID int64, status, 
 
 // --- adjustments ------------------------------------------------------------
 
+// AdjustPurposeOpening marks an adjustment that corrects a wrong opening
+// stock count (ADR-0024). Any other adjustment is a stock difference.
+const AdjustPurposeOpening = "opening_correction"
+
 // AdjustInput corrects stock. Exactly one of QtyAfter (mode "set") or
 // QtyDelta (modes "in"/"out") applies.
 type AdjustInput struct {
@@ -426,6 +430,11 @@ type AdjustInput struct {
 	Reason    string
 	Approver  string
 	ApproverP string
+	// Purpose is "" (stock difference) or AdjustPurposeOpening.
+	Purpose string
+	// OpeningAllowed: the session holds stock.adjust_opening (checked by the
+	// handler; an opening correction moves equity, not profit).
+	OpeningAllowed bool
 }
 
 // Adjust posts an adjustment movement + balance change. Deltas above the
@@ -449,6 +458,26 @@ func (s *Service) Adjust(ctx context.Context, actorID, branchID int64, in Adjust
 	}
 	if strings.TrimSpace(in.Reason) == "" {
 		return apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "wajib diisi"}})
+	}
+	refType := contracts.RefAdjustment
+	switch in.Purpose {
+	case "":
+	case AdjustPurposeOpening:
+		if !in.OpeningAllowed {
+			return &apperror.AppError{Code: apperror.CodeForbidden, Message: "Koreksi saldo awal butuh izin Stok: Koreksi Saldo Awal"}
+		}
+		// Only a position that has an opening stock can have it corrected;
+		// anything else is an ordinary stock difference.
+		has, err := s.repo.HasOpeningStock(ctx, branchID, in.ProductID, in.VariantID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if !has {
+			return apperror.Conflict("Produk ini tidak punya stok awal; gunakan koreksi selisih stok biasa")
+		}
+		refType = contracts.RefOpeningCorrection
+	default:
+		return apperror.Validation("", []apperror.FieldError{{Field: "purpose", Message: "tidak dikenal"}})
 	}
 	var delta float64
 	switch in.Mode {
@@ -533,7 +562,7 @@ func (s *Service) Adjust(ctx context.Context, actorID, branchID int64, in Adjust
 			direction = "out"
 		}
 		if _, err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, in.Location,
-			delta, direction, mtype, "adjustment", 0, in.Reason, actorID); err != nil {
+			delta, direction, mtype, refType, 0, in.Reason, actorID); err != nil {
 			return err
 		}
 		note := in.Reason
@@ -542,11 +571,15 @@ func (s *Service) Adjust(ctx context.Context, actorID, branchID int64, in Adjust
 		}
 		// The trail co-commits with the adjustment (ADR-0011); a failed write
 		// rolls the stock change back.
-		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+		entry := auditcontracts.Entry{
 			Action: "stock_adjustments.create", Entity: "stock_adjustment", BranchID: branchID, ActorID: actorID, Note: note,
 			Before: map[string]any{"productId": in.ProductID, "variantId": in.VariantID, "locationId": in.Location, "onHand": bal.OnHand},
 			After:  map[string]any{"onHand": bal.OnHand + delta, "delta": delta, "approved": approverOK},
-		})
+		}
+		if refType == contracts.RefOpeningCorrection {
+			entry.Action = "stock_adjustments.opening_correction"
+		}
+		return s.audit.LogTx(ctx, tx, entry)
 	})
 	return asAppErrorOrNil(err)
 }

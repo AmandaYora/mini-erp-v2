@@ -306,6 +306,8 @@ func (s *Service) UnpostedSources(ctx context.Context, branchID int64) ([]QueueI
 			date := timeutil.WIBDay(m.MovedAt) // UTC instant -> WIB day (same as its journal)
 			label := "Koreksi stok #" + strconv.FormatInt(m.MovementID, 10)
 			switch m.RefType {
+			case "opening_correction":
+				label = "Koreksi saldo awal stok #" + strconv.FormatInt(m.MovementID, 10)
 			case "write_off":
 				label = "Hapus stok #" + strconv.FormatInt(m.MovementID, 10)
 			case "damaged_arrival":

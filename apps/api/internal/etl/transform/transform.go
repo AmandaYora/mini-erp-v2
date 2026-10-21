@@ -126,6 +126,7 @@ type state struct {
 	deliveryNew     map[int64]int64
 	proofs          []proofRef
 	acct            map[int64]*acct
+	openingCorr     *acct // Koreksi Saldo Awal (ADR-0024), added by the ETL
 	journalNew      map[int64]int64
 	orderLines      map[int64][]row.Row // legacy order items per legacy order
 	migCorr         []migCorrection     // legacy errors the ETL corrects with a journal (ADR-0018 D11)

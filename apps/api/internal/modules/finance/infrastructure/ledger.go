@@ -162,9 +162,10 @@ func (r *Repository) CostRowByMovement(ctx context.Context, branchID, movementID
 }
 
 // JournaledMovementRefs are the stock movements journaled one by one (no
-// owning document books them): adjustments, write-offs and damaged goods that
-// arrived without a source position.
-var JournaledMovementRefs = []string{"adjustment", "write_off", "damaged_arrival"}
+// owning document books them): adjustments, opening-stock corrections
+// (ADR-0024), write-offs and damaged goods that arrived without a source
+// position.
+var JournaledMovementRefs = []string{"adjustment", "opening_correction", "write_off", "damaged_arrival"}
 
 // UnpostedStockMovements lists the JournaledMovementRefs movements that have
 // no live journal yet, oldest first, bounded. The anti-join stays inside
@@ -174,7 +175,7 @@ func (r *Repository) UnpostedStockMovements(ctx context.Context, branchID, after
 		`SELECT c.stock_movement_id, c.product_id, c.variant_id, c.direction, c.ref_type,
 			c.qty_base, c.total_cost, c.is_estimated, c.moved_at
 		 FROM finance_inventory_cost_movements c
-		 WHERE c.branch_id = ? AND c.ref_type IN ('adjustment', 'write_off', 'damaged_arrival')
+		 WHERE c.branch_id = ? AND c.ref_type IN ('adjustment', 'opening_correction', 'write_off', 'damaged_arrival')
 		   AND c.stock_movement_id > ?
 		   AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e
 		                    WHERE e.branch_id = c.branch_id AND e.source_doc_type = 'stock_movement'

@@ -86,8 +86,10 @@ func TestTransformRevenueUnbooked(t *testing.T) {
 		if r.Str("debit_account") != "1100" {
 			t.Errorf("revenue correction debits %s, want 1100 (Piutang): %v", r.Str("debit_account"), r)
 		}
+		// The revenue leg is a correction of the books before go-live, so it
+		// lands on Koreksi Saldo Awal, not on this day's profit (ADR-0024).
 		switch r.Str("credit_account") {
-		case "4000":
+		case transform.OpeningCorrectionCode:
 			g.revenue += r.Int("amount")
 		case "2100":
 			g.tax += r.Int("amount")
@@ -116,9 +118,11 @@ func TestTransformRevenueUnbooked(t *testing.T) {
 				if !l.Has("party_id") || l.Has("product_id") {
 					t.Errorf("%s: Piutang line without customer (or with product): %v", ref, l)
 				}
-			case "4000":
-				if !l.Has("product_id") || l.Has("party_id") {
-					t.Errorf("%s: Penjualan line without product: %v", ref, l)
+			case "4000", "5000", "5100":
+				t.Errorf("%s: correction touches profit: %v", ref, l)
+			case transform.OpeningCorrectionCode:
+				if l.Has("product_id") || l.Has("party_id") {
+					t.Errorf("%s: Koreksi Saldo Awal line with a dimension: %v", ref, l)
 				}
 			}
 		}

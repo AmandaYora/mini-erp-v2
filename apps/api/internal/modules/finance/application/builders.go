@@ -719,7 +719,12 @@ func (s *Service) buildReplacementDelivery(ctx context.Context, branchID int64, 
 //	adjustment in  (surplus)  Dr inventory   / Cr adjustment
 //	damaged arrival (in)      Dr inventory   / Cr adjustment
 //	adjustment out (shortage) Dr adjustment  / Cr inventory
+//	opening correction in     Dr inventory   / Cr opening_correction
+//	opening correction out    Dr opening_correction / Cr inventory
 //	write-off      (out)      Dr writeoff    / Cr inventory
+//
+// An opening correction fixes a wrong opening stock count (ADR-0024): it is
+// a correction of the opening balance, so it moves equity, never profit.
 //
 // A damaged arrival is stock that appeared with no source document, exactly
 // like a surplus; booking it keeps the ledger and Persediaan equal, and its
@@ -750,6 +755,18 @@ func (s *Service) buildStockMovement(ctx context.Context, branchID, movementID i
 			{key: "inventory", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Hapus stok rusak"},
 		}
 		memo = "Hapus stok rusak"
+	case row.RefType == "opening_correction" && row.Direction == "in":
+		legs = []rawLeg{
+			{key: "inventory", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Koreksi saldo awal stok (lebih)"},
+			{key: "opening_correction", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Koreksi saldo awal stok (lebih)"},
+		}
+		memo = "Koreksi saldo awal stok (lebih)"
+	case row.RefType == "opening_correction":
+		legs = []rawLeg{
+			{key: "opening_correction", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Koreksi saldo awal stok (kurang)"},
+			{key: "inventory", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Koreksi saldo awal stok (kurang)"},
+		}
+		memo = "Koreksi saldo awal stok (kurang)"
 	case row.RefType == "damaged_arrival":
 		legs = []rawLeg{
 			{key: "inventory", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Barang rusak masuk tanpa dokumen"},

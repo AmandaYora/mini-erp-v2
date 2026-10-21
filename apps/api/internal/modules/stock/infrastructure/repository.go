@@ -863,6 +863,18 @@ func (r *Repository) HasMovements(ctx context.Context, branchID, productID, vari
 	return n > 0, err
 }
 
+// HasOpeningStock reports whether the position received an opening stock
+// (ref_type 'opening') in the branch — the only stock an opening correction
+// may fix (ADR-0024).
+func (r *Repository) HasOpeningStock(ctx context.Context, branchID, productID, variantID int64) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM stock_movements
+		 WHERE branch_id = ? AND product_id = ? AND variant_id = ? AND ref_type = 'opening' AND direction = 'in')`,
+		branchID, productID, variantID).Scan(&exists)
+	return exists, err
+}
+
 // HasMovementsAnywhere reports history across all branches/locations.
 func (r *Repository) HasMovementsAnywhere(ctx context.Context, productID int64) (bool, error) {
 	var exists bool

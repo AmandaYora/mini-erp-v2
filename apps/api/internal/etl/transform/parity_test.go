@@ -288,7 +288,7 @@ func TestTransformDeliveryCancelCost(t *testing.T) {
 			if out.Explain["dn_cancel_value"] != 20000 {
 				t.Errorf("dn_cancel_value = %d, want 20000", out.Explain["dn_cancel_value"])
 			}
-			assertCorrection(t, out, "dn_cancel_cogs", 20000, "1200", "5000")
+			assertCorrection(t, out, "dn_cancel_cogs", 20000, "1200", transform.OpeningCorrectionCode)
 			return
 		}
 	}
@@ -346,7 +346,7 @@ func TestTransformStateNoQtyWriteDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCorrection(t, out, "state_no_qty", 5000, "5100", "1200")
+	assertCorrection(t, out, "state_no_qty", 5000, transform.OpeningCorrectionCode, "1200")
 	pid, _ := func() (int64, bool) {
 		for _, p := range out.Tables["products"] {
 			if p.Str("code") == "BDL-001" {
@@ -415,5 +415,85 @@ func TestTransformStateNoValueWriteUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Product 3's rows: opening 80000 + receipt 444000.
-	assertCorrection(t, out, "state_no_value", 524000, "1200", "5100")
+	assertCorrection(t, out, "state_no_value", 524000, "1200", transform.OpeningCorrectionCode)
+}
+
+// ADR-0024: a legacy stock adjustment journal books its stock-difference leg
+// on Koreksi Saldo Awal (the opening stock was being counted and fixed), the
+// added account and its mapping exist, and every moved line is logged.
+func TestTransformStockAdjustmentToOpeningCorrection(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	raw, err := extract.Load(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Journal 4 (current year) becomes a stock adjustment whose first line
+	// sits on the legacy stock-difference account (13 = 5100).
+	for _, r := range raw["finance_journal_entries"] {
+		if r.Int("id_finance_journal_entry") == 4 {
+			r["event_key"] = "stock_adjustment"
+		}
+	}
+	var moved int64
+	for _, l := range raw["finance_journal_lines"] {
+		if l.Int("id_finance_journal_entry") == 4 && moved == 0 {
+			l["id_finance_account"] = "13"
+			moved = l.Int("id_finance_journal_line")
+		}
+	}
+	if moved == 0 {
+		t.Fatal("fixture journal 4 has no lines")
+	}
+	out, err := transform.Run(transform.Input{Cfg: testCfg(work), Raw: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct := map[int64]string{}
+	for _, a := range out.Tables["finance_accounts"] {
+		acct[a.Int("id")] = a.Str("code")
+		if a.Str("code") == transform.OpeningCorrectionCode && a.Str("type") != "modal" {
+			t.Errorf("Koreksi Saldo Awal type = %q, want modal", a.Str("type"))
+		}
+	}
+	mapped := false
+	for _, m := range out.Tables["finance_account_mappings"] {
+		if m.Str("mapping_key") == "opening_correction" && acct[m.Int("account_id")] == transform.OpeningCorrectionCode {
+			mapped = true
+		}
+	}
+	if !mapped {
+		t.Error("opening_correction mapping to 3100 missing")
+	}
+	var entry int64
+	for _, e := range out.Tables["finance_journal_entries"] {
+		if e.Str("source_doc_type") == "legacy_je" && e.Int("source_doc_id") == 4 {
+			entry = e.Int("id")
+		}
+	}
+	var onEquity, onProfit int
+	for _, l := range out.Tables["finance_journal_lines"] {
+		if l.Int("entry_id") != entry {
+			continue
+		}
+		switch acct[l.Int("account_id")] {
+		case transform.OpeningCorrectionCode:
+			onEquity++
+		case "5100":
+			onProfit++
+		}
+	}
+	if onEquity != 1 || onProfit != 0 {
+		t.Errorf("stock adjustment lines: %d on 3100, %d on 5100; want 1 and 0", onEquity, onProfit)
+	}
+	logged := false
+	for _, a := range out.Log.Adjustments {
+		if a.Rule == "opening_stock_correction" && a.LegacyID == 4 && a.Before == "5100" && a.After == transform.OpeningCorrectionCode {
+			logged = true
+		}
+	}
+	if !logged {
+		t.Error("reclassified line not in adjustments.csv")
+	}
 }

@@ -33,7 +33,7 @@ var mappingKeys = []string{
 	"cash", "bank", "receivable", "inventory", "ppn_in", "payable",
 	"ppn_out", "customer_advance", "supplier_advance", "opening_equity",
 	"revenue", "sales_return", "cogs", "expense", "writeoff", "adjustment",
-	"rounding_difference", "purchase_return_difference",
+	"rounding_difference", "purchase_return_difference", "opening_correction",
 }
 
 // DefaultChart seeds the standard Indonesian CoA plus mappings, using the
@@ -52,6 +52,7 @@ func DefaultChart() (accounts []accountSeed, mappings map[string]string) {
 		{"2200", "Uang Muka Pelanggan", contracts.AccountLiability, false},
 		{"2300", "Uang Muka Supplier", contracts.AccountAsset, false},
 		{"3000", "Modal Awal / Saldo Awal", contracts.AccountEquity, false},
+		{"3100", "Koreksi Saldo Awal", contracts.AccountEquity, false},
 		{"4000", "Penjualan Barang", contracts.AccountIncome, false},
 		{"4100", "Retur Penjualan", contracts.AccountIncome, false},
 		{"5000", "Harga Pokok Penjualan", contracts.AccountExpense, false},
@@ -73,7 +74,7 @@ func DefaultChart() (accounts []accountSeed, mappings map[string]string) {
 		"opening_equity": "3000", "revenue": "4000", "sales_return": "4100",
 		"cogs": "5000", "expense": "6900", "writeoff": "5100",
 		"adjustment": "5100", "rounding_difference": "5200",
-		"purchase_return_difference": "5300",
+		"purchase_return_difference": "5300", "opening_correction": "3100",
 	}
 	return accounts, mappings
 }
@@ -395,6 +396,7 @@ var mappingTypes = map[string]map[string]bool{
 	"customer_advance":           {contracts.AccountLiability: true},
 	"supplier_advance":           {contracts.AccountAsset: true},
 	"opening_equity":             {contracts.AccountEquity: true},
+	"opening_correction":         {contracts.AccountEquity: true},
 	"rounding_difference":        {contracts.AccountExpense: true},
 	"purchase_return_difference": {contracts.AccountExpense: true},
 }
