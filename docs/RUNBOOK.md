@@ -218,7 +218,8 @@ curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readine
 #    menampilkannya sebagai belum dijurnal dan inventory_recon menjelaskannya lewat pendingValue
 curl -s -X POST -H "$H" -H 'Content-Type: application/json' -d "{\"date\":\"$FREEZE\"}" $API/api/v1/finance/posting/close-day | jq '.message, [.data.results[]|select(.error)]'
 # 3. Dokumen yang tetap gagal: perbaiki sebabnya (mis. harga modal) lalu ulangi 2; data uji yang tak material
-#    boleh diabaikan dengan alasan tertulis (gladi: SJ-BLR/2026/01331 produk "Sampel" Rp2, HPP < Rp1/unit)
+#    boleh diabaikan dengan alasan tertulis. (Gladi 2026-10-21 malam: 0 gagal — SJ order batal legacy tidak lagi
+#    diantre, ADR-0018 D11f.)
 curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
   -d '{"docType":"delivery","docId":<id>,"reason":"<alasan>"}' $API/api/v1/finance/posting/ignore
 # 4. negative_inventory dari histori legacy TIDAK diperbaiki costrebuild (histori migrasi tidak ditulis ulang,
@@ -226,7 +227,10 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
 # 5. Bukti akhir (arsipkan): tidak ada status failed selain `unposted` untuk dokumen bertanggal setelah hari-H
 #    (gladi 2026-10-21: SJ-BLR/2026/02446 bertanggal 25 Okt — dijurnal tutup harian 25 Okt; bulan Oktober memang
 #    belum boleh ditutup sebelum berakhir); inventory_recon konsisten (ADR-0020: selisih tak terjelaskan
-#    = selisih bawaan legacy V-27 di verify.md, dalam toleransi; gladi 2026-10-21 sesudah posting: Rp297)
+#    = selisih bawaan legacy V-27 di verify.md, dalam toleransi; gladi 2026-10-21 sesudah posting: Rp297).
+#    Cocokkan juga buku vs dokumen per pihak (Piutang+Uang Muka, Hutang+Uang Muka vs saldo pihak modul pembayaran):
+#    gladi 2026-10-21 malam: 87/87 pemasok cocok, 925/927 pelanggan cocok (2 sisanya waktu: SJ bertanggal ke depan,
+#    barang pengganti retur tukar belum dikirim) — ADR-0018 D11h
 curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-1.json
 curl -s -H "$H" "$API/api/v1/ops/integrity"
 ```
