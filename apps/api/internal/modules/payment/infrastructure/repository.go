@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"mini-erp/internal/modules/payment/contracts"
 	"mini-erp/internal/modules/payment/infrastructure/sqlc"
@@ -98,6 +99,24 @@ func (r *Repository) PaidForOrders(ctx context.Context, orderType string, orderI
 		return out, nil
 	}
 	rows, err := r.q.SumPaidForOrders(ctx, sqlc.SumPaidForOrdersParams{OrderType: orderType, OrderIds: orderIDs})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.OrderID] = row.Total
+	}
+	return out, nil
+}
+
+// PaidForOrdersBefore is PaidForOrders limited to payments dated before
+// `before` (a naive WIB wall-clock bound, like paid_at itself).
+func (r *Repository) PaidForOrdersBefore(ctx context.Context, orderType string, orderIDs []int64, before time.Time) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	if len(orderIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.q.SumPaidForOrdersBefore(ctx, sqlc.SumPaidForOrdersBeforeParams{
+		OrderType: orderType, OrderIds: orderIDs, PaidBefore: before})
 	if err != nil {
 		return nil, err
 	}

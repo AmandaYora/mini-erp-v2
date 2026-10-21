@@ -14,6 +14,10 @@ const inventoryValue = vi.fn();
 const margin = vi.fn();
 const marginByProduct = vi.fn();
 const fiscalSummary = vi.fn();
+const receivables = vi.fn();
+const payables = vi.fn();
+const receivableDocuments = vi.fn();
+const payableDocuments = vi.fn();
 vi.mock("@/modules/finance/services/reports.service", () => ({
   financeReportsService: {
     profitLoss: (...a: unknown[]) => profitLoss(...a),
@@ -29,6 +33,10 @@ vi.mock("@/modules/finance/services/reports.service", () => ({
     margin: (...a: unknown[]) => margin(...a),
     marginByProduct: (...a: unknown[]) => marginByProduct(...a),
     fiscalSummary: (...a: unknown[]) => fiscalSummary(...a),
+    receivables: (...a: unknown[]) => receivables(...a),
+    payables: (...a: unknown[]) => payables(...a),
+    receivableDocuments: (...a: unknown[]) => receivableDocuments(...a),
+    payableDocuments: (...a: unknown[]) => payableDocuments(...a),
   },
 }));
 
@@ -37,13 +45,14 @@ import TaxDetailPage from "@/modules/finance/pages/TaxDetailPage";
 import GeneralLedgerPage from "@/modules/finance/pages/GeneralLedgerPage";
 import InventoryValuePage from "@/modules/finance/pages/reports/InventoryValuePage";
 import MarginPage from "@/modules/finance/pages/reports/MarginPage";
+import ReceivablesPayablesPage from "@/modules/finance/pages/reports/ReceivablesPayablesPage";
 
 function wrap(node: React.ReactNode) {
   return render(<MemoryRouter>{node}</MemoryRouter>);
 }
 
 beforeEach(() => {
-  for (const m of [profitLoss, taxDetail, taxSummary, downloadTaxPackageRange, generalLedger, generalLedgerOverview, accounts, inventoryValue, margin, marginByProduct, fiscalSummary]) m.mockReset();
+  for (const m of [profitLoss, taxDetail, taxSummary, downloadTaxPackageRange, generalLedger, generalLedgerOverview, accounts, inventoryValue, margin, marginByProduct, fiscalSummary, receivables, payables, receivableDocuments, payableDocuments]) m.mockReset();
   accounts.mockResolvedValue([]);
   useAuthStore.setState({ permissions: ["finance.view", "finance.report.view", "finance.tax_report.view"], ready: true });
 });
@@ -137,6 +146,29 @@ describe("Buku besar semua akun (FN-08)", () => {
     expect(screen.getByText("Saldo awal")).toBeInTheDocument();
     expect(generalLedgerOverview).toHaveBeenCalledTimes(1);
     expect(generalLedger).not.toHaveBeenCalled();
+  });
+});
+
+describe("Umur per dokumen direkonsiliasi ke buku (F4)", () => {
+  it("menampilkan saldo akun kendali, total dokumen, dan selisihnya", async () => {
+    receivables.mockResolvedValue({ parties: [], total: 0 });
+    payables.mockResolvedValue({ parties: [], total: 0 });
+    const empty = { d0_30: 0, d31_60: 0, d61_90: 0, over90: 0 };
+    receivableDocuments.mockResolvedValue({
+      asOf: "2026-09-10", documents: [], buckets: { ...empty, d0_30: 300_000 }, total: 300_000,
+      accountCode: "1100", accountName: "Piutang Usaha", glBalance: 1_250_000, difference: 950_000,
+    });
+    payableDocuments.mockResolvedValue({
+      asOf: "2026-09-10", documents: [], buckets: empty, total: 0,
+      accountCode: "2000", accountName: "Hutang Usaha", glBalance: 0, difference: 0,
+    });
+    wrap(<ReceivablesPayablesPage />);
+    fireEvent.change(await screen.findByLabelText("Tampilan"), { target: { value: "documents" } });
+    fireEvent.click(screen.getByRole("button", { name: "Tampilkan" }));
+    expect(await screen.findByText(/Saldo buku 1100 Piutang Usaha per/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.250\.000/)).toBeInTheDocument();
+    expect(screen.getByText(/950\.000/)).toBeInTheDocument();
+    expect(screen.getAllByText("Selisih (saldo awal migrasi/penyesuaian tanpa dokumen)")).toHaveLength(2);
   });
 });
 
