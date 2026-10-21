@@ -196,7 +196,8 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
 # 4. Hanya bila negative_inventory masih ada: costrebuild DRY-RUN, telaah, baru --commit (§6b). Ia merestatement
 #    HPP keluar historis seluruh cabang (gladi: Rp13,2 jt) dan melewati posisi yang berakhir negatif.
 docker exec minierp-app ./costrebuild --branch-id <N> --date $FREEZE
-# 5. Bukti akhir (arsipkan): tidak ada status failed; inventory_recon = selisih bawaan legacy (V-27 di verify.md)
+# 5. Bukti akhir (arsipkan): tidak ada status failed; inventory_recon konsisten (ADR-0020: selisih tak terjelaskan
+#    = selisih bawaan legacy V-27 di verify.md, dalam toleransi; gladi 2026-10-21 sebelum posting: Rp297)
 curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-1.json
 curl -s -H "$H" "$API/api/v1/ops/integrity"
 ```
