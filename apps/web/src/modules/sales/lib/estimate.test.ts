@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { estimateLine, estimateTotal, priceForUnit } from "@/modules/sales/lib/estimate";
 
 describe("estimateLine", () => {
+  it("membulatkan seperti server: bruto dulu, lalu potongan persen", () => {
+    // 1,5 x 1.001 = 1.501,5 -> 1.502; 10% = 150,2 -> 150; net 1.352 (bukan 1.351).
+    expect(estimateLine({ qty: 1.5, catalogPrice: 1001, discountPct: 10, discountNominal: 0 })).toBe(1352);
+  });
   it("computes net without discount", () => {
     expect(estimateLine({ qty: 2, catalogPrice: 15000, discountPct: 0, discountNominal: 0 })).toBe(30000);
   });

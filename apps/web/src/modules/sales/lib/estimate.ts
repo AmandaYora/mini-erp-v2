@@ -14,9 +14,14 @@ export function effectiveUnitPrice(row: SalesLineEstimate): number {
   return row.manualPrice != null ? row.manualPrice : row.catalogPrice;
 }
 
+/**
+ * Net baris dengan pembulatan yang sama persis dengan server (money.LineAmounts):
+ * bruto dibulatkan dulu, lalu potongan persen dibulatkan sendiri, baru nominal.
+ * Membulatkan sekali di akhir bisa selisih Rp1 per baris dari total tersimpan.
+ */
 export function estimateLine(row: SalesLineEstimate): number {
-  const gross = row.qty * effectiveUnitPrice(row);
-  return Math.max(0, Math.round(gross - (gross * row.discountPct) / 100 - row.discountNominal));
+  const gross = Math.round(row.qty * effectiveUnitPrice(row));
+  return Math.max(0, gross - Math.round((gross * row.discountPct) / 100) - row.discountNominal);
 }
 
 export function estimateTotal(rows: SalesLineEstimate[]): number {
