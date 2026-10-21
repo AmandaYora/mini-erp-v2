@@ -169,7 +169,35 @@ func (s *state) documents() error {
 	s.payments()
 	s.transfers()
 	s.syntheticTransfers()
+	s.inclusiveTax()
 	return nil
+}
+
+// inclusiveTax makes tax-inclusive orders visible (P2, Q-INC-1/Q-JRN-7):
+// legacy booked an inclusive receipt's Persediaan at the gross price while
+// the revamp costs the tax base, so a receipt journal legacy already posted
+// needs a correction decision before cutover (blocker); any other inclusive
+// order is reported so it is never migrated silently.
+func (s *state) inclusiveTax() {
+	posted := map[int64]bool{}
+	for _, g := range sortedBy(s.raw["goods_receipts"], "id_goods_receipt") {
+		gid := g.Int("id_goods_receipt")
+		o := s.orderRow[g.Int("id_order")]
+		if o == nil || !o.Bool("taxable") || !o.Bool("price_includes_tax") {
+			continue
+		}
+		if s.post[postKey{"goods_receipt", gid, "purchase_received"}] == legacyPostedStatus {
+			posted[g.Int("id_order")] = true
+			s.find(report.Blocker, "INCL_GR_POSTED", "goods_receipts", gid,
+				"jurnal penerimaan order inklusif pajak %s sudah diposting legacy dengan Persediaan bruto: perlu keputusan koreksi (P2)", o.Str("order_number"))
+		}
+	}
+	for _, o := range sortedBy(s.raw["orders"], "id_order") {
+		if o.Bool("taxable") && o.Bool("price_includes_tax") && !posted[o.Int("id_order")] {
+			s.out.Explain["inclusive_tax_orders"]++
+			s.find(report.Warn, "INCL_ORDER", "orders", o.Int("id_order"), "order %s %s inklusif pajak: periksa basis pajak & HPP (P2)", o.Str("order_kind"), o.Str("order_number"))
+		}
+	}
 }
 
 type transferKey struct {
@@ -359,7 +387,7 @@ func (s *state) emitSJ(id int64, dr *docDraft, d row.Row, items []row.Row, alloc
 	}
 	s.emit("delivery_notes", row.Row{
 		"id": id, "number": s.trunc("delivery_notes", lid, "number", d.Str("sj_number"), 60), "branch_id": dr.branch, "sales_order_id": oid,
-		"delivery_date": fmtUTC(dr.date), "driver_name": s.optStr("delivery_notes", lid, "driver_name", d, "driver_name", 100),
+		"delivery_date": deliveryDate(dr.date), "driver_name": s.optStr("delivery_notes", lid, "driver_name", d, "driver_name", 100),
 		"vehicle_plate":                      s.optStr("delivery_notes", lid, "vehicle_plate", d, "vehicle_plate", 20),
 		"warehouse_staff_name":               s.optStr("delivery_notes", lid, "warehouse_staff_name", d, "warehouse_staff_name", 100),
 		"recipient_name":                     s.optStr("delivery_notes", lid, "recipient_name", d, "recipient_name", 150),
@@ -458,7 +486,7 @@ func (s *state) emitSyntheticSJ(id int64, dr *docDraft) {
 	code := s.branchCode[dr.branch]
 	s.emit("delivery_notes", row.Row{
 		"id": id, "number": fmt.Sprintf("SJ-%s/MIG/%05d", code, oid), "branch_id": dr.branch, "sales_order_id": soID,
-		"delivery_date": fmtUTC(dr.date), "driver_name": nil, "vehicle_plate": nil, "warehouse_staff_name": nil, "recipient_name": nil,
+		"delivery_date": deliveryDate(dr.date), "driver_name": nil, "vehicle_plate": nil, "warehouse_staff_name": nil, "recipient_name": nil,
 		"recipient_signature_status": nil, "recipient_signature_missing_reason": nil, "drop_location_note": nil,
 		"dispatched_at": fmtUTC(dr.date), "dispatched_by": s.userID(o.Int("id_created_by")),
 		"confirmed_at": fmtUTC(dr.date), "confirmed_by": s.userID(o.Int("id_created_by")),
@@ -485,12 +513,36 @@ func (s *state) emitSyntheticSJ(id int64, dr *docDraft) {
 		sums[k].Add(sums[k], m.Rat("quantity"))
 	}
 	for n, k := range keys {
+		// The order line's own unit: posting matches SJ lines to SO lines by
+		// (product, variant, unit), and qty is in that unit.
+		uom, factor := s.orderLineUnit(oid, k.p, k.v)
 		nid := s.nextID("delivery_note_items")
 		s.out.Explain["synthetic_delivery_items"]++
 		s.out.IDMap = append(s.out.IDMap, IDEntry{"delivery_note_items", -oid, int64(n + 1), nid})
 		s.emit("delivery_note_items", row.Row{"id": nid, "delivery_id": id, "product_id": k.p, "variant_id": k.v, "location_id": k.l,
-			"uom": "pcs", "uom_factor": "1.000000000000", "qty": ratStr(sums[k]), "qty_base": ratStr(sums[k]), "reservation_key": nil})
+			"uom": uom, "uom_factor": ratStr(factor), "qty": ratStr(new(big.Rat).Quo(sums[k], factor)), "qty_base": ratStr(sums[k]), "reservation_key": nil})
 	}
+}
+
+// orderLineUnit is the unit and base factor of the first legacy order line
+// of (product, variant) — new ids — on order oid ("pcs", 1 when none).
+func (s *state) orderLineUnit(oid, product, variant int64) (string, *big.Rat) {
+	if s.orderLines == nil {
+		s.orderLines = map[int64][]row.Row{}
+		for _, it := range sortedBy(s.raw["order_items"], "id_order_item") {
+			s.orderLines[it.Int("id_order")] = append(s.orderLines[it.Int("id_order")], it)
+		}
+	}
+	for _, it := range s.orderLines[oid] {
+		p, _ := s.id("products", it.Int("id_product"))
+		v, _ := s.id("product_variants", it.Int("id_product_variant"))
+		if p == product && v == variant && it.Str("transaction_uom_snapshot") != "" {
+			if f := it.Rat("uom_to_base_factor"); f.Sign() > 0 {
+				return it.Str("transaction_uom_snapshot"), f
+			}
+		}
+	}
+	return "pcs", big.NewRat(1, 1)
 }
 
 // ---------------------------------------------------------------- goods receipts
@@ -990,7 +1042,7 @@ func (s *state) emitReplSJ(id int64, dr *docDraft, d row.Row, items []row.Row) {
 	}
 	s.emit("delivery_notes", row.Row{
 		"id": id, "number": s.trunc("delivery_notes", lid, "number", d.Str("sj_number"), 60), "branch_id": dr.branch, "sales_order_id": meta.order,
-		"delivery_date": fmtUTC(dr.date), "driver_name": s.optStr("delivery_notes", lid, "driver_name", d, "driver_name", 100),
+		"delivery_date": deliveryDate(dr.date), "driver_name": s.optStr("delivery_notes", lid, "driver_name", d, "driver_name", 100),
 		"vehicle_plate":                      s.optStr("delivery_notes", lid, "vehicle_plate", d, "vehicle_plate", 20),
 		"warehouse_staff_name":               s.optStr("delivery_notes", lid, "warehouse_staff_name", d, "warehouse_staff_name", 100),
 		"recipient_name":                     s.optStr("delivery_notes", lid, "recipient_name", d, "recipient_name", 150),
@@ -1040,7 +1092,7 @@ func (s *state) emitSynthReplSJ(id int64, dr *docDraft) {
 	by := s.userID(0)
 	s.emit("delivery_notes", row.Row{
 		"id": id, "number": fmt.Sprintf("SJ-%s/MIG/R%05d", code, rl), "branch_id": dr.branch, "sales_order_id": m.order,
-		"delivery_date": fmtUTC(dr.date), "driver_name": nil, "vehicle_plate": nil, "warehouse_staff_name": nil, "recipient_name": nil,
+		"delivery_date": deliveryDate(dr.date), "driver_name": nil, "vehicle_plate": nil, "warehouse_staff_name": nil, "recipient_name": nil,
 		"recipient_signature_status": nil, "recipient_signature_missing_reason": nil, "drop_location_note": nil,
 		"dispatched_at": fmtUTC(dr.date), "dispatched_by": by, "confirmed_at": fmtUTC(dr.date), "confirmed_by": by,
 		"status": "confirmed", "document_kind": "replacement", "sales_return_id": s.srNew[rl],
@@ -1065,16 +1117,24 @@ func (s *state) emitSynthReplSJ(id int64, dr *docDraft) {
 		sums[k].Add(sums[k], mv.Rat("quantity"))
 	}
 	for n, k := range keys {
-		uom, factor := "pcs", "1.000000000000"
+		uom, factor := "pcs", big.NewRat(1, 1)
 		for _, ri := range s.srRepl[rl] {
 			if pid, _ := s.id("products", ri.Int("id_product")); pid == k.p {
-				uom, factor = ri.Str("transaction_uom_snapshot"), ri.Str("uom_to_base_factor")
+				if f := ri.Rat("uom_to_base_factor"); f.Sign() > 0 {
+					uom, factor = ri.Str("transaction_uom_snapshot"), f
+				}
 			}
 		}
 		nid := s.nextID("delivery_note_items")
 		s.out.Explain["synthetic_delivery_items"]++
 		s.out.IDMap = append(s.out.IDMap, IDEntry{"delivery_note_items", -rl, int64(n + 100), nid})
 		s.emit("delivery_note_items", row.Row{"id": nid, "delivery_id": id, "product_id": k.p, "variant_id": k.v, "location_id": k.l,
-			"uom": uom, "uom_factor": factor, "qty": ratStr(sums[k]), "qty_base": ratStr(sums[k]), "reservation_key": nil})
+			"uom": uom, "uom_factor": ratStr(factor), "qty": ratStr(new(big.Rat).Quo(sums[k], factor)), "qty_base": ratStr(sums[k]), "reservation_key": nil})
 	}
 }
+
+// deliveryDate is the revamp's delivery_date: the WIB calendar date at 00:00,
+// naive (the delivery module reads its first 10 characters as a Jakarta day,
+// movedAt / posting queue / list filters). Never a UTC instant, which would
+// shift every SJ one day back.
+func deliveryDate(t time.Time) string { return naiveDateTime(wibDate(t)) }

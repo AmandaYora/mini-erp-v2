@@ -1,6 +1,7 @@
 package transform_test
 
 import (
+	"strings"
 	"testing"
 
 	"mini-erp/internal/etl/etltest"
@@ -287,8 +288,132 @@ func TestTransformDeliveryCancelCost(t *testing.T) {
 			if out.Explain["dn_cancel_value"] != 20000 {
 				t.Errorf("dn_cancel_value = %d, want 20000", out.Explain["dn_cancel_value"])
 			}
+			assertCorrection(t, out, "dn_cancel_cogs", 20000, "1200", "5000")
 			return
 		}
 	}
 	t.Fatalf("no cost row for the cancellation movement (new id %d)", id)
+}
+
+// assertCorrection checks one migration correction: its report row and its
+// posted, balanced journal (ADR-0018 D11).
+func assertCorrection(t *testing.T, out *transform.Output, kind string, amount int64, debit, credit string) {
+	t.Helper()
+	var entry int64
+	for _, r := range out.Tables["migration_corrections"] {
+		if r.Str("kind") == kind {
+			if r.Int("amount") != amount || r.Str("debit_account") != debit || r.Str("credit_account") != credit {
+				t.Errorf("%s correction = %v, want Rp%d Dr %s / Cr %s", kind, r, amount, debit, credit)
+			}
+			entry = r.Int("entry_id")
+		}
+	}
+	if entry == 0 {
+		t.Fatalf("no %s correction in %v", kind, out.Tables["migration_corrections"])
+	}
+	for _, e := range out.Tables["finance_journal_entries"] {
+		if e.Int("id") == entry && (e.Str("source_doc_type") != "migration_correction" || e.Str("status") != "posted" || !strings.HasPrefix(e.Str("number"), "JV-")) {
+			t.Errorf("correction entry = %v", e)
+		}
+	}
+	var dr, cr int64
+	for _, l := range out.Tables["finance_journal_lines"] {
+		if l.Int("entry_id") == entry {
+			dr += l.Int("debit")
+			cr += l.Int("credit")
+		}
+	}
+	if dr != amount || cr != amount {
+		t.Errorf("correction journal Dr %d Cr %d, want %d each", dr, cr, amount)
+	}
+}
+
+// A legacy cost state that values a product with no unit left is written
+// down: no ledger value, a correction against the stock-difference account.
+func TestTransformStateNoQtyWriteDown(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	raw, err := extract.Load(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw["finance_inventory_cost_states"] = append(raw["finance_inventory_cost_states"], row.Row{
+		"id_finance_inventory_cost_state": int64(9), "id_branch": int64(1), "id_product": int64(5),
+		"inventory_value": "5000.00", "updated_at": "2026-02-13T04:00:00Z",
+	})
+	out, err := transform.Run(transform.Input{Cfg: testCfg(work), Raw: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCorrection(t, out, "state_no_qty", 5000, "5100", "1200")
+	pid, _ := func() (int64, bool) {
+		for _, p := range out.Tables["products"] {
+			if p.Str("code") == "BDL-001" {
+				return p.Int("id"), true
+			}
+		}
+		return 0, false
+	}()
+	for _, r := range out.Tables["finance_inventory_cost_movements"] {
+		if r.Int("product_id") == pid && r.Str("total_cost") != "0.00" {
+			t.Errorf("written-down product keeps ledger value: %v", r)
+		}
+	}
+}
+
+// Every estimated cost row that no coming journal covers is corrected, and
+// none that the posting queue will journal is: books follow the ledger.
+func TestTransformUnjournalledCorrected(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	out := runTransform(t, work)
+	pending := map[string]bool{}
+	for _, m := range out.Marks {
+		if m.State == "pending" {
+			pending[m.DocType+":"+row.Row{"v": m.DocID}.Str("v")] = true
+		}
+	}
+	listed := map[string]bool{}
+	for _, r := range out.Tables["migration_corrections"] {
+		listed[r.Str("stock_movement_id")] = true
+	}
+	n := 0
+	for _, r := range out.Tables["finance_inventory_cost_movements"] {
+		if r.Str("is_estimated") != "1" || r.Str("ref_type") == "transfer" || r.Str("total_cost") == "0.00" {
+			continue
+		}
+		queued := pending[r.Str("ref_type")+":"+r.Str("ref_id")]
+		if got := listed[r.Str("stock_movement_id")]; got == queued {
+			t.Errorf("estimated row %s (%s %s): corrected=%v but queued for posting=%v", r.Str("stock_movement_id"), r.Str("ref_type"), r.Str("ref_id"), got, queued)
+		}
+		n++
+	}
+	if n == 0 {
+		t.Fatal("fixture has no estimated rows to check")
+	}
+}
+
+// A legacy cost state that holds units at no value while its own rows price
+// them is written up to the rows' value (books and ledger together).
+func TestTransformStateNoValueWriteUp(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	raw, err := extract.Load(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range raw["finance_inventory_cost_states"] {
+		if r.Int("id_product") == 3 {
+			r["inventory_value"] = "0.00"
+		}
+	}
+	out, err := transform.Run(transform.Input{Cfg: testCfg(work), Raw: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Product 3's rows: opening 80000 + receipt 444000.
+	assertCorrection(t, out, "state_no_value", 524000, "1200", "5100")
 }

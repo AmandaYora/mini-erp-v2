@@ -2,6 +2,7 @@ package transform
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ var accountTypeMap = map[string]string{
 func (s *state) finance() error {
 	s.accounts()
 	s.journals()
+	s.migrationCorrections()
+	s.roundingSummary()
 	s.expenses()
 	s.periods()
 	return nil
@@ -498,3 +501,37 @@ func (s *state) periods() {
 }
 
 func openTime(s *state) time.Time { return s.in.Cfg.OpeningTime() }
+
+// roundingSummary states what rupiah rounding (ADR-0005) and journal
+// balancing (K4, <= --max-balance-delta) did, so neither needs a correction
+// journal and the accountant sees the size: V-11 then proves the balances.
+func (s *state) roundingSummary() {
+	var nRound, nBal int64
+	sumRound, maxRound := new(big.Rat), new(big.Rat)
+	var sumBal, maxBal int64
+	for _, a := range s.log.Adjustments {
+		switch a.Rule {
+		case "round_half_away":
+			d := new(big.Rat).Sub(row.ParseRat(a.After), row.ParseRat(a.Before))
+			nRound++
+			sumRound.Add(sumRound, d)
+			if new(big.Rat).Abs(d).Cmp(maxRound) > 0 {
+				maxRound = new(big.Rat).Abs(d)
+			}
+		case "balance_entry":
+			d := row.ParseRat(a.After).Num().Int64() - row.ParseRat(a.Before).Num().Int64()
+			if d < 0 {
+				d = -d
+			}
+			nBal++
+			sumBal += d
+			if d > maxBal {
+				maxBal = d
+			}
+		}
+	}
+	s.out.Explain["balance_entry_adjustments"] = nBal
+	s.find(report.Info, "ROUNDING_SUMMARY", "etl", 0,
+		"pembulatan rupiah: %d nilai, Σ selisih Rp%s, maks |Rp%s|; penyeimbang jurnal: %d jurnal, Σ Rp%d, maks Rp%d per jurnal (batas --max-balance-delta Rp%d); tanpa jurnal koreksi (bukti: V-11, V-13a)",
+		nRound, sumRound.FloatString(4), maxRound.FloatString(4), nBal, sumBal, maxBal, s.in.Cfg.MaxBalanceDelta)
+}

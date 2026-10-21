@@ -122,8 +122,9 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    di ETL berjenis `payment_proof`, `legacy_id` negatif). Tanpa yang kedua, fase media melaporkan ±282
    `missing_source` yang sebenarnya ada di S3 (gladi 2026-10-21: 4.078 objek, 0 hilang). Unduh di server
    lama dengan kredensialnya sendiri (GET saja, `nice`), salurkan ke mesin gladi, hapus folder sementara.
-6. `etl rehearse --company-id N --opening-date YYYY-MM-DD --workdir DIR --media-src ...
-   --media-dst ...` dengan `ETL_LEGACY_DSN`/`ETL_TARGET_DSN`. Jalankan **dua kali** dan
+6. `etl rehearse --company-id N --opening-date YYYY-MM-DD --freeze-at <RFC3339> --workdir DIR --media-src ...
+   --media-dst ...` dengan `ETL_LEGACY_DSN`/`ETL_TARGET_DSN` (`--freeze-at` = saat legacy dibekukan; tanpa itu
+   tanggal jurnal koreksi migrasi = `created_at` terakhir di dump). Jalankan **dua kali** dan
    bandingkan dengan `--compare-with` (hash keluaran harus sama); `load --resume` harus
    `inserted=0` (idempoten); `verify --self-test` harus membuktikan verifier menangkap data rusak.
 7. Perlakuan data legacy yang kini ditangani ETL (muncul di `findings.csv`): pindah-lokasi
@@ -140,26 +141,65 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    Nilai per cabang x produk = `finance_inventory_cost_states` legacy (= akun Persediaan legacy, V-14d): nilai yang
    legacy ubah tanpa baris biaya (koreksi pra-ledger 2026-08-13) dan pembagian ulang antar-varian (legacy satu harga
    modal per produk) masuk sebagai baris biaya-saja qty 0, id ≥ 2^62, `ref_type=opening_cost` (COST_BASELINE,
-   COST_VARIANT_REALIGN). Baris estimasi memakai aturan `costOf` revamp; barang kembali dari SJ yang dibatalkan dinilai
-   sebesar biaya keluar SJ itu (DN_CANCEL_COGS: legacy tidak membalik jurnal HPP-nya, jadi buku Persediaan lebih rendah
-   sebesar ini sampai ada jurnal koreksi). Dokumen yang masuk antrean posting revamp tercatat POST_PENDING (alasan:
-   belum dikandidatkan legacy / masih di antrean legacy); dokumen pending yang punya jurnal legacy hidup = blocker
-   POST_PENDING_JOURNALED.
+   COST_VARIANT_REALIGN). ETL membiayai **setiap** mutasi (aturan `costOf` revamp; Sync revamp mulai sesudah mutasi
+   migrasi terakhir); barang kembali dari SJ yang dibatalkan dinilai sebesar biaya keluar SJ itu. Dokumen yang masuk
+   antrean posting revamp tercatat POST_PENDING (alasan: belum dikandidatkan legacy / masih di antrean legacy); dokumen
+   pending yang punya jurnal legacy hidup = blocker POST_PENDING_JOURNALED. Tanggal `delivery_date` SJ = tanggal WIB
+   naif (konvensi modul delivery), bukan instan UTC. Item SJ sintetis memakai satuan baris SO (V-28).
+   **Jurnal koreksi migrasi** (ADR-0018 D11; `source_doc_type=migration_correction`, nomor `JV-<cabang>/<tahun>/n`,
+   tanggal freeze di periode terbuka; rinciannya per baris di `report/migration_corrections.csv`): HPP SJ batal yang
+   tidak pernah dibalik legacy (DN_CANCEL_COGS, Dr Persediaan / Cr HPP); keadaan biaya legacy bernilai tanpa qty
+   (COST_STATE_NO_QTY, Dr selisih persediaan / Cr Persediaan, ledger dinolkan) atau ber-qty tanpa nilai padahal baris
+   biayanya bernilai (COST_STATE_NO_VALUE, ditulis naik); mutasi yang tidak akan pernah dijurnal: barang SJ dari dokumen
+   legacy yang terposting sebagian/diarsip/sebelum saldo awal (COGS_UNPOSTED, lawan HPP) dan koreksi drift, penyesuaian
+   tanpa jurnal, penerimaan/retur sebelum saldo awal (STOCK_UNPOSTED, lawan selisih persediaan). Akun lawan diambil dari
+   `system_key` legacy (`cogs`, `stock_difference`); tidak ada = blocker MIG_CORR_ACCOUNT. Verify: V-26 (Σ jurnal koreksi =
+   Σ temuan = daftar), V-27 (buku Persediaan − ledger = selisih bawaan legacy buku − keadaan biaya; gladi 2026-10-21:
+   −Rp297 pembulatan), V-14d (ledger per produk = keadaan biaya legacy ± koreksi). Pembulatan rupiah (ADR-0005) dan
+   penyeimbang jurnal (≤ `--max-balance-delta`) tidak dikoreksi; ringkasannya di temuan ROUNDING_SUMMARY, buktinya V-11 &
+   V-13a. Order inklusif pajak muncul sebagai INCL_ORDER (warn); jurnal GR inklusif yang sudah diposting legacy =
+   blocker INCL_GR_POSTED (keputusan P2).
 8. **Keputusan pemilik/akuntan** sebelum cutover nyata: tanggal saldo awal **diputuskan 2026-07-01**
    (`--opening-date 2026-07-01`, sama dengan saldo awal legacy `JRN/2026/00001`; jurnal legacy sejak itu dimigrasi
-   apa adanya dan jurnal saldo awal revamp tidak dibuat), cutover langsung. Masih terbuka: perlakuan jurnal inklusif
-   pajak dan selisih Rp1 (lihat `adjustments.csv`), serta jurnal koreksi HPP SJ batal (DN_CANCEL_COGS).
+   apa adanya; jurnal saldo awal revamp hanya untuk jurnal legacy sebelum tanggal itu), cutover langsung; kesalahan
+   legacy dikoreksi dengan jurnal koreksi migrasi (butir 7; ADR-0018 D11). Masih terbuka: perlakuan jurnal inklusif
+   pajak bila muncul di dump cutover (INCL_GR_POSTED).
 
 ## 5c. Checklist cutover (ringkas, urut hari-H)
 
 Rincian ada di §5 (jalur balik), §5b (ETL) dan [DEPLOYMENT.md](DEPLOYMENT.md). Centang tiap butir sebelum menyatakan cutover selesai.
 
-- [ ] Keputusan pemilik/akuntan §5b butir 8 terjawab (tanggal saldo awal: 2026-07-01; jurnal inklusif pajak; koreksi HPP SJ batal).
+- [ ] Keputusan pemilik/akuntan §5b butir 8 terjawab (tanggal saldo awal: 2026-07-01; koreksi migrasi ADR-0018 D11; jurnal inklusif pajak bila ada).
 - [ ] Backup DB revamp dan dump legacy final terverifikasi (`gzip -t`, sha256); legacy di-freeze (read-only).
 - [ ] Gladi ETL lulus pada dump terbaru (§5b butir 6): `rehearse pass=true`, hash dua kali jalan sama, `load --resume` `inserted=0`.
 - [ ] `migrate up` (versi 31, `dirty=0`), `seed init`, ETL final, `etl verify` hijau; `GET /readyz` OK; rekonsiliasi saldo & stok (Readiness/rollups) cocok.
 - [ ] Urutan saldo: impor stok awal -> saldo awal keuangan (Persediaan dihitung server dari ledger biaya, K-05) -> dokumen berjalan; `GET /finance/close/readiness` tanpa blocker `inventory_recon`, dan produk berstok tanpa harga modal dilengkapi lewat `POST /finance/opening/complete`.
 - [ ] `GET /api/v1/ops/integrity` (keadaan antara alur multi-langkah) kosong; tak ada dokumen macet di antrean posting yang belum dijurnal atau diabaikan dengan alasan (`finance/posting-sources`).
+- [ ] **Sesudah restore, sebelum akses dibuka**: jalankan antrean posting dan rekonsiliasi (langkah di bawah) sampai readiness bulan freeze tanpa `failed`.
+
+**Antrean posting & rekonsiliasi hari-H** (sesudah ETL/restore, sebelum akses dibuka; terbukti di gladi 2026-10-21):
+
+```bash
+API=https://<domain>; FREEZE=2026-10-21; Y=2026; M=10   # tanggal freeze WIB & bulannya
+TOKEN=$(curl -s -X POST $API/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"<admin>","password":"<sandi>"}' | jq -r .data.accessToken)
+H="Authorization: Bearer $TOKEN"
+# 1. Readiness awal (arsipkan): unposted = antrean legacy yang belum dijurnal (POST_PENDING di findings.csv)
+curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-0.json
+# 2. Tutup harian per tanggal freeze; ulangi sampai "remaining" 0 atau tidak ada kemajuan,
+#    lalu sekali lagi untuk tanggal dokumen terakhir di antrean (SJ legacy boleh bertanggal ke depan)
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' -d "{\"date\":\"$FREEZE\"}" $API/api/v1/finance/posting/close-day | jq '.message, [.data.results[]|select(.error)]'
+# 3. Dokumen yang tetap gagal: perbaiki sebabnya (mis. harga modal) lalu ulangi 2; data uji yang tak material
+#    boleh diabaikan dengan alasan tertulis (gladi: SJ-BLR/2026/01331 produk "Sampel" Rp2, HPP < Rp1/unit)
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+  -d '{"docType":"delivery","docId":<id>,"reason":"<alasan>"}' $API/api/v1/finance/posting/ignore
+# 4. Hanya bila negative_inventory masih ada: costrebuild DRY-RUN, telaah, baru --commit (§6b). Ia merestatement
+#    HPP keluar historis seluruh cabang (gladi: Rp13,2 jt) dan melewati posisi yang berakhir negatif.
+docker exec minierp-app ./costrebuild --branch-id <N> --date $FREEZE
+# 5. Bukti akhir (arsipkan): tidak ada status failed; inventory_recon = selisih bawaan legacy (V-27 di verify.md)
+curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-1.json
+curl -s -H "$H" "$API/api/v1/ops/integrity"
+```
 - [ ] DNS/proxy dialihkan ke revamp; jalur balik ke legacy (§5) siap dan diuji sebelumnya.
 - [ ] **APK Kasir Android dibangun ulang bila domain berubah** (`POS_URL` di `android-pos-shell/app/build.gradle.kts`),
       dipasang di semua tablet kasir, lalu **uji jembatan `AndroidPrinter`** per tablet (Tes Cetak, struk POS, laci kas,
