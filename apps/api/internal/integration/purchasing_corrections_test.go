@@ -11,7 +11,6 @@ import (
 	purchasereturnapp "mini-erp/internal/modules/purchasereturn/application"
 	purchasingapp "mini-erp/internal/modules/purchasing/application"
 	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
-	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/timeutil"
 )
 
@@ -88,11 +87,6 @@ func reconExact(t *testing.T, branchID int64) {
 	if !rec.Consistent || rec.Unexplained != 0 {
 		t.Fatalf("recon = %+v, want book = ledger", rec)
 	}
-}
-
-func isValidation(err error) bool {
-	ae, ok := err.(*apperror.AppError)
-	return ok && ae.Code == apperror.CodeValidation
 }
 
 // Task 1: a confirmed order with a receipt keeps its economics. A price or qty
@@ -185,7 +179,7 @@ func TestShortCloseMatchesReceiptPayable(t *testing.T) {
 	if _, _, err := svc.ShortClose(ctx(), 0, fx.branchID, poID, "pemasok kehabisan"); !isConflict(err) {
 		t.Fatalf("short close with a pending receipt = %v, want conflict", err)
 	}
-	if _, err := m.goodsreceipt.Service().Discard(ctx(), 0, fx.branchID, pending); err != nil {
+	if _, err := m.goodsreceipt.Service().Discard(ctx(), 0, fx.branchID, pending, ""); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
 	var payable int64
@@ -398,7 +392,7 @@ func TestPriceCorrectionRefusals(t *testing.T) {
 	if _, _, err := svc.CorrectPrices(ctx(), 0, fx.branchID, poID, lines, "salah"); !isConflict(err) || !strings.Contains(err.Error(), "retur") {
 		t.Fatalf("correction under a return = %v, want conflict", err)
 	}
-	if _, err := m.purchasereturn.Service().Cancel(ctx(), 0, fx.branchID, ret.ID); err != nil {
+	if _, err := m.purchasereturn.Service().Cancel(ctx(), 0, fx.branchID, ret.ID, ""); err != nil {
 		t.Fatalf("cancel return: %v", err)
 	}
 	today := timeutil.TodayWIB()
