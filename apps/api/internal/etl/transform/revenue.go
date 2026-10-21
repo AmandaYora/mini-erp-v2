@@ -22,8 +22,8 @@ type revCandidate struct {
 }
 
 type soLine struct {
-	qty, discPct           float64
-	unitPrice, discNominal int64
+	qty       float64
+	base, tax int64 // the line's stored tax base and tax, as buildDelivery reads them
 }
 
 func ratF(r row.Row, k string) float64 {
@@ -64,7 +64,7 @@ func (s *state) unbookedRevenue() {
 		}
 		k := lineKey(it.Int("product_id"), it.Int("variant_id"), it.Str("uom"))
 		if lines[oid][k] == nil { // the first SO line of a key, as buildDelivery
-			lines[oid][k] = &soLine{qty: ratF(it, "qty"), unitPrice: it.Int("unit_price"), discPct: ratF(it, "discount_pct"), discNominal: it.Int("discount_nominal")}
+			lines[oid][k] = &soLine{qty: ratF(it, "qty"), base: it.Int("tax_base"), tax: it.Int("tax_amount")}
 		}
 	}
 	notesOf := map[int64][]row.Row{}
@@ -117,7 +117,6 @@ func (s *state) unbookedRevenue() {
 				"order %s dibatalkan di legacy padahal SJ %s terkonfirmasi tanpa pembatalan: HPP-nya dijurnal legacy, pendapatan tidak; tanpa koreksi otomatis, mohon telaah pemilik/akuntan", so.Str("number"), sjList)
 			continue
 		}
-		taxType, taxRate := so.Str("tax_type"), ratF(so, "tax_rate")
 		var revenue, tax int64
 		type pv struct{ dn, product, variant int64 }
 		revOf := map[pv]int64{}
@@ -139,7 +138,7 @@ func (s *state) unbookedRevenue() {
 					s.find(report.Blocker, "REVENUE_UNBOOKED", "delivery_notes", c.legacyDoc, "baris SJ %s tak cocok baris SO %s", number[c.dn], so.Str("number"))
 					continue
 				}
-				_, base, lineTax, _ := money.LineAmounts(sl.qty, sl.unitPrice, sl.discPct, sl.discNominal, taxType, taxRate).Split()
+				base, lineTax := sl.base, sl.tax
 				part, prior := ratF(it, "qty"), before[k]
 				rev := money.Prorate(base, prior+part, sl.qty) - money.Prorate(base, prior, sl.qty)
 				tax += money.Prorate(lineTax, prior+part, sl.qty) - money.Prorate(lineTax, prior, sl.qty)
