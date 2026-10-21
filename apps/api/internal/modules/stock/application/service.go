@@ -269,27 +269,48 @@ func (s *Service) ListCostMovements(ctx context.Context, branchID, afterID int64
 // The caller holds a validated position; the balance row is locked here so
 // before/after on the movement are exact. refID 0 means "no document"
 // (adjustments, openings) and is exempt from the unique document key.
-func postLocked(ctx context.Context, tx *sql.Tx, repo *infrastructure.Repository, branchID, productID, variantID, locationID int64, onHandDelta float64, direction, movementType, refType string, refID int64, notes string, actorID int64) error {
+// Returns the new movement's id.
+func postLocked(ctx context.Context, tx *sql.Tx, repo *infrastructure.Repository, branchID, productID, variantID, locationID int64, onHandDelta float64, direction, movementType, refType string, refID int64, notes string, actorID int64) (int64, error) {
 	if err := repo.EnsureBalanceTx(ctx, tx, branchID, productID, variantID, locationID); err != nil {
-		return err
+		return 0, err
 	}
 	bal, err := repo.GetBalanceTx(ctx, tx, branchID, productID, variantID, locationID)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	if onHandDelta > 0 {
+		if err := assertLocationActiveTx(ctx, tx, repo, locationID); err != nil {
+			return 0, err
+		}
 	}
 	if err := repo.AddBalanceTx(ctx, tx, branchID, productID, variantID, locationID, onHandDelta, 0); err != nil {
-		return err
+		return 0, err
 	}
 	qty := onHandDelta
 	if qty < 0 {
 		qty = -qty
 	}
-	return repo.InsertMovementTx(ctx, tx, infrastructure.MovementRow{
+	return repo.InsertMovementIDTx(ctx, tx, infrastructure.MovementRow{
 		BranchID: branchID, ProductID: productID, VariantID: variantID, LocationID: locationID,
 		Direction: direction, MovementType: movementType, Qty: qty,
 		Before: bal.OnHand, After: bal.OnHand + onHandDelta,
 		RefType: refType, RefID: refID, Notes: notes, ActorID: actorID,
 	})
+}
+
+// assertLocationActiveTx refuses stock entering a location archived after the
+// caller validated it (outside the tx). The shared row lock pairs with
+// ArchiveLocation's exclusive one, so an archive and an inflow serialize:
+// the archive sees the stock, or the inflow sees 'archived'.
+func assertLocationActiveTx(ctx context.Context, tx *sql.Tx, repo *infrastructure.Repository, locationID int64) error {
+	status, err := repo.LocationStatusTx(ctx, tx, locationID)
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return apperror.Conflict("Lokasi tujuan sudah diarsipkan, muat ulang")
+	}
+	return nil
 }
 
 // Hold reserves qty under key (upsert). The same key on the same position
@@ -509,20 +530,17 @@ func (s *Service) SweepExpired(ctx context.Context, limit int) (int, error) {
 					return err
 				}
 			}
-			cur, err := s.repo.GetReservationTx(ctx, tx, e.ID)
-			if err != nil {
+			// Re-checked under the hold's row lock: a hold revived since the
+			// list was read (new expiry) is left alone.
+			qty, loc, won, err := s.repo.ExpireHoldTx(ctx, tx, e.ID)
+			if err != nil || !won {
 				return err
 			}
-			if cur == nil || cur.Status != "active" {
+			did = true
+			if !loc.Valid {
 				return nil
 			}
-			if cur.HasLocation {
-				if err := s.repo.AddBalanceTx(ctx, tx, cur.BranchID, cur.ProductID, cur.VariantID, cur.LocationID, 0, -cur.Remaining); err != nil {
-					return err
-				}
-			}
-			did = true
-			return s.repo.UpdateReservationTx(ctx, tx, cur.ID, cur.Remaining, "expired")
+			return s.repo.AddBalanceTx(ctx, tx, e.BranchID, e.ProductID, e.VariantID, loc.Int64, 0, -qty)
 		})
 		if err != nil {
 			return swept, apperror.Internal(err)
@@ -571,96 +589,6 @@ func (s *Service) CriticalStock(ctx context.Context, branchID int64, limit int) 
 		out = out[:limit]
 	}
 	return out, nil
-}
-
-// Consume turns reserved qty into a sale outflow (partial allowed).
-func (s *Service) Consume(ctx context.Context, key string, qty float64, refType string, refID int64, actorID int64) error {
-	if qty <= 0 {
-		return apperror.Validation("", []apperror.FieldError{{Field: "qty", Message: "harus lebih dari 0"}})
-	}
-	res, err := s.repo.ReservationByKey(ctx, strings.TrimSpace(key))
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	if res == nil || res.Status != "active" {
-		return apperror.Validation("", []apperror.FieldError{{Field: "key", Message: "reservasi tidak aktif"}})
-	}
-	if time.Now().UTC().After(parseTime(res.ExpiresAt)) {
-		if uerr := s.repo.UpdateReservation(ctx, res.ID, res.Remaining, "expired"); uerr != nil {
-			return apperror.Internal(uerr)
-		}
-		return apperror.Validation("", []apperror.FieldError{{Field: "key", Message: "reservasi kedaluwarsa"}})
-	}
-	if qty > res.Remaining {
-		return apperror.Validation("", []apperror.FieldError{{Field: "qty", Message: "melebihi sisa reservasi"}})
-	}
-	if !res.HasLocation {
-		return apperror.Validation("", []apperror.FieldError{{Field: "key", Message: "reservasi tanpa lokasi"}})
-	}
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	locked, err := s.repo.GetReservationTx(ctx, tx, res.ID)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	if locked == nil || locked.Status != "active" {
-		return apperror.Validation("", []apperror.FieldError{{Field: "key", Message: "reservasi tidak aktif"}})
-	}
-	if time.Now().UTC().After(parseTime(locked.ExpiresAt)) {
-		if err := s.repo.UpdateReservationTx(ctx, tx, locked.ID, locked.Remaining, "expired"); err != nil {
-			return apperror.Internal(err)
-		}
-		if err := tx.Commit(); err != nil {
-			return apperror.Internal(err)
-		}
-		return apperror.Validation("", []apperror.FieldError{{Field: "key", Message: "reservasi kedaluwarsa"}})
-	}
-	if qty > locked.Remaining {
-		return apperror.Validation("", []apperror.FieldError{{Field: "qty", Message: "melebihi sisa reservasi"}})
-	}
-	if !locked.HasLocation {
-		return apperror.Validation("", []apperror.FieldError{{Field: "key", Message: "reservasi tanpa lokasi"}})
-	}
-	if err := s.repo.EnsureBalanceTx(ctx, tx, locked.BranchID, locked.ProductID, locked.VariantID, locked.LocationID); err != nil {
-		return apperror.Internal(err)
-	}
-	bal, err := s.repo.GetBalanceTx(ctx, tx, locked.BranchID, locked.ProductID, locked.VariantID, locked.LocationID)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	if bal.OnHand < qty {
-		return apperror.Conflict("Stok fisik tidak mencukupi")
-	}
-	if err := s.repo.AddBalanceTx(ctx, tx, locked.BranchID, locked.ProductID, locked.VariantID, locked.LocationID, -qty, -qty); err != nil {
-		return apperror.Internal(err)
-	}
-	if err := s.repo.InsertMovementTx(ctx, tx, infrastructure.MovementRow{
-		BranchID: locked.BranchID, ProductID: locked.ProductID, VariantID: locked.VariantID, LocationID: locked.LocationID,
-		Direction: "out", MovementType: "out", Qty: qty, Before: bal.OnHand, After: bal.OnHand - qty,
-		RefType: refType, RefID: refID, ActorID: actorID}); err != nil {
-		return apperror.Internal(err)
-	}
-	remaining := locked.Remaining - qty
-	status := "active"
-	if remaining <= 0 {
-		remaining, status = 0, "consumed"
-	}
-	if err := s.repo.UpdateReservationTx(ctx, tx, locked.ID, remaining, status); err != nil {
-		return apperror.Internal(err)
-	}
-	return tx.Commit()
-}
-
-func parseTime(s string) time.Time {
-	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05Z07:00", time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
 }
 
 // --- locations --------------------------------------------------------------
@@ -962,18 +890,33 @@ func (s *Service) ArchiveLocation(ctx context.Context, actorID, branchID, id int
 	if existing.IsSystem {
 		return apperror.Validation("", []apperror.FieldError{{Field: "code", Message: "lokasi sistem tidak dapat diarsipkan"}})
 	}
-	if children, err := s.repo.HasActiveChildren(ctx, id); err != nil {
-		return apperror.Internal(err)
-	} else if children {
-		return apperror.Conflict("Lokasi masih memiliki sublokasi aktif")
-	}
-	if used, err := s.repo.LocationHasBalances(ctx, id); err != nil {
-		return apperror.Internal(err)
-	} else if used {
-		return apperror.Conflict("Lokasi masih memiliki saldo")
-	}
-	if err := s.repo.SetLocationStatus(ctx, id, "archived", actorID); err != nil {
-		return apperror.Internal(err)
+	// The emptiness checks and the archive run in one transaction holding the
+	// location row exclusively. Every inflow takes that row shared before it
+	// writes (assertLocationActiveTx), so a concurrent post either finishes
+	// first — and its stock is seen here (READ COMMITTED reads after the
+	// lock) — or waits and then finds the location archived.
+	err = dberr.RetryTx(ctx, s.repo.DB(), func(tx *sql.Tx) error {
+		locked, err := s.repo.LockLocationTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if locked == nil || locked.BranchID != branchID {
+			return apperror.NotFound("Lokasi")
+		}
+		if children, err := s.repo.HasActiveChildrenTx(ctx, tx, id); err != nil {
+			return err
+		} else if children {
+			return apperror.Conflict("Lokasi masih memiliki sublokasi aktif")
+		}
+		if used, err := s.repo.LocationHasBalancesTx(ctx, tx, id); err != nil {
+			return err
+		} else if used {
+			return apperror.Conflict("Lokasi masih memiliki saldo")
+		}
+		return s.repo.SetLocationStatusTx(ctx, tx, id, "archived", actorID)
+	})
+	if err != nil {
+		return asAppError(err)
 	}
 	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "stock_locations.archive", Entity: "stock_location", EntityID: id, BranchID: existing.BranchID, ActorID: actorID, Note: existing.Code})
 	return nil

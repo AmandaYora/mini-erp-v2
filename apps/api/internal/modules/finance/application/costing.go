@@ -165,7 +165,8 @@ type movementCost struct {
 //     difference in the ledger with no journal behind it;
 //  2. a transfer in-leg: what the out-leg relieved (the other branch's ledger
 //     for a cross-branch transfer);
-//  3. a damaged-location move in-leg: the out-leg written just before it.
+//  3. a damaged-location move in-leg: the out-leg sharing its ref_id (rows
+//     written before pairs carried one: the out-leg written just before it).
 //
 // Everything else runs the cost chain:
 //
@@ -233,7 +234,11 @@ func (s *Service) mirroredCost(ctx context.Context, m *stockcontracts.CostMoveme
 		return s.proRata(ctx, m, m.BranchID, base, opposite, m.BranchID, m.RefType)
 	case m.RefType == stockcontracts.RefTransfer && m.Direction == "in" && m.RefID > 0:
 		return s.proRata(ctx, m, 0, stockcontracts.RefTransfer, "out", 0, stockcontracts.RefTransfer)
+	case m.RefType == stockcontracts.RefDamaged && m.Direction == "in" && m.RefID > 0:
+		// Both legs of a damaged move carry the out-leg's id as ref_id.
+		return s.proRata(ctx, m, m.BranchID, stockcontracts.RefDamaged, "out", m.BranchID, stockcontracts.RefDamaged)
 	case m.RefType == stockcontracts.RefDamaged && m.Direction == "in":
+		// Legacy pairs written without a ref_id: the out-leg just before.
 		prev, err := s.repo.PrecedingRefRow(ctx, m.BranchID, m.ProductID, m.VariantID, stockcontracts.RefDamaged, m.ID)
 		if err != nil {
 			return movementCost{}, false, apperror.Internal(err)
