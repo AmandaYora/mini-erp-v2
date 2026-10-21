@@ -83,7 +83,7 @@ func Run(ctx context.Context, ldb *legacydb.DB, target Querier, c *cfg.Config, w
 	v := &verifier{ctx: ctx, l: ldb, t: target, cfg: c, work: work, explain: ex}
 	for _, f := range []func(){
 		v.counts, v.orderTotals, v.orderInvariants, v.stock, v.payments, v.trialBalance, v.journalShape,
-		v.costLedger, v.migrationCorrections, v.media, v.numbers, v.nextNumbers, v.orphans, v.postingMarks, v.periods, v.archive, v.accessSets,
+		v.costLedger, v.migrationCorrections, v.receivableSigns, v.media, v.numbers, v.nextNumbers, v.orphans, v.postingMarks, v.periods, v.archive, v.accessSets,
 		v.returns, v.balances, v.permissions, v.settings,
 	} {
 		f()
@@ -394,7 +394,42 @@ func (v *verifier) orderTotals() {
 		   UNION ALL SELECT branch_id, 'purchase', status, 'grand', SUM(grand_total) FROM purchase_orders GROUP BY 1,3
 		   UNION ALL SELECT branch_id, 'purchase', status, 'tax', SUM(tax_total) FROM purchase_orders GROUP BY 1,3
 		   UNION ALL SELECT branch_id, 'purchase', status, 'disc', SUM(discount_total) FROM purchase_orders GROUP BY 1,3) x
-		 JOIN branches b ON b.id = x.branch_id`, nil)
+		 JOIN branches b ON b.id = x.branch_id`, v.reclassOrders)
+}
+
+// reclassOrders moves the orders the transform completed (fully delivered,
+// legacy still in progress: ORDER_COMPLETED_DELIVERED) from the legacy
+// status group to the target one before V-02 compares them.
+func (v *verifier) reclassOrders(src map[string]string) {
+	_, codes, err := v.corrections()
+	if err != nil {
+		return
+	}
+	moved, err := transform.ReadRows(v.work, "order_reclass")
+	if err != nil {
+		return
+	}
+	add := func(key string, n int64) {
+		cur, ok := new(big.Rat).SetString(src[key])
+		if !ok {
+			cur = new(big.Rat)
+		}
+		src[key] = norm(new(big.Rat).Add(cur, big.NewRat(n, 1)).RatString())
+		if src[key] == "0" {
+			delete(src, key)
+		}
+	}
+	for _, r := range moved {
+		pre := codes[r.Str("branch_id")] + "|" + r.Str("kind") + "|"
+		for m, col := range map[string]string{"n": "", "grand": "grand_total", "tax": "tax_total", "disc": "discount_total"} {
+			n := int64(1)
+			if col != "" {
+				n = r.Int(col)
+			}
+			add(pre+r.Str("from")+"|"+m, -n)
+			add(pre+r.Str("to")+"|"+m, n)
+		}
+	}
 }
 
 func (v *verifier) orderInvariants() {
@@ -823,6 +858,38 @@ func (v *verifier) nextNumbers() {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		v.fail(id, desc, err)
+		return
+	}
+	// Finance counters (JV journals, EXP expenses): the next number must be
+	// new too, including after a legacy series the counter continues.
+	for _, q := range []string{"SELECT number FROM finance_journal_entries", "SELECT number FROM business_expenses"} {
+		list, err := v.col(v.t, q)
+		if err != nil {
+			v.fail(id, desc, err)
+			return
+		}
+		for _, x := range list {
+			existing[x] = true
+		}
+	}
+	fin, err := queryMap(v.ctx, v.t, "SELECT b.code, s.seq_key, s.current_value FROM finance_document_sequences s JOIN branches b ON b.id=s.branch_id")
+	if err != nil {
+		v.fail(id, desc, err)
+		return
+	}
+	for k, val := range fin {
+		code, key, _ := strings.Cut(k, "|")
+		cur, _ := strconv.ParseInt(val, 10, 64)
+		if num, ok := sequences.FinanceNextNumber(code, key, cur); ok {
+			n++
+			if existing[num] {
+				clash = append(clash, num)
+			}
+		}
+	}
+	sort.Strings(clash)
 	v.add(id, desc, strconv.Itoa(n)+" simulasi", strconv.Itoa(len(clash))+" bentrok", strings.Join(clash, ","), "", len(clash) == 0)
 }
 
@@ -1056,7 +1123,7 @@ func (v *verifier) lessWriteDowns(src map[string]string) {
 }
 
 func (v *verifier) migrationCorrections() {
-	const id22, desc22 = "V-26", "jurnal koreksi migrasi = daftar koreksi (per jurnal) = Σ temuan DN_CANCEL_COGS, COST_STATE_NO_QTY/NO_VALUE, COGS_UNPOSTED, STOCK_UNPOSTED"
+	const id22, desc22 = "V-26", "jurnal koreksi migrasi = daftar koreksi (per jurnal) = Σ temuan DN_CANCEL_COGS, COST_STATE_NO_QTY/NO_VALUE, COGS_UNPOSTED, STOCK_UNPOSTED, REVENUE_UNBOOKED"
 	rows, codes, err := v.corrections()
 	if err != nil {
 		v.fail(id22, desc22, err)
@@ -1084,7 +1151,7 @@ func (v *verifier) migrationCorrections() {
 	if f, err := os.ReadFile(filepath.Join(transform.ReportDir(v.work), "findings.csv")); err == nil {
 		re := regexp.MustCompile(`Rp(-?\d+)`)
 		for _, line := range strings.Split(string(f), "\n") {
-			if !strings.Contains(line, ",DN_CANCEL_COGS,") && !strings.Contains(line, ",COST_STATE_NO_QTY,") &&
+			if !strings.Contains(line, ",DN_CANCEL_COGS,") && !strings.Contains(line, ",COST_STATE_NO_QTY,") && !strings.Contains(line, ",REVENUE_UNBOOKED,") &&
 				!strings.Contains(line, ",COGS_UNPOSTED,") && !strings.Contains(line, ",STOCK_UNPOSTED,") && !strings.Contains(line, ",COST_STATE_NO_VALUE,") {
 				continue
 			}
@@ -1161,4 +1228,96 @@ func (v *verifier) migrationCorrections() {
 	v.add(id23, desc23, "Rp"+strconv.FormatInt(legacyGap, 10), "Rp"+strconv.FormatInt(gap, 10),
 		fmt.Sprintf("buku Rp%d, ledger Rp%d (+ estimasi terkoreksi Rp%d)", book, ledger, corrected),
 		fmt.Sprintf("selisih bawaan legacy: buku Rp%d - keadaan biaya Rp%d; toleransi penyeimbang jurnal Rp%d", legacyBook, legacyState, tol), shift <= tol)
+}
+
+// ---------------------------------------------------------------- V-29 receivable sign
+
+// receivableTolerance absorbs the rupiah rounding between the pro-rated SJ
+// value estimated here and the revamp's own posting, per customer.
+const receivableTolerance = 100
+
+// receivableSQL projects each customer's receivable in the books (Piutang
+// lines with the party, every journal including the migration corrections)
+// to after the cutover-day posting queue: plus the confirmed order SJs above
+// the delivery boundary not yet journalled, minus the incoming payments above
+// the payment boundary not yet journalled. A negative projection must be
+// explained by money the customer paid ahead: payments on orders beyond what
+// was delivered (drafts included), open return credit, and exchange
+// replacements not yet shipped. Anything else is revenue the books never got
+// (REVENUE_UNBOOKED) or a payment booked twice.
+const receivableSQL = `WITH bk AS (
+  SELECT l.party_id p, SUM(l.debit) - SUM(l.credit) bal FROM finance_journal_lines l
+    JOIN finance_account_mappings m ON m.account_id = l.account_id AND m.mapping_key = 'receivable'
+    JOIN finance_journal_entries e ON e.id = l.entry_id AND e.status IN ('posted','reversed')
+   WHERE l.party_id IS NOT NULL GROUP BY 1),
+dv AS (
+  SELECT d.id dn, d.sales_order_id so, d.branch_id br, SUM(i.qty / NULLIF(l.qty, 0) * l.line_total) v
+    FROM delivery_notes d JOIN delivery_note_items i ON i.delivery_id = d.id
+    JOIN sales_order_items l ON l.id = (SELECT MIN(x.id) FROM sales_order_items x WHERE x.order_id = d.sales_order_id AND x.product_id = i.product_id AND x.variant_id = i.variant_id AND x.uom = i.uom)
+   WHERE d.status = 'confirmed' AND d.document_kind = 'order' GROUP BY 1,2,3),
+pd AS (
+  SELECT o.party_id p, SUM(dv.v) v FROM dv JOIN sales_orders o ON o.id = dv.so
+    LEFT JOIN finance_cutover c ON c.branch_id = dv.br AND c.doc_type = 'delivery'
+   WHERE dv.dn > COALESCE(c.covered_through_id, 0)
+     AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e WHERE e.source_doc_type = 'delivery' AND e.source_doc_id = dv.dn)
+   GROUP BY 1),
+pp AS (
+  SELECT p.party_id p, SUM(p.amount) v FROM payments p
+    LEFT JOIN finance_cutover c ON c.branch_id = p.branch_id AND c.doc_type = 'payment'
+   WHERE p.direction = 'in' AND p.status = 'active' AND p.method <> 'offset' AND p.id > COALESCE(c.covered_through_id, 0)
+     AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e WHERE e.source_doc_type = 'payment' AND e.source_doc_id = p.id)
+   GROUP BY 1),
+od AS (
+  SELECT o.party_id p, GREATEST(COALESCE((SELECT SUM(a.amount) FROM payment_allocations a JOIN payments y ON y.id = a.payment_id
+      WHERE a.order_type = 'sales' AND a.order_id = o.id AND y.status = 'active' AND y.method <> 'offset' AND y.direction = 'in'), 0)
+    - COALESCE((SELECT SUM(dv.v) FROM dv WHERE dv.so = o.id), 0), 0) ahead
+    FROM sales_orders o WHERE o.status <> 'cancelled'),
+rc AS (
+  SELECT o.party_id p, SUM(CASE WHEN r.return_mode = 'exchange' THEN GREATEST(-r.difference_amount, 0) ELSE r.total END
+      - COALESCE((SELECT SUM(a.amount) FROM payment_allocations a JOIN payments y ON y.id = a.payment_id
+          WHERE a.order_type = 'sales_return' AND a.order_id = r.id AND y.status = 'active'), 0)
+      + CASE WHEN r.return_mode = 'exchange' AND r.replacement_delivery_status = 'pending' THEN r.replacement_total ELSE 0 END) v
+    FROM sales_returns r JOIN sales_orders o ON o.id = r.sales_order_id WHERE r.status = 'confirmed' GROUP BY 1),
+ex AS (SELECT p, SUM(ahead) v FROM od GROUP BY 1)
+SELECT pt.code, bk.bal + COALESCE(pd.v, 0) - COALESCE(pp.v, 0) projected, COALESCE(ex.v, 0) + GREATEST(COALESCE(rc.v, 0), 0) explained
+  FROM bk JOIN parties pt ON pt.id = bk.p
+  LEFT JOIN pd ON pd.p = bk.p LEFT JOIN pp ON pp.p = bk.p LEFT JOIN ex ON ex.p = bk.p LEFT JOIN rc ON rc.p = bk.p
+ WHERE bk.bal + COALESCE(pd.v, 0) - COALESCE(pp.v, 0) < 0
+ ORDER BY pt.code`
+
+func (v *verifier) receivableSigns() {
+	const id, desc = "V-29", "tidak ada piutang pelanggan negatif (sesudah antrean posting hari-H) tanpa uang muka/kredit retur yang menjelaskannya"
+	rows, err := v.t.QueryContext(v.ctx, receivableSQL)
+	if err != nil {
+		v.fail(id, desc, err)
+		return
+	}
+	defer func() { _ = rows.Close() }()
+	var bad []string
+	neg, explained := 0, 0
+	for rows.Next() {
+		var code, projected, ex string
+		if err := rows.Scan(&code, &projected, &ex); err != nil {
+			v.fail(id, desc, err)
+			return
+		}
+		neg++
+		p, e := row.ParseRat(projected), row.ParseRat(ex)
+		short := new(big.Rat).Add(p, e) // < 0: more credit than explained
+		if short.Cmp(big.NewRat(-receivableTolerance, 1)) < 0 {
+			bad = append(bad, fmt.Sprintf("%s: piutang Rp%s, terjelaskan Rp%s", code, strconv.FormatInt(transform.RoundHalfAway(p), 10), strconv.FormatInt(transform.RoundHalfAway(e), 10)))
+			continue
+		}
+		explained++
+	}
+	if err := rows.Err(); err != nil {
+		v.fail(id, desc, err)
+		return
+	}
+	n := len(bad)
+	if len(bad) > 5 {
+		bad = bad[:5]
+	}
+	v.add(id, desc, strconv.Itoa(neg)+" pelanggan negatif", strconv.Itoa(n)+" tak terjelaskan", strings.Join(bad, "; "),
+		fmt.Sprintf("%d terjelaskan uang muka/kredit retur; toleransi Rp%d per pelanggan", explained, receivableTolerance), n == 0)
 }

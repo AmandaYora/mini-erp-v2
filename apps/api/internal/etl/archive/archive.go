@@ -24,9 +24,12 @@ import (
 )
 
 // WholeTables are archived as they were extracted (design appendix C).
+// inventory_movements keeps legacy's own balance_before/after (the revamp
+// recomputes the stock card in date order); media_files keeps the archived
+// attachments the media phase does not carry.
 var WholeTables = []string{
 	"audit_logs", "order_status_definitions", "stock_reservations", "finance_posting_sources", "finance_cash_accounts",
-	"company_settings", "permissions",
+	"company_settings", "permissions", "inventory_movements", "media_files",
 }
 
 // DroppedColumns are the legacy columns without a revamp column.

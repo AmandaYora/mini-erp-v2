@@ -88,13 +88,39 @@ func (s *state) refFor(m row.Row, pos posKey, dir string, branch int64) (string,
 	}
 }
 
+// moveRank orders legacy movements of the same instant: stock that arrives
+// (opening stock, then adjustments/stock counts, then other ins) before stock
+// that leaves, so an opening imported in the same second as the first sale
+// does not leave an interim negative balance on the stock card.
+func moveRank(m row.Row) int {
+	switch {
+	case m.Str("reference_type") == "opening_stock":
+		return 0
+	case m.Str("movement_type") == "adjustment" || m.Str("reference_type") == "manual_adjustment":
+		return 1
+	case m.Str("movement_type") == "in":
+		return 2
+	}
+	return 3
+}
+
 func (s *state) stock() error {
+	// Deterministic order: moved_at, then the same-instant rank, then the
+	// legacy id. The running balances (stock card) are recomputed in this
+	// order; legacy's own balance_before/after are kept in the archive.
 	legacy := sortedBy(s.raw["inventory_movements"], "id_inventory_movement")
 	sort.SliceStable(legacy, func(i, j int) bool {
 		a, _ := legacy[i].Time("moved_at")
 		b, _ := legacy[j].Time("moved_at")
-		return a.Before(b)
+		if !a.Equal(b) {
+			return a.Before(b)
+		}
+		return moveRank(legacy[i]) < moveRank(legacy[j])
 	})
+	legacyRow := map[int64]row.Row{}
+	for _, m := range legacy {
+		legacyRow[m.Int("id_inventory_movement")] = m
+	}
 	var movs []*mov
 	byUniq := map[uniqKey]*mov{}
 	mergedInto := map[int64]*mov{}
@@ -174,6 +200,7 @@ func (s *state) stock() error {
 	// running balances per position
 	run := map[posKey]*big.Rat{}
 	lastWhen := map[posKey]time.Time{}
+	var negatives, differ int64
 	for _, x := range movs {
 		cur := run[x.pos]
 		if cur == nil {
@@ -188,7 +215,18 @@ func (s *state) stock() error {
 		x.after = cur
 		run[x.pos] = cur
 		lastWhen[x.pos] = x.when
+		if cur.Sign() < 0 {
+			negatives++
+		}
+		if l := legacyRow[x.legacy]; x.merged == 0 && l != nil && (l.Rat("balance_before").Cmp(x.before) != 0 || l.Rat("balance_after").Cmp(x.after) != 0) {
+			differ++
+		}
 	}
+	s.out.Explain["stock_interim_negative"] = negatives
+	s.out.Explain["stock_balance_differs_legacy"] = differ
+	s.find(report.Info, "STOCK_CARD_RECOMPUTED", "inventory_movements", 0,
+		"saldo kartu stok dihitung ulang urut waktu mutasi (seketika: stok awal, penyesuaian, masuk, lalu keluar; lalu id legacy): %d mutasi bersaldo sesudah negatif sementara, %d mutasi bersaldo berbeda dari balance_before/after legacy (saldo legacy diarsip di archive/raw/inventory_movements)",
+		negatives, differ)
 
 	// legacy balances, merged per target position
 	legacyBal := map[posKey]*big.Rat{}
@@ -789,12 +827,47 @@ func (s *state) costBaseline(rows map[int64]*crow) []baselineRow {
 			}
 		}
 		if want != rowsValue {
-			s.find(report.Info, "COST_BASELINE", "finance_inventory_cost_states", lid,
+			// The cost-only row moves the unit cost the revamp will use
+			// (state value / units the ledger holds) away from legacy's own
+			// average when legacy's value and its rows disagree: the
+			// accountant reviews every product that moves more than 5%.
+			held := new(big.Rat)
+			for _, q := range qtys {
+				held.Add(held, q)
+			}
+			avg := c.Rat("average_cost")
+			if !c.Has("average_cost") {
+				avg = c.Rat("unit_cost")
+			}
+			sev := report.Info
+			if held.Sign() > 0 && avg.Sign() > 0 {
+				var value int64
+				for _, k := range heldKeys {
+					value += target[k]
+				}
+				unit := new(big.Rat).Quo(new(big.Rat).SetInt64(value), held)
+				dev := new(big.Rat).Abs(new(big.Rat).Sub(unit, avg))
+				if dev.Cmp(new(big.Rat).Mul(avg, big.NewRat(5, 100))) > 0 {
+					sev = report.Warn
+					delta := RoundHalfAway(new(big.Rat).Mul(new(big.Rat).Sub(unit, avg), held))
+					s.out.Explain["cost_review_products"]++
+					s.out.Explain["cost_review_abs_delta"] += abs64(delta)
+					s.emit("cost_review", row.Row{"branch": s.branchCode[br], "product_code": s.productRow[p].Str("code"), "product_name": s.productRow[p].Str("name"),
+						"legacy_avg_cost": avg.FloatString(2), "v2_unit_cost": unit.FloatString(2), "qty": held.FloatString(4),
+						"legacy_value_at_avg": RoundHalfAway(new(big.Rat).Mul(avg, held)), "v2_value": value, "delta": delta, "legacy_state": lid})
+				}
+			}
+			s.find(sev, "COST_BASELINE", "finance_inventory_cost_states", lid,
 				"nilai keadaan biaya legacy Rp%d - Σ baris biaya Rp%d = Rp%d: ditambahkan sebagai baris biaya-saja (qty 0)", want, rowsValue, want-rowsValue)
 		} else if moved > 0 {
 			s.find(report.Info, "COST_VARIANT_REALIGN", "finance_inventory_cost_states", lid,
 				"nilai produk Rp%d dibagi ulang ke %d varian berstok menurut qty (legacy: satu harga modal per produk)", want, len(heldKeys))
 		}
+	}
+	if n := s.out.Explain["cost_review_products"]; n > 0 {
+		s.find(report.Warn, "COST_REVIEW_LIST", "finance_inventory_cost_states", 0,
+			"%d produk berharga modal revamp menyimpang >5%% dari average_cost legacy (Σ|selisih nilai| Rp%d): telaah akuntan, daftar di report/cost_baseline_review.csv",
+			n, s.out.Explain["cost_review_abs_delta"])
 	}
 	return out
 }

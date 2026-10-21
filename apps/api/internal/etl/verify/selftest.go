@@ -132,6 +132,14 @@ func corruptions() []corruption {
 			}
 			return execOne(ctx, tx, "UPDATE sales_returns SET receivable_reduction = receivable_reduction + 1 WHERE id = ?", id)
 		}},
+		{"piutang pelanggan dikredit tanpa dasar", []string{"V-29"}, func(ctx context.Context, tx *sql.Tx) (bool, error) {
+			id, ok, err := scanInt(ctx, tx, `SELECT MIN(l.id) FROM finance_journal_lines l JOIN finance_account_mappings m ON m.account_id = l.account_id AND m.mapping_key = 'receivable'
+				WHERE l.party_id IS NOT NULL AND l.credit > 0`)
+			if err != nil || !ok {
+				return false, err
+			}
+			return execOne(ctx, tx, "UPDATE finance_journal_lines SET credit = credit + 1000000000 WHERE id = ?", id)
+		}},
 		{"jumlah audit log berkurang", []string{"V-01ah"}, func(ctx context.Context, tx *sql.Tx) (bool, error) {
 			id, ok, err := scanInt(ctx, tx, "SELECT MIN(id) FROM audit_logs")
 			if err != nil || !ok {

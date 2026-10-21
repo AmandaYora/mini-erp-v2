@@ -128,6 +128,19 @@ func (o *Output) Write(work string) (*Manifest, error) {
 	if err := report.WriteTable(filepath.Join(ReportDir(work), "migration_corrections.csv"), corr); err != nil {
 		return nil, err
 	}
+	// Products whose unit cost the migration moves >5% from legacy's average (COST_BASELINE warn).
+	cols = []string{"branch", "product_code", "product_name", "legacy_avg_cost", "v2_unit_cost", "qty", "legacy_value_at_avg", "v2_value", "delta", "legacy_state"}
+	review := [][]string{cols}
+	for _, r := range o.Tables["cost_review"] {
+		line := make([]string, len(cols))
+		for i, c := range cols {
+			line[i] = r.Str(c)
+		}
+		review = append(review, line)
+	}
+	if err := report.WriteTable(filepath.Join(ReportDir(work), "cost_baseline_review.csv"), review); err != nil {
+		return nil, err
+	}
 	if _, err := writeAny(filepath.Join(dir, "manifest.json"), man); err != nil {
 		return nil, err
 	}

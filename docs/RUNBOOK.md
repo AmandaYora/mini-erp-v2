@@ -141,7 +141,9 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    Nilai per cabang x produk = `finance_inventory_cost_states` legacy (= akun Persediaan legacy, V-14d): nilai yang
    legacy ubah tanpa baris biaya (koreksi pra-ledger 2026-08-13) dan pembagian ulang antar-varian (legacy satu harga
    modal per produk) masuk sebagai baris biaya-saja qty 0, id ≥ 2^62, `ref_type=opening_cost` (COST_BASELINE,
-   COST_VARIANT_REALIGN). ETL membiayai **setiap** mutasi (aturan `costOf` revamp; Sync revamp mulai sesudah mutasi
+   COST_VARIANT_REALIGN); bila karenanya harga modal revamp menyimpang >5% dari `average_cost` legacy, COST_BASELINE
+   menjadi warn dan produknya masuk `report/cost_baseline_review.csv` (kode, nama, rata-rata legacy, harga modal revamp,
+   qty, nilai) untuk ditelaah akuntan (COST_REVIEW_LIST). ETL membiayai **setiap** mutasi (aturan `costOf` revamp; Sync revamp mulai sesudah mutasi
    migrasi terakhir); barang kembali dari SJ yang dibatalkan dinilai sebesar biaya keluar SJ itu. Dokumen yang masuk
    antrean posting revamp tercatat POST_PENDING (alasan: belum dikandidatkan legacy / masih di antrean legacy); dokumen
    pending yang punya jurnal legacy hidup = blocker POST_PENDING_JOURNALED. **Zona waktu** (konvensi kolom:
@@ -151,15 +153,33 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    WIB naif) dan membaca `created_at`/`updated_at` legacy sebagai WIB → instan UTC (`row.LocalTime`). Gladi
    2026-10-21: 11.929 pembayaran sama persis dengan tampilan legacy (sebelumnya 1.814 jatuh sehari lebih awal dan
    1.687 berbeda tanggal dari jurnalnya sendiri). Item SJ sintetis memakai satuan baris SO (V-28).
+   **Kartu stok** dihitung ulang urut `moved_at`, lalu (pada detik yang sama) stok awal, penyesuaian, masuk, baru keluar,
+   lalu id legacy; `balance_before/after` legacy diarsip utuh (`archive/raw/inventory_movements`). Saldo sementara negatif
+   yang tersisa dan jumlah mutasi yang saldonya berbeda dari legacy dilaporkan STOCK_CARD_RECOMPUTED (gladi 2026-10-21:
+   1.122 negatif sementara, tidak berkurang oleh urutan seketika: sebabnya SJ bertanggal mundur sebelum stok awal/opname
+   masuk; saldo akhir tidak terpengaruh). **Pembersihan dokumen**: SJ yang sudah dikirim tetapi belum dikonfirmasi diterima
+   di legacy dimigrasi terkonfirmasi dengan `confirmed_at` = waktu kirim dan dicatat DN_IN_TRANSIT (warn: operasional
+   mengumpulkan SJ bertanda tangan); order penjualan yang semua barisnya terkirim oleh SJ terkonfirmasi tetapi di legacy
+   masih berjalan dimigrasi `completed` (`completed_at` = konfirmasi SJ terakhir; ORDER_COMPLETED_DELIVERED, V-02
+   memperhitungkannya); order draf yang sudah dibayar dicatat DRAFT_ORDER_PAID (warn: dikonfirmasi atau dibatalkan dan
+   dikembalikan). Lampiran yang dihapus di legacy tidak dimigrasi (MEDIA_ARCHIVED; diarsip `archive/raw/media_files`).
+   Penomoran biaya usaha melanjutkan seri legacy `EXP/<tahun>/n`: penghitung `EXP:<tahun>` revamp = nomor legacy
+   tertinggi, jadi biaya baru bernomor `EXP-<cabang>/<tahun>/n+1` (V-18 juga mensimulasikan penghitung keuangan).
    **Jurnal koreksi migrasi** (ADR-0018 D11; `source_doc_type=migration_correction`, nomor `JV-<cabang>/<tahun>/n`,
    tanggal freeze di periode terbuka; rinciannya per baris di `report/migration_corrections.csv`): HPP SJ batal yang
    tidak pernah dibalik legacy (DN_CANCEL_COGS, Dr Persediaan / Cr HPP); keadaan biaya legacy bernilai tanpa qty
    (COST_STATE_NO_QTY, Dr selisih persediaan / Cr Persediaan, ledger dinolkan) atau ber-qty tanpa nilai padahal baris
    biayanya bernilai (COST_STATE_NO_VALUE, ditulis naik); mutasi yang tidak akan pernah dijurnal: barang SJ dari dokumen
    legacy yang terposting sebagian/diarsip/sebelum saldo awal (COGS_UNPOSTED, lawan HPP) dan koreksi drift, penyesuaian
-   tanpa jurnal, penerimaan/retur sebelum saldo awal (STOCK_UNPOSTED, lawan selisih persediaan). Akun lawan diambil dari
-   `system_key` legacy (`cogs`, `stock_difference`); tidak ada = blocker MIG_CORR_ACCOUNT. Verify: V-26 (Σ jurnal koreksi =
-   Σ temuan = daftar), V-27 (buku Persediaan − ledger = selisih bawaan legacy buku − keadaan biaya; gladi 2026-10-21:
+   tanpa jurnal, penerimaan/retur sebelum saldo awal (STOCK_UNPOSTED, lawan selisih persediaan); pendapatan SJ order yang
+   HPP-nya sudah dijurnal legacy tetapi penjualannya tidak (legacy menjurnal pendapatan saat order selesai, dan order itu
+   belum selesai) sementara SJ-nya di bawah batas cutover sehingga tidak diantre revamp (REVENUE_UNBOOKED, satu jurnal per
+   order: Dr Piutang per pelanggan / Cr Penjualan per produk, Cr PPN Keluaran bila berpajak; nilainya = jendela qty SJ itu
+   persis seperti posting SJ revamp, jadi SJ berikutnya yang diantre hanya membukukan sisanya; order yang dibatalkan legacy
+   tidak dikoreksi, hanya REVENUE_UNBOOKED_CANCELLED untuk telaah). Akun lawan diambil dari `system_key` legacy (`cogs`,
+   `stock_difference`, `accounts_receivable`, `sales_revenue`, `output_tax`); tidak ada = blocker MIG_CORR_ACCOUNT. Verify:
+   V-26 (Σ jurnal koreksi = Σ temuan = daftar), V-29 (tidak ada piutang pelanggan negatif sesudah antrean posting hari-H
+   tanpa uang muka/pembayaran di depan pengiriman/kredit retur yang menjelaskannya), V-27 (buku Persediaan − ledger = selisih bawaan legacy buku − keadaan biaya; gladi 2026-10-21:
    −Rp297 pembulatan), V-14d (ledger per produk = keadaan biaya legacy ± koreksi). Pembulatan rupiah (ADR-0005) dan
    penyeimbang jurnal (≤ `--max-balance-delta`) tidak dikoreksi; ringkasannya di temuan ROUNDING_SUMMARY, buktinya V-11 &
    V-13a. Order inklusif pajak muncul sebagai INCL_ORDER (warn); jurnal GR inklusif yang sudah diposting legacy =
@@ -175,6 +195,7 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
 Rincian ada di §5 (jalur balik), §5b (ETL) dan [DEPLOYMENT.md](DEPLOYMENT.md). Centang tiap butir sebelum menyatakan cutover selesai.
 
 - [ ] Keputusan pemilik/akuntan §5b butir 8 terjawab (tanggal saldo awal: 2026-07-01; koreksi migrasi ADR-0018 D11; jurnal inklusif pajak bila ada).
+- [ ] Temuan ETL ditindaklanjuti (§5b butir 7): akuntan menelaah `report/cost_baseline_review.csv` dan REVENUE_UNBOOKED_CANCELLED; operasional mengumpulkan SJ bertanda tangan untuk DN_IN_TRANSIT dan menyelesaikan order DRAFT_ORDER_PAID.
 - [ ] Backup DB revamp dan dump legacy final terverifikasi (`gzip -t`, sha256); legacy di-freeze (read-only).
 - [ ] Gladi ETL lulus pada dump terbaru (§5b butir 6): `rehearse pass=true`, hash dua kali jalan sama, `load --resume` `inserted=0`.
 - [ ] `migrate up` (versi 31, `dirty=0`), `seed init`, ETL final, `etl verify` hijau; `GET /readyz` OK; rekonsiliasi saldo & stok (Readiness/rollups) cocok.

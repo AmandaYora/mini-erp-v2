@@ -43,8 +43,20 @@ var (
 	reGR       = regexp.MustCompile(`^GR-.+/\d{4}/(\d+)$`)
 	reTransfer = regexp.MustCompile(`^TRF-.+/\d{4}/(\d+)(-[A-Z])?$`)
 	reJV       = regexp.MustCompile(`^JV-.+/(\d{4})/(\d+)$`)
-	reEXP      = regexp.MustCompile(`^EXP-.+/(\d{4})/(\d+)$`)
+	// Revamp EXP-<branch>/<year>/n and the legacy company series EXP/<year>/n:
+	// the revamp's counter continues after the highest legacy number.
+	reEXP = regexp.MustCompile(`^EXP(?:-[^/]+)?/(\d{4})/(\d+)$`)
 )
+
+// ExpenseCounter parses an expense number into its finance counter key
+// (EXP:<year>) and value; ok is false for any other format.
+func ExpenseCounter(number string) (key string, value int64, ok bool) {
+	v, m, ok := tail(reEXP, number, 2)
+	if !ok {
+		return "", 0, false
+	}
+	return "EXP:" + m[1], v, true
+}
 
 func tail(re *regexp.Regexp, s string, group int) (int64, []string, bool) {
 	m := re.FindStringSubmatch(s)
@@ -179,8 +191,8 @@ func Compute(ctx context.Context, db *sql.DB, work string) (branch, fin acc, err
 			}
 		}},
 		{"SELECT branch_id, number FROM business_expenses", func(b int64, n string) {
-			if v, m, ok := tail(reEXP, n, 2); ok {
-				fin.bump(b, "EXP:"+m[1], v)
+			if k, v, ok := ExpenseCounter(n); ok {
+				fin.bump(b, k, v)
 			}
 		}},
 	}
@@ -258,6 +270,16 @@ func NextNumber(branchCode, key string, value int64, now time.Time) (string, boo
 		return fmt.Sprintf("GR-%s/%s/%05d", branchCode, year, n), true
 	}
 	return "", false
+}
+
+// FinanceNextNumber renders the next number of a finance counter key
+// (PREFIX:YEAR), as the finance module's numberInTx does.
+func FinanceNextNumber(branchCode, key string, value int64) (string, bool) {
+	prefix, year, ok := strings.Cut(key, ":")
+	if !ok || prefix == "" || len(year) != 4 {
+		return "", false
+	}
+	return fmt.Sprintf("%s-%s/%s/%05d", prefix, branchCode, year, value+1), true
 }
 
 // Flatten exposes the counters of a Compute result.
