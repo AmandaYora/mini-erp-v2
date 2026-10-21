@@ -1,8 +1,8 @@
 # Database Schema — Mini ERP (Revamp)
 
-Status: **kontrak kepemilikan tabel yang sudah terkunci** — 65 tabel nyata: 18 berkas baseline per
+Status: **kontrak kepemilikan tabel yang sudah terkunci** — 67 tabel nyata: 18 berkas baseline per
 modul, `apps/api/migrations/` (`000001_user` … `000018_assistant`), ditambah migrasi bernomor
-sesudah baseline (`000019`–`000023`, `000031`; nomor 000024–000030 sengaja kosong) — turun dari 70
+sesudah baseline (`000019`–`000023`, `000031`, `000034`; nomor 000024–000030 sengaja kosong) — turun dari 70
 entity sistem lama. Daftar tabel di §3 dibangkitkan dari berkas itu (`node scripts/db-schema-doc.mjs`;
 `--check` dijalankan CI/verify). Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi
 tiap tabel warisan; **riwayat migrasi bernomor (kolom/tabel baru sesudah baseline) ada di §8**.
@@ -63,7 +63,7 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `product` | `000006_product.up.sql` | `product_categories`, `products`, `product_variants` | 3 |
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
 | `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
-| `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql` | `purchase_orders`, `purchase_order_items` | 2 |
+| `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql`, `000034_purchasing_corrections.up.sql` | `purchase_orders`, `purchase_order_items`, `purchase_order_corrections`, `purchase_order_correction_lines` | 4 |
 | `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
@@ -73,7 +73,7 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta` | 14 |
 | `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
 | `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
-| **Total** | 18 berkas modul | | **65** |
+| **Total** | 18 berkas modul | | **67** |
 <!-- END GENERATED: tables -->
 
 ### `audit` (L0)
@@ -173,8 +173,10 @@ cukup untuk penelusuran di bawah HPP moving-average (lihat §6).
 
 | Tabel | Untuk apa |
 |---|---|
-| `purchase_orders` | Header PO ke supplier (`party_id` primitif ke `party`). `000022_purchasing_tax_invoice`: `tax_invoice_number`/`tax_invoice_date` (faktur pajak supplier); `supplier_invoice_*` tetap sumber PPN Masukan; `assigned_user_id` = penanggung jawab (primitif ke `user`); `created_by` ditampilkan sebagai "Dibuat Oleh" |
+| `purchase_orders` | Header PO ke supplier (`party_id` primitif ke `party`). `000022_purchasing_tax_invoice`: `tax_invoice_number`/`tax_invoice_date` (faktur pajak supplier); `supplier_invoice_*` tetap sumber PPN Masukan; `assigned_user_id` = penanggung jawab (primitif ke `user`); `created_by` ditampilkan sebagai "Dibuat Oleh". `000034_purchasing_corrections`: `cancel_reason`/`cancelled_at`/`cancelled_by` (batal dengan alasan) dan `short_close_reason`/`short_closed_at`/`short_closed_by` ("Tutup sisa order") |
 | `purchase_order_items` | Baris PO — **snapshot** harga & nama produk saat itu (kontrak §7), bukan join ke `products` hidup. `tax_rate` (`000022`, PO-03) = tarif pajak yang dipakai baris (tarif baris, atau tarif order; 0 bila bebas pajak); ETL memetakan `tax_rate_snapshot` legacy |
+| `purchase_order_corrections` | Riwayat koreksi order terkonfirmasi/selesai (`000034`, ADR-0022): `kind` `price` (koreksi harga beli setelah penerimaan; id-nya = `source_doc_id` jurnal finance `purchase_price_correction`) atau `short_close` (tanpa jurnal); `reason`, total lama/baru, `value_delta`/`tax_delta` bagian yang sudah diterima |
+| `purchase_order_correction_lines` | Baris koreksi: ekonomi baris lama/baru (qty, harga, diskon, DPP, PPN, total) dan `received_qty` saat koreksi — penerimaan sampai qty itu tetap dinilai dengan ekonomi lama di jurnal penerimaan dan ledger biaya (`contracts.LineAt`) |
 
 ### `sales` (L4)
 
@@ -359,9 +361,11 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000021_stock_parity` | ST-01, ST-02 | `stock_locations.is_picking_area`, `is_primary`, `sort_order`; `stock_transfers.driver_name`, `vehicle_plate`, `transfer_date` (diisi hari WIB kirim/dibuat untuk dokumen lama) | spec load membawa `is_picking_area`/`is_primary`/`sort_order`, `driver_name`/`vehicle_number`/`transfer_date` |
 | `000022_purchasing_tax_invoice` | PO-03 | `purchase_orders.tax_invoice_number`, `tax_invoice_date`; `purchase_order_items.tax_rate` | memetakan `tax_rate_snapshot` legacy |
 | `000023_payment_credit_source` | N-41 | `payments.credit_source_type`, `credit_source_id` + indeks `ix_payments_credit_source` (retur sumber saldo uang muka pada pasangan kaki pakai-saldo) | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
+| `000034_purchasing_corrections` | ADR-0022 (koreksi order beli) | `purchase_orders.cancel_reason`, `cancelled_at`, `cancelled_by`, `short_close_reason`, `short_closed_at`, `short_closed_by`; tabel baru `purchase_order_corrections` + `purchase_order_correction_lines` | kolom nullable, legacy tak punya alur ini; ETL tak menyentuh |
 | `000031_finance_fn` | FN-01, FN-07, FN-10 | tabel baru `finance_posting_ignores` dan `finance_tax_adjustment_meta`; kolom `business_expenses.party_id` (+ `ix_business_expenses_party`): pihak lawan biaya | mengisi `party_id` dari `id_business_party` legacy bila pihak itu termigrasi |
 
 Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
 bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);
 `archivedAt` produk = `updated_at` baris berstatus arsip (PR-04); jurnal `opening_supplement`, `cost_restatement`, `sales_return_settlement`,
-`purchase_return_settlement` adalah sumber posting baru tanpa tabel baru.
+`purchase_return_settlement` adalah sumber posting baru tanpa tabel baru; `purchase_price_correction` (ADR-0022) menunjuk
+`purchase_order_corrections.id` dan menulis baris nilai-saja `ref_type = purchase_price_correction` di `finance_inventory_cost_movements`.

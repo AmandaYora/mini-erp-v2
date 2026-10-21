@@ -68,6 +68,7 @@ Jenis dokumen di `docs/` (referensi, status, riwayat) dan status tiap rencana: [
 | [0019](decisions/ADR-0019-deploy-elcodelabs-ghcr.md) | Deploy produksi ke VPS elcodelabs: image dibangun CI ke GHCR, server hanya pull & run (`minierp`, port 8084) |
 | [0020](decisions/ADR-0020-invarian-akuntansi-persediaan.md) | Invarian akuntansi persediaan: tiap mutasi dijurnal sebesar nilai ledger atau netral; kaki cermin, rupiah bulat, akun kendali, rekonsiliasi menjelaskan selisih |
 | [0021](decisions/ADR-0021-aturan-integritas-pra-migrasi.md) | Aturan integritas pra-migrasi: tanggal ≤ hari ini, awal pembukuan, pihak wajib di akun kendali, kunci biaya lintas proses & batas cutover `costrebuild`, kunci pembayaran, offset retur milik retur |
+| [0022](decisions/ADR-0022-koreksi-order-beli.md) | Koreksi order beli: ubah terkonfirmasi tanpa membuang perubahan, batal beralasan, tutup sisa order, koreksi harga beli setelah penerimaan (Persediaan/HPP + baris nilai ledger, penerimaan lama tetap bernilai lama) |
 
 ADR baru: nomor berikutnya, format `## Status / Context / Decision / Consequences`, lalu tambahkan
 barisnya di tabel ini. ADR yang diganti tidak dihapus; tandai statusnya `Superseded by ADR-NNNN`.
