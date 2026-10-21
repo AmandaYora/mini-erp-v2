@@ -209,7 +209,7 @@ func (s *state) stock() error {
 			balLegacy[k] = b.Int("id_inventory_balance")
 		}
 		legacyBal[k].Add(legacyBal[k], b.Rat("on_hand_qty"))
-		if t, ok := b.Time("updated_at"); ok && t.After(balUpdated[k]) {
+		if t, ok := b.LocalTime("updated_at"); ok && t.After(balUpdated[k]) {
 			balUpdated[k] = t
 		}
 	}
@@ -776,7 +776,7 @@ func (s *state) costBaseline(rows map[int64]*crow) []baselineRow {
 				target[heldKeys[i]] = part
 			}
 		}
-		date, ok := c.Time("updated_at")
+		date, ok := c.LocalTime("updated_at")
 		if !ok {
 			date = s.epoch()
 		}

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Row is one record keyed by column name.
@@ -122,6 +124,19 @@ func (r Row) Time(k string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// LocalTime parses a legacy column filled by the database default
+// (created_at/updated_at: CURRENT_TIMESTAMP on a server running in WIB). Its
+// digits are a Jakarta wall clock, not UTC like the columns the application
+// wrote (TypeORM timezone 'Z'), so the instant is 7 hours earlier than
+// Time() would read it.
+func (r Row) LocalTime(k string) (time.Time, bool) {
+	t, ok := r.Time(k)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), timeutil.Jakarta).UTC(), true
 }
 
 // Clone copies the map (shallow).

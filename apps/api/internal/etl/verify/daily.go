@@ -64,10 +64,10 @@ func dailySections(day string) []dailySection {
 		   JOIN {order_status_definitions} d ON d.id_order_status_definition=o.id_current_status
 		  WHERE o.` + byBranch + ` AND DATE(DATE_ADD(o.order_date, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,2,3`,
 			`SELECT b.code, x.k, x.st, x.m, x.v FROM (
-		   SELECT branch_id, 'sales' k, status st, 'n' m, COUNT(*) v FROM sales_orders WHERE DATE(DATE_ADD(order_date, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,3
-		   UNION ALL SELECT branch_id, 'sales', status, 'grand', SUM(grand_total) FROM sales_orders WHERE DATE(DATE_ADD(order_date, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,3
-		   UNION ALL SELECT branch_id, 'purchase', status, 'n', COUNT(*) FROM purchase_orders WHERE DATE(DATE_ADD(order_date, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,3
-		   UNION ALL SELECT branch_id, 'purchase', status, 'grand', SUM(grand_total) FROM purchase_orders WHERE DATE(DATE_ADD(order_date, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,3) x
+		   SELECT branch_id, 'sales' k, status st, 'n' m, COUNT(*) v FROM sales_orders WHERE DATE(order_date) = ` + lit + ` GROUP BY 1,3
+		   UNION ALL SELECT branch_id, 'sales', status, 'grand', SUM(grand_total) FROM sales_orders WHERE DATE(order_date) = ` + lit + ` GROUP BY 1,3
+		   UNION ALL SELECT branch_id, 'purchase', status, 'n', COUNT(*) FROM purchase_orders WHERE DATE(order_date) = ` + lit + ` GROUP BY 1,3
+		   UNION ALL SELECT branch_id, 'purchase', status, 'grand', SUM(grand_total) FROM purchase_orders WHERE DATE(order_date) = ` + lit + ` GROUP BY 1,3) x
 		 JOIN branches b ON b.id = x.branch_id`},
 		{"payments", `SELECT b.code, COALESCE(p.financial_side, CASE o.order_kind WHEN 'sales' THEN 'receivable' ELSE 'payable' END) side,
 		        CASE p.payment_method WHEN 'bank_transfer' THEN 'transfer' ELSE p.payment_method END, CASE WHEN p.archived_at IS NULL THEN 'active' ELSE 'cancelled' END, 'n', COUNT(*)
@@ -78,8 +78,8 @@ func dailySections(day string) []dailySection {
 		   FROM {payments} p JOIN {branches} b ON b.id_branch=p.id_branch LEFT JOIN {orders} o ON o.id_order=p.id_order
 		  WHERE p.` + byBranch + ` AND DATE(DATE_ADD(p.payment_date, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,2,3,4`,
 			`SELECT b.code, CASE p.direction WHEN 'in' THEN 'receivable' ELSE 'payable' END, p.method, p.status, m, v FROM (
-		   SELECT branch_id, direction, method, status, 'n' m, COUNT(*) v FROM payments WHERE number NOT LIKE 'PAY-%/MIG/%' AND method <> 'offset' AND DATE(DATE_ADD(paid_at, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,2,3,4
-		   UNION ALL SELECT branch_id, direction, method, status, 'sum', SUM(amount) FROM payments WHERE number NOT LIKE 'PAY-%/MIG/%' AND method <> 'offset' AND DATE(DATE_ADD(paid_at, INTERVAL 7 HOUR)) = ` + lit + ` GROUP BY 1,2,3,4) p
+		   SELECT branch_id, direction, method, status, 'n' m, COUNT(*) v FROM payments WHERE number NOT LIKE 'PAY-%/MIG/%' AND method <> 'offset' AND DATE(paid_at) = ` + lit + ` GROUP BY 1,2,3,4
+		   UNION ALL SELECT branch_id, direction, method, status, 'sum', SUM(amount) FROM payments WHERE number NOT LIKE 'PAY-%/MIG/%' AND method <> 'offset' AND DATE(paid_at) = ` + lit + ` GROUP BY 1,2,3,4) p
 		 JOIN branches b ON b.id = p.branch_id`},
 		{"stock", `SELECT b.code, p.product_code, SUM(CASE m.movement_type WHEN 'in' THEN m.quantity WHEN 'out' THEN -m.quantity ELSE m.balance_after - m.balance_before END)
 		   FROM {inventory_movements} m JOIN {branches} b ON b.id_branch=m.id_branch JOIN {products} p ON p.id_product=m.id_product

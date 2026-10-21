@@ -14,8 +14,13 @@ menyunting ada di `.claude/rules/database.md`.
   bila tidak terikat cabang), `created_at`/`updated_at`/`created_by`/`updated_by`, `deleted_at` (bila
   modul itu butuh arsip). **Tanpa `company_id`** — instalasi standalone single-tenant (ADR-0009).
 - Uang = integer rupiah ([ADR-0005](decisions/ADR-0005-money-as-integer-rupiah.md)); kuantitas &
-  faktor konversi `DECIMAL(24,12)`. Timestamp `DATETIME(6)` UTC, dikonversi ke `Asia/Jakarta` di
-  lapisan aplikasi.
+  faktor konversi `DECIMAL(24,12)`. Kolom `DATETIME(6)` punya dua makna, dan tiap kolom hanya satu:
+  - **stempel waktu sistem** (`created_at`, `updated_at`, `completed_at`, `dispatched_at`,
+    `confirmed_at`, `moved_at`, audit): instan **UTC** (sesi DB `time_zone='+00:00'`);
+  - **tanggal dokumen bisnis** (`order_date`, `due_date`, `*_invoice_date`, `paid_at`, `return_date`,
+    `settlement_date`, `received_at` GR, `delivery_date`, `transfer_date`, `expense_date`, `entry_date`):
+    tanggal/jam dinding **WIB** naif (`timeutil.DateOrToday`), dibaca apa adanya oleh filter
+    (`listquery.DateRange`) dan jurnal. Data migrasi mengikuti aturan yang sama (RUNBOOK §5b).
 - Satu transaksi = satu koneksi: baca dan tutup `rows` sepenuhnya sebelum query berikutnya di tx yang
   sama.
 - Tabel baru dengan endpoint daftar → indeks `(branch_id, id)` di migrasi yang sama

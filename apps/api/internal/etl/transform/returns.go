@@ -355,9 +355,9 @@ func (s *state) salesReturns() {
 				method = s.payMethod("sales_return_settlements", slid, m)
 			}
 			settRows = append(settRows, row.Row{
-				"id": s.nextID("sales_return_settlements"), "return_id": id, "settlement_type": typ, "settlement_date": fmtUTC(sdate), "amount": amount,
+				"id": s.nextID("sales_return_settlements"), "return_id": id, "settlement_type": typ, "settlement_date": fmtWIB(sdate), "amount": amount,
 				"payment_method": method, "reference_number": s.optStr("sales_return_settlements", slid, "reference_number", st, "reference_number", 100),
-				"notes": s.optStr("sales_return_settlements", slid, "notes", st, "notes", 255), "created_at": tsOr(st, "created_at", sdate),
+				"notes": s.optStr("sales_return_settlements", slid, "notes", st, "notes", 255), "created_at": tsLocalOr(st, "created_at", sdate),
 				"created_by": s.userID(st.Int("id_created_by")), "auto": 0,
 			})
 			if typ != "collect_payment" {
@@ -387,7 +387,7 @@ func (s *state) salesReturns() {
 		}
 		if reduction > 0 {
 			settRows = append(settRows, row.Row{
-				"id": s.nextID("sales_return_settlements"), "return_id": id, "settlement_type": "reduce_receivable", "settlement_date": fmtUTC(dd.date), "amount": reduction,
+				"id": s.nextID("sales_return_settlements"), "return_id": id, "settlement_type": "reduce_receivable", "settlement_date": fmtWIB(dd.date), "amount": reduction,
 				"payment_method": nil, "reference_number": nil, "notes": "Offset otomatis ke tagihan order", "created_at": fmtUTC(dd.date),
 				"created_by": s.userID(r.Int("id_created_by")), "auto": 1,
 			})
@@ -424,10 +424,10 @@ func (s *state) salesReturns() {
 		ssub, stax = sumCol(replRows, "tax_base"), sumCol(replRows, "tax_amount")
 		s.emit("sales_returns", row.Row{
 			"id": id, "number": s.trunc("sales_returns", lid, "number", r.Str("return_number"), 100), "branch_id": dd.branch, "sales_order_id": soID,
-			"return_date": fmtUTC(dd.date), "total": hdrTotal, "subtotal": rsub, "discount_total": disc, "tax_total": rtax,
+			"return_date": fmtWIB(dd.date), "total": hdrTotal, "subtotal": rsub, "discount_total": disc, "tax_total": rtax,
 			"tax_type": taxType(orow), "tax_rate": s.rate2("sales_returns", lid, orow.Rat("tax_rate_snapshot")),
 			"return_mode": mode, "replacement_delivery_status": repl, "status": status, "notes": notes,
-			"created_at": tsOr(r, "created_at", dd.date), "updated_at": tsOr(r, "updated_at", dd.date), "created_by": s.userID(r.Int("id_created_by")),
+			"created_at": tsLocalOr(r, "created_at", dd.date), "updated_at": tsLocalOr(r, "updated_at", dd.date), "created_by": s.userID(r.Int("id_created_by")),
 			"reason":               s.trunc("sales_returns", lid, "reason", r.Str("reason_text"), 255),
 			"replacement_subtotal": ssub, "replacement_tax_total": stax, "replacement_total": replTotal, "difference_amount": storedDiff,
 			"receivable_reduction": reduction,
@@ -588,9 +588,9 @@ func (s *state) purchaseReturns() {
 				method = s.payMethod("purchase_return_settlements", slid, m)
 			}
 			prow := row.Row{
-				"id": s.nextID("purchase_return_settlements"), "return_id": id, "settlement_type": typ, "settlement_date": fmtUTC(sdate), "amount": amount,
+				"id": s.nextID("purchase_return_settlements"), "return_id": id, "settlement_type": typ, "settlement_date": fmtWIB(sdate), "amount": amount,
 				"payment_method": method, "reference_number": s.optStr("purchase_return_settlements", slid, "reference_number", st, "reference_number", 100),
-				"notes": s.optStr("purchase_return_settlements", slid, "notes", st, "notes", 255), "created_at": tsOr(st, "created_at", sdate),
+				"notes": s.optStr("purchase_return_settlements", slid, "notes", st, "notes", 255), "created_at": tsLocalOr(st, "created_at", sdate),
 				"created_by": s.userID(st.Int("id_created_by")),
 			}
 			s.emit("purchase_return_settlements", prow)
@@ -616,9 +616,9 @@ func (s *state) purchaseReturns() {
 		notes := any(nil)
 		s.emit("purchase_returns", row.Row{
 			"id": id, "number": s.trunc("purchase_returns", lid, "number", r.Str("return_number"), 100), "branch_id": dd.branch, "purchase_order_id": poID,
-			"return_date": fmtUTC(dd.date), "total": hdrTotal, "subtotal": sumCol(rows, "tax_base"), "discount_total": sumCol(rows, "discount_nominal"),
+			"return_date": fmtWIB(dd.date), "total": hdrTotal, "subtotal": sumCol(rows, "tax_base"), "discount_total": sumCol(rows, "discount_nominal"),
 			"tax_total": sumCol(rows, "tax_amount"), "tax_type": taxType(orow), "tax_rate": s.rate2("purchase_returns", lid, orow.Rat("tax_rate_snapshot")),
-			"status": status, "notes": notes, "created_at": tsOr(r, "created_at", dd.date), "updated_at": tsOr(r, "updated_at", dd.date),
+			"status": status, "notes": notes, "created_at": tsLocalOr(r, "created_at", dd.date), "updated_at": tsLocalOr(r, "updated_at", dd.date),
 			"created_by": s.userID(r.Int("id_created_by")), "reason": s.trunc("purchase_returns", lid, "reason", r.Str("reason_text"), 255),
 			"payable_reduction": reduction,
 		})
@@ -679,7 +679,7 @@ func (s *state) emitRetPayment(p *retPay, id int64) {
 	p.newID = id
 	r := row.Row{
 		"id": id, "number": p.number, "branch_id": p.branch, "party_id": p.party, "party_type": p.ptype, "direction": p.dir, "amount": p.amount,
-		"method": p.method, "paid_at": fmtUTC(p.date), "notes": p.notes, "status": "active", "created_at": fmtUTC(p.date), "created_by": p.by,
+		"method": p.method, "paid_at": fmtWIB(p.date), "notes": p.notes, "status": "active", "created_at": fmtUTC(p.date), "created_by": p.by,
 		"client_ref": p.clientRef, "amount_tendered": nil, "reference_number": p.reference, "pair_id": nil,
 	}
 	p.row = r

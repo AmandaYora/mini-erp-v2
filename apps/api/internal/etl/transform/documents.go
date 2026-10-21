@@ -397,7 +397,7 @@ func (s *state) emitSJ(id int64, dr *docDraft, d row.Row, items []row.Row, alloc
 		"dispatched_at":                      ts(d, "dispatched_at"), "dispatched_by": s.userID(d.Int("dispatched_by")),
 		"confirmed_at": ts(d, "confirmed_at"), "confirmed_by": s.userID(d.Int("confirmed_by")),
 		"status": status, "document_kind": "order", "sales_return_id": nil,
-		"notes": s.optStr("delivery_notes", lid, "notes", d, "notes", 255), "created_at": tsOr(d, "created_at", dr.date),
+		"notes": s.optStr("delivery_notes", lid, "notes", d, "notes", 255), "created_at": tsLocalOr(d, "created_at", dr.date),
 		"created_by": s.userID(d.Int("dispatched_by")), "client_ref": nil,
 	})
 	for _, it := range items {
@@ -607,8 +607,8 @@ func (s *state) goodsReceipts() {
 			status = "void"
 		}
 		s.emit("goods_receipts", row.Row{
-			"id": id, "number": numbers[lid], "branch_id": dr.branch, "purchase_order_id": poID, "received_at": fmtUTC(dr.date),
-			"notes": s.optStr("goods_receipts", lid, "notes", g, "notes", 255), "created_at": tsOr(g, "created_at", dr.date),
+			"id": id, "number": numbers[lid], "branch_id": dr.branch, "purchase_order_id": poID, "received_at": fmtWIB(dr.date),
+			"notes": s.optStr("goods_receipts", lid, "notes", g, "notes", 255), "created_at": tsLocalOr(g, "created_at", dr.date),
 			"created_by": s.userID(g.Int("id_received_by")), "supplier_delivery_number": s.optStr("goods_receipts", lid, "supplier_delivery_number", g, "supplier_delivery_number", 60),
 			"status": status, "client_ref": nil,
 		})
@@ -754,8 +754,8 @@ func (s *state) payments() {
 		}
 		s.emit("payments", row.Row{
 			"id": id, "number": s.trunc("payments", lid, "number", p.Str("payment_number"), 60), "branch_id": dr.branch, "party_id": party,
-			"party_type": in.ptype, "direction": in.dir, "amount": amount, "method": method, "paid_at": fmtUTC(dr.date),
-			"notes": s.optStr("payments", lid, "notes", p, "notes", 255), "status": status, "created_at": tsOr(p, "created_at", dr.date),
+			"party_type": in.ptype, "direction": in.dir, "amount": amount, "method": method, "paid_at": fmtWIB(dr.date),
+			"notes": s.optStr("payments", lid, "notes", p, "notes", 255), "status": status, "created_at": tsLocalOr(p, "created_at", dr.date),
 			"created_by": s.userID(p.Int("id_created_by")), "client_ref": nil, "amount_tendered": tendered,
 			"reference_number": s.optStr("payments", lid, "reference_number", p, "reference_number", 100),
 		})
@@ -894,8 +894,8 @@ func (s *state) transfers() {
 				// ST-02: driver, vehicle and the transfer date of the legacy document.
 				"driver_name":   emptyNil(s.trunc("stock_transfers", lid, "driver_name", t.Str("driver_name"), 150)),
 				"vehicle_plate": emptyNil(s.trunc("stock_transfers", lid, "vehicle_plate", t.Str("vehicle_number"), 30)),
-				"transfer_date": tsOr(t, "transfer_date", date),
-				"dispatched_at": ts(t, "dispatched_at"), "received_at": ts(t, "received_at"), "created_at": tsOr(t, "created_at", date),
+				"transfer_date": fmtWIB(timeOr(t, "transfer_date", date)),
+				"dispatched_at": ts(t, "dispatched_at"), "received_at": ts(t, "received_at"), "created_at": tsLocalOr(t, "created_at", date),
 				"created_by": s.userID(t.Int("id_created_by")),
 			})
 			for _, it := range groups[k] {
@@ -1052,7 +1052,7 @@ func (s *state) emitReplSJ(id int64, dr *docDraft, d row.Row, items []row.Row) {
 		"dispatched_at":                      ts(d, "dispatched_at"), "dispatched_by": s.userID(d.Int("dispatched_by")),
 		"confirmed_at": ts(d, "confirmed_at"), "confirmed_by": s.userID(d.Int("confirmed_by")),
 		"status": status, "document_kind": "replacement", "sales_return_id": s.srNew[srl],
-		"notes": s.optStr("delivery_notes", lid, "notes", d, "notes", 255), "created_at": tsOr(d, "created_at", dr.date),
+		"notes": s.optStr("delivery_notes", lid, "notes", d, "notes", 255), "created_at": tsLocalOr(d, "created_at", dr.date),
 		"created_by": s.userID(d.Int("dispatched_by")), "client_ref": nil,
 	})
 	byID := map[int64]row.Row{}

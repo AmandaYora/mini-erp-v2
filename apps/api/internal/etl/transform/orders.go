@@ -124,10 +124,10 @@ func (s *state) orders() error {
 		odate, _ := o.Time("order_date")
 		var due any
 		if t, ok := o.Time("due_date"); ok {
-			due = fmtUTC(t)
+			due = fmtWIB(t)
 		} else if terms == "net" {
 			days := int(o.Int("payment_term_days"))
-			due = fmtUTC(odate.AddDate(0, 0, days))
+			due = fmtWIB(odate.AddDate(0, 0, days))
 			s.find(report.Warn, "ORDER_NET_NO_DUE", "orders", lid, "termin net tanpa jatuh tempo: order_date + %d hari", days)
 		}
 		tt := taxType(o)
@@ -178,7 +178,7 @@ func (s *state) orders() error {
 				"line_note":       s.optStr(itemTable, ilid, "line_note", it, "notes", 255),
 				"taxable":         b2i(it.Bool("taxable")), "tax_base": s.money.R(itemTable, ilid, "tax_base", it, "tax_base_amount"),
 				"tax_amount": s.money.R(itemTable, ilid, "tax_amount", it, "tax_amount"),
-				"created_at": tsOr(it, "created_at", odate),
+				"created_at": tsLocalOr(it, "created_at", odate),
 			}
 			if kind == "sales" {
 				ir["pricing_source"] = "catalog"
@@ -212,14 +212,14 @@ func (s *state) orders() error {
 
 		hdr := row.Row{
 			"id": id, "number": s.trunc(table, lid, "number", o.Str("order_number"), 60), "branch_id": branch, "party_id": party,
-			"order_date": fmtUTC(odate), "due_date": due, "payment_terms": terms, "tax_type": tt,
+			"order_date": fmtWIB(odate), "due_date": due, "payment_terms": terms, "tax_type": tt,
 			"tax_rate": s.rate2(table, lid, o.Rat("tax_rate_snapshot")), "subtotal": subtotal, "discount_total": disc, "tax_total": tax,
-			"grand_total": grand, "status": status, "notes": emptyNil(o.Str("notes")), "created_at": tsOr(o, "created_at", odate),
+			"grand_total": grand, "status": status, "notes": emptyNil(o.Str("notes")), "created_at": tsLocalOr(o, "created_at", odate),
 			"created_by": s.userID(o.Int("id_created_by")),
 		}
 		if kind == "sales" {
 			hdr["tax_invoice_number"] = s.optStr(table, lid, "tax_invoice_number", o, "tax_invoice_number", 50)
-			hdr["tax_invoice_date"] = ts(o, "tax_invoice_date")
+			hdr["tax_invoice_date"] = tsWIB(o, "tax_invoice_date")
 			hdr["channel"] = "regular"
 			if o.Str("source") == "pos" {
 				hdr["channel"] = "pos"
@@ -248,7 +248,7 @@ func (s *state) orders() error {
 			if status == "completed" {
 				t, ok := o.Time("goods_delivered_at")
 				if !ok {
-					t, _ = o.Time("updated_at")
+					t, _ = o.LocalTime("updated_at")
 				}
 				hdr["completed_at"] = fmtUTC(t)
 			} else {
@@ -256,9 +256,9 @@ func (s *state) orders() error {
 			}
 		} else {
 			hdr["supplier_invoice_number"] = s.optStr(table, lid, "supplier_invoice_number", o, "supplier_invoice_number", 50)
-			hdr["supplier_invoice_date"] = ts(o, "supplier_invoice_date")
+			hdr["supplier_invoice_date"] = tsWIB(o, "supplier_invoice_date")
 			hdr["tax_invoice_number"] = s.optStr(table, lid, "tax_invoice_number", o, "tax_invoice_number", 100)
-			hdr["tax_invoice_date"] = ts(o, "tax_invoice_date")
+			hdr["tax_invoice_date"] = tsWIB(o, "tax_invoice_date")
 			hdr["assigned_user_id"] = s.userID(o.Int("id_assigned_user"))
 			if n, ok := o.NInt("payment_term_days"); ok {
 				hdr["payment_term_days"] = n

@@ -66,6 +66,12 @@ const (
 // fmtUTC renders a time as a target DATETIME(6) (UTC).
 func fmtUTC(t time.Time) string { return t.UTC().Format(dtFmt) }
 
+// fmtWIB renders a UTC instant as a WIB wall clock (naive DATETIME). Document
+// dates the v2 runtime writes as WIB calendar dates (order/due/paid/return/
+// settlement dates) take this form, so a migrated row reads like a native one
+// and keeps the date the legacy screens showed (D-ETL-3b).
+func fmtWIB(t time.Time) string { return t.In(timeutil.Jakarta).Format(dtFmt) }
+
 // wibDate returns the Jakarta calendar date of a UTC instant (D-ETL-3).
 func wibDate(t time.Time) string { return t.In(timeutil.Jakarta).Format(dateFmt) }
 
@@ -202,6 +208,34 @@ func ts(r row.Row, col string) any {
 
 func tsOr(r row.Row, col string, def time.Time) string {
 	if t, ok := r.Time(col); ok {
+		return fmtUTC(t)
+	}
+	return fmtUTC(def)
+}
+
+// timeOr reads a legacy UTC column, or def when it is empty.
+func timeOr(r row.Row, col string, def time.Time) time.Time {
+	if t, ok := r.Time(col); ok {
+		return t
+	}
+	return def
+}
+
+// tsWIB renders a nullable legacy document date (written in UTC by the legacy
+// app) as the target's WIB wall clock — see fmtWIB.
+func tsWIB(r row.Row, col string) any {
+	t, ok := r.Time(col)
+	if !ok {
+		return nil
+	}
+	return fmtWIB(t)
+}
+
+// tsLocalOr renders a legacy database-default timestamp (created_at /
+// updated_at, stored as a WIB wall clock — row.LocalTime) as the target's UTC
+// DATETIME, or def when the column is empty.
+func tsLocalOr(r row.Row, col string, def time.Time) string {
+	if t, ok := r.LocalTime(col); ok {
 		return fmtUTC(t)
 	}
 	return fmtUTC(def)

@@ -103,7 +103,7 @@ func firstString(m map[string]any, keys ...string) (string, bool) {
 func (s *state) settings() {
 	for _, r := range s.raw["company_settings"] {
 		lid := r.Int(coKey(r))
-		upd := tsOr(r, "updated_at", s.epoch())
+		upd := tsLocalOr(r, "updated_at", s.epoch())
 		rules := jsonObject(r.Str("operational_rules_json"))
 		ui := jsonObject(r.Str("ui_preferences_json"))
 		kv := map[string]string{

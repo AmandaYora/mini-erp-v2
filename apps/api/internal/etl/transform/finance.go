@@ -77,7 +77,7 @@ func (s *state) accounts() {
 		}
 		s.acct[lid] = ac
 		s.emit("finance_accounts", row.Row{"id": id, "code": code, "name": s.trunc("finance_accounts", lid, "name", a.Str("account_name"), 150),
-			"type": typ, "is_cash": b2i(cash[lid]), "status": st, "created_at": tsOr(a, "created_at", s.epoch()), "updated_at": tsOr(a, "updated_at", s.epoch())})
+			"type": typ, "is_cash": b2i(cash[lid]), "status": st, "created_at": tsLocalOr(a, "created_at", s.epoch()), "updated_at": tsLocalOr(a, "updated_at", s.epoch())})
 		if ac.sysKey != "" {
 			mk, known := finapp.LegacySystemKeyToMappingKey[ac.sysKey]
 			if !known {
@@ -429,7 +429,7 @@ func (s *state) expenses() {
 			"id": s.alloc("business_expenses", lid), "number": s.trunc("business_expenses", lid, "number", e.Str("expense_number"), 60), "branch_id": br,
 			"expense_account_id": ex.newID, "pay_account_id": pay.newID, "amount": s.money.R("business_expenses", lid, "amount", e, "amount"),
 			"expense_date": naiveDateTime(d.Format(dateFmt)), "notes": s.optStr("business_expenses", lid, "notes", e, "description", 255),
-			"journal_entry_id": je, "status": status, "created_at": tsOr(e, "created_at", d), "created_by": s.userID(e.Int("created_by")),
+			"journal_entry_id": je, "status": status, "created_at": tsLocalOr(e, "created_at", d), "created_by": s.userID(e.Int("created_by")),
 			"cancel_reason": s.optStr("business_expenses", lid, "cancel_reason", e, "cancel_reason", 255), "cancelled_at": ts(e, "cancelled_at"),
 			"cancelled_by": s.userID(e.Int("cancelled_by")), "party_id": party,
 		})

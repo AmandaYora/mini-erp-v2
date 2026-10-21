@@ -68,7 +68,7 @@ func (s *state) branches() {
 			"id": id, "code": code, "name": s.trunc("branches", lid, "name", r.Str("name"), 150),
 			"address": s.optStr("branches", lid, "address", r, "address_text", 255), "city": s.optStr("branches", lid, "city", r, "city", 100),
 			"phone": s.optStr("branches", lid, "phone", r, "phone_e164", 30), "status": st, "is_head": b2i(isHead),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 	if s.headBranch == 0 && len(rows) > 0 {
@@ -82,7 +82,7 @@ func (s *state) company() {
 		s.emit("company_profile", row.Row{
 			"id": s.alloc("company_profile", lid), "name": s.trunc("company_profile", lid, "name", r.Str("name"), 150),
 			"legal_name": s.optStr("company_profile", lid, "legal_name", r, "legal_name", 150),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 		return // single-company tool: exactly one profile
 	}
@@ -118,7 +118,7 @@ func (s *state) users() {
 		s.emit("roles", row.Row{
 			"id": id, "code": s.trunc("roles", lid, "code", r.Str("code"), 50), "name": s.trunc("roles", lid, "name", r.Str("name"), 100),
 			"description": emptyNil(r.Str("description_text")), "is_system": b2i(r.Bool("is_system_role")),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 	seenUser := map[string]int64{}
@@ -155,7 +155,7 @@ func (s *state) users() {
 		s.emit("users", row.Row{
 			"id": id, "username": s.trunc("users", lid, "username", uname, 100), "email": emptyNil(r.Str("email")), "password_hash": hash,
 			"full_name": s.trunc("users", lid, "full_name", r.Str("full_name"), 150), "status": status,
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 	for _, r := range s.raw["user_roles"] {
@@ -209,7 +209,7 @@ func (s *state) memberTypes() {
 			"description_text": emptyNil(r.Str("description_text")), "price_basis": r.Str("price_basis"), "price_adjustment_direction": dir,
 			"price_adjustment_type": r.Str("price_adjustment_type"), "price_adjustment_value": r.Str("price_adjustment_value"),
 			"rounding_mode": r.Str("rounding_mode"), "rounding_increment": inc, "status": archivedStatus(r), "archived_at": ts(r, "archived_at"),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 }
@@ -231,7 +231,7 @@ func (s *state) catalog() {
 		s.emit("product_categories", row.Row{
 			"id": id, "code": s.trunc("product_categories", lid, "code", r.Str("code"), 50), "name": s.trunc("product_categories", lid, "name", r.Str("name"), 150),
 			"parent_id": parent, "status": archivedStatus(r),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 	for _, r := range sortedBy(s.raw["products"], "id_product") {
@@ -264,7 +264,7 @@ func (s *state) catalog() {
 			"selling_price":     s.money.R("products", lid, "selling_price", r, "selling_price"),
 			"min_selling_price": s.money.R("products", lid, "min_selling_price", r, "min_selling_price"),
 			"min_stock_qty":     minStock, "status": archivedStatus(r),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		}
 		s.productRow[id] = rr
 		s.emit("products", rr)
@@ -321,7 +321,7 @@ func (s *state) catalog() {
 		s.emit("product_variants", row.Row{
 			"id": id, "product_id": pid, "code": code,
 			"name": s.trunc("product_variants", lid, "name", r.Str("variant_name"), 150), "barcode": bc, "is_default": b2i(r.Bool("is_default")),
-			"status": archivedStatus(r), "created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"status": archivedStatus(r), "created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 }
@@ -355,7 +355,7 @@ func (s *state) parties() {
 			"name": s.trunc("parties", lid, "name", r.Str("name"), 255), "phone": s.optStr("parties", lid, "phone", r, "phone_e164", 30),
 			"email": emptyNil(r.Str("email")), "address_text": emptyNil(r.Str("address_text")), "notes": emptyNil(r.Str("notes")),
 			"member_type_id": mt, "status": archivedStatus(r), "archived_at": ts(r, "archived_at"),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 	for _, r := range sortedBy(s.raw["business_party_delivery_addresses"], "id_address") {
@@ -369,7 +369,7 @@ func (s *state) parties() {
 			"recipient_name": s.optStr("party_delivery_addresses", lid, "recipient_name", r, "recipient_name", 150),
 			"phone":          s.optStr("party_delivery_addresses", lid, "phone", r, "phone_e164", 30), "address_text": r.Str("address_text"),
 			"is_primary": b2i(r.Bool("is_primary")), "sort_order": r.Int("sort_order"), "status": archivedStatus(r), "archived_at": ts(r, "archived_at"),
-			"created_at": tsOr(r, "created_at", s.epoch()), "updated_at": tsOr(r, "updated_at", s.epoch()),
+			"created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 }
@@ -463,5 +463,5 @@ func (s *state) locRow(id, branch int64, code, name string, system int, kind str
 	return row.Row{"id": id, "branch_id": branch, "code": code, "name": s.trunc("stock_locations", src.Int("id_stock_location"), "name", name, 150),
 		"parent_id": nil, "is_system": system, "kind": kind, "status": st,
 		"is_picking_area": picking, "is_primary": primary, "sort_order": sortOrder,
-		"created_at": tsOr(src, "created_at", s.epoch()), "updated_at": tsOr(src, "updated_at", s.epoch())}
+		"created_at": tsLocalOr(src, "created_at", s.epoch()), "updated_at": tsLocalOr(src, "updated_at", s.epoch())}
 }

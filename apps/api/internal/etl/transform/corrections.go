@@ -59,7 +59,7 @@ func (s *state) freezeTime() (time.Time, string) {
 	var last time.Time
 	for _, t := range []string{"finance_journal_entries", "payments", "orders", "finance_posting_sources"} {
 		for _, r := range s.raw[t] {
-			if c, ok := r.Time("created_at"); ok && c.After(last) {
+			if c, ok := r.LocalTime("created_at"); ok && c.After(last) {
 				last = c
 			}
 		}

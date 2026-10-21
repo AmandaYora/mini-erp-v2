@@ -144,8 +144,13 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    COST_VARIANT_REALIGN). ETL membiayai **setiap** mutasi (aturan `costOf` revamp; Sync revamp mulai sesudah mutasi
    migrasi terakhir); barang kembali dari SJ yang dibatalkan dinilai sebesar biaya keluar SJ itu. Dokumen yang masuk
    antrean posting revamp tercatat POST_PENDING (alasan: belum dikandidatkan legacy / masih di antrean legacy); dokumen
-   pending yang punya jurnal legacy hidup = blocker POST_PENDING_JOURNALED. Tanggal `delivery_date` SJ = tanggal WIB
-   naif (konvensi modul delivery), bukan instan UTC. Item SJ sintetis memakai satuan baris SO (V-28).
+   pending yang punya jurnal legacy hidup = blocker POST_PENDING_JOURNALED. **Zona waktu** (konvensi kolom:
+   `knowledge/DATABASE_GUIDE.md`): legacy menulis tanggal dokumen dalam UTC (TypeORM `timezone:'Z'`), sedangkan
+   `created_at`/`updated_at` diisi default DB server WIB. ETL menulis tanggal dokumen sebagai jam dinding WIB
+   (`fmtWIB`: tanggal bayar/order/jatuh tempo/faktur/retur/pelunasan/penerimaan/transfer; `delivery_date` = tanggal
+   WIB naif) dan membaca `created_at`/`updated_at` legacy sebagai WIB → instan UTC (`row.LocalTime`). Gladi
+   2026-10-21: 11.929 pembayaran sama persis dengan tampilan legacy (sebelumnya 1.814 jatuh sehari lebih awal dan
+   1.687 berbeda tanggal dari jurnalnya sendiri). Item SJ sintetis memakai satuan baris SO (V-28).
    **Jurnal koreksi migrasi** (ADR-0018 D11; `source_doc_type=migration_correction`, nomor `JV-<cabang>/<tahun>/n`,
    tanggal freeze di periode terbuka; rinciannya per baris di `report/migration_corrections.csv`): HPP SJ batal yang
    tidak pernah dibalik legacy (DN_CANCEL_COGS, Dr Persediaan / Cr HPP); keadaan biaya legacy bernilai tanpa qty
