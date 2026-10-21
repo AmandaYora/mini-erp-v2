@@ -47,7 +47,7 @@ Setiap rencana berada di `plan/<slug>/PLAN.md`, lampirannya di folder yang sama.
 | [penutupan-gap-kapabilitas](plan/penutupan-gap-kapabilitas/PLAN.md) | 2026-09-10 | Tahap A–J selesai. Tahap K/L (ETL, cutover) **digantikan** oleh menuju-pengganti-production (ETL kini `apps/api/cmd/etl`) |
 | [verifikasi-modul-2026-09-11](plan/verifikasi-modul-2026-09-11/PLAN.md) | 2026-09-11 | Selesai |
 | [menuju-pengganti-production](plan/menuju-pengganti-production/PLAN.md) | 2026-10-08 | **Aktif**: Fase 9 (gladi, parallel-run, cutover) dan F8-18 (sqlc `finance`/`stock`). Lampiran rancangan di `design/`; catatan gladi di `CHECKPOINT-2026-10-16.md` |
-| [redesain-ui](plan/redesain-ui/PLAN.md) | 2026-10-16 | Sebagian besar selesai (lihat "Status eksekusi"). [PANDUAN-MIGRASI-HALAMAN.md](plan/redesain-ui/PANDUAN-MIGRASI-HALAMAN.md) tetap resep kerja yang berlaku |
+| [redesain-ui](plan/redesain-ui/PLAN.md) | 2026-10-16 | Selesai kecuali yang butuh perangkat/pemilik: uji tablet kasir (U5-5), logo resmi (U7-7), tema gelap (ditunda). Lihat "Pembaruan eksekusi 2026-10-21". [PANDUAN-MIGRASI-HALAMAN.md](plan/redesain-ui/PANDUAN-MIGRASI-HALAMAN.md) tetap resep kerja yang berlaku |
 | [penyempurnaan-paritas](plan/penyempurnaan-paritas/PLAN.md) | 2026-10-18 | Selesai 2026-10-20 (`npm run plan:check`); audit penutup di `AUDIT-Z01.md` |
 
 Rencana yang masih aktif boleh diperbarui di bagian log/checkpoint-nya sendiri. Rencana yang selesai tidak disunting

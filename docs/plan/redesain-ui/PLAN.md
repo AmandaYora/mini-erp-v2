@@ -2,7 +2,7 @@
 
 **Proyek:** mini-erp revamp — frontend `apps/web` (React 19 + Tailwind 4)
 **Tanggal:** 2026-10-16
-**Status:** sebagian besar sudah dieksekusi — lihat "Status eksekusi" di bawah untuk yang selesai dan yang tersisa.
+**Status:** sebagian besar sudah dieksekusi — lihat "Status eksekusi" dan "Pembaruan eksekusi 2026-10-21" di bawah untuk yang selesai dan yang tersisa.
 **Keputusan pemilik 2026-10-16** (sudah dimasukkan ke seluruh dokumen; ringkasan di §12):
 - brand tetap **navy**, sidebar tetap **gelap navy** tetapi dimodernkan
 - primitif **Radix**
@@ -58,6 +58,39 @@ Ratchet UI: ukuran arbitrer 242→1, `Memuat…` manual 58→1, input mentah 30�
 **Bug lama yang ditemukan dan diperbaiki sepanjang jalan:** Neraca crash saat pembukuan kosong (backend mengirim `null`;
 kini `?? []` dan `DataTable` menerima `null`); `CriticalItem` (dashboard stok kritis) tanpa tag JSON sehingga API
 mengirim PascalCase dan UI menampilkan `undefined` (ditambah tag `json:"…"` di `stock/contracts/client.go`).
+
+### Pembaruan eksekusi 2026-10-21
+
+**Selesai:** Fase 6 seluruhnya dan bagian U7-2/U7-3 yang bisa dikerjakan tanpa perangkat fisik.
+- **U6-1** kepadatan: sudah ada sebelumnya (menu akun).
+- **U6-2** lompat ke dokumen: `app/routes/document-search.ts` (dimuat malas) memakai endpoint daftar ber-`search` untuk
+  SO/PO (`ORD-…/PJ|PB`), `PAY-`, `SJ-`, `RTR-`, `RTB-`. GR- dan TRF- dilewati karena daftarnya tidak punya `search` (U11).
+  Label "Terakhir dibuka" kini memakai nomor dokumen.
+- **U6-3** tampilan tersimpan: `SavedViews` (patterns) + `shared/lib/list-views.ts`, dipasang di 15 daftar ber-filter
+  URL. Daftar itu kini juga punya pilihan kolom (`columnsKey`). Kolom, tampilan, dan "terakhir dibuka" disimpan per pengguna.
+- **U6-4** audit token: `ui-ratchet` kini juga menolak warna mentah di seluruh `src` (nol toleransi). `text-white`
+  dan bayangan `rgba()` diganti token (`--destructive-foreground`, `--shadow-glow`, `--shadow-pop|md`).
+- **U7-2** keyboard: spec e2e `E15` (SO → SJ → bayar, PO → terima, posting tutup hari, Ctrl+K lompat dokumen) tanpa
+  `.click()`. Ditemukan dan diperbaiki sepanjang jalan:
+  - `ConfirmDialog` tidak memindahkan fokus ke dalam dialog (fokus tertinggal di belakang overlay);
+  - pemilih tidak bisa dipilih dengan Enter/panah, dan Enter memilih dari daftar basi;
+  - Enter di pemilih menambah baris kosong di `LineItemsEditor` (event portal merambat);
+  - opsi `SearchSelect` tanpa `role="option"`;
+  - lima pemilih di baris barang tanpa nama aksesibel.
+- **U7-3** responsif: spec e2e `V02` memeriksa gulir menyamping halaman di beberapa ukuran:
+  - semua rute menu (dari registry) + form/detail pada 390 dan 768, dengan data nyata;
+  - 7 template pada 390/768/1366/1920;
+  - POS pada 1024/1280/1340.
+
+  `LineItemsEditor` berganti ke mode kartu bila wadah < 600px. Ditemukan dan diperbaiki:
+  - dasbor melebar 268px di 390 bila tabel "Produk bulan ini" berisi (grid tanpa kolom dasar `grid-cols-1`; pola yang
+    sama dirapikan di ProductForm dan Perusahaan);
+  - slot kanan `Toolbar` tidak membungkus;
+  - teks 404 dengan path panjang tidak membungkus.
+- Anggaran bundle (U7-4): chunk awal naik 0,6 KB gzip.
+
+**Masih menunggu pemilik / perangkat:** U5-5 dan bagian "uji sentuh POS di tablet" U7-2 (tablet kasir sungguhan),
+U7-7 logo resmi, tema gelap (ditunda).
 
 ---
 

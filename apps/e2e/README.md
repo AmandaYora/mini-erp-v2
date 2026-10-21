@@ -1,6 +1,6 @@
 # apps/e2e — suite E2E Playwright (F8-5)
 
-Spec E01..E14 (E11 = ketahanan operasional: aset `public/`, pemulihan chunk-load; E12 = matriks akses role seed x menu/endpoint, dibangkitkan dari `registry.tsx` dan gagal bila ada menu/izin baru tanpa deklarasi; E13 = volume 50 PO + 100 penjualan via API + integritas relasi pelanggan; E14 = ekspor SO/PO/paket pajak lewat UI dan baca isi xlsx) menjalankan **binari Go sungguhan** yang menyajikan build web
+Spec E01..E16 dan V00..V02 (E16 = label QR produk: PNG `/products/{id}/qr` didekode lalu dikenali `scan-product`, dan kamera POS — umpan video palsu Chromium berisi label QR — memasukkan barangnya ke keranjang; E15 = tiga alur back-office + lompat ke dokumen dikerjakan **keyboard saja** — tanpa `.click()`, `tabTo` membuktikan tiap kontrol terjangkau Tab (PLAN redesain-ui U7-2); V02 = tanpa gulir menyamping per template pada 390/768/1366/1920, mode kartu baris barang di 390, POS landscape 1024/1280/1340 (U7-3); E11 = ketahanan operasional: aset `public/`, pemulihan chunk-load; E12 = matriks akses role seed x menu/endpoint, dibangkitkan dari `registry.tsx` dan gagal bila ada menu/izin baru tanpa deklarasi; E13 = volume 50 PO + 100 penjualan via API + integritas relasi pelanggan; E14 = ekspor SO/PO/paket pajak lewat UI dan baca isi xlsx) menjalankan **binari Go sungguhan** yang menyajikan build web
 (`apps/web/dist`, `PUBLIC_DIR`) di port 18080 — sama dengan produksi satu-kontainer, bukan dev server Vite.
 Setup data lewat REST (`helpers/api.ts`, satu token per peran); UI dipakai pada interaksi kritis
 (login, POS, CRUD pelanggan, halaman cetak, smoke menu). Teks Indonesia terpusat di `helpers/labels.ts`.
@@ -19,7 +19,10 @@ npm run test -w apps/e2e -- E03
 E2E_SKIP_WEB_BUILD=1 npm run test -w apps/e2e
 ```
 
-Prasyarat: MySQL hidup (`node scripts/test-db.mjs up`), Go, Node. Laporan HTML: `npm run report -w apps/e2e`.
+Prasyarat: MySQL hidup (`node scripts/test-db.mjs up`), Go, Node 22+ (`.nvmrc`).
+`global-setup` menolak jalan bila port 18080 masih dipakai (mis. sisa server run sebelumnya) — tanpa penjaga itu spec
+diam-diam menguji binari lama. `global-teardown` menghentikan server lintas platform (`taskkill` di Windows, `SIGTERM`
+di macOS/Linux). Laporan HTML: `npm run report -w apps/e2e`.
 
 ## Database bersama (PENTING)
 
@@ -40,7 +43,7 @@ Bila nanti ada database `mini_erp_e2e` terpisah: set `E2E_DB_DSN` dan longgarkan
 | Item | Isi |
 |---|---|
 | Cabang | `HQ` (pusat, id 1) dan `CB2` |
-| Pengguna (password `E2e-Rahasia-2026`) | `admin` (owner, kedua cabang), `kasir` (peran kasir + payment.create/view), `gudang`, `akuntan` (peran khusus) |
+| Pengguna (password `E2e-Rahasia-2026`) | `admin` (owner, kedua cabang), `kasir` (peran kasir bawaan, sudah termasuk payment.create/view), `gudang`, `akuntan` (peran khusus) |
 | Lokasi | per cabang: lokasi bawaan + `HQ-GA`/`HQ-GB`, `CB2-GA`/`CB2-GB` |
 | Produk | `P001..P020`, satu varian terlihat dengan barcode `8990000000NN`, stok awal 100 di `HQ-GA` |
 | Pelanggan | `C001` "Tunai" + `C002..C006`; pemasok `S001..S003` |
@@ -52,13 +55,16 @@ Spec saling terisolasi dengan memakai produk/pihak berbeda dan asersi berbasis s
 
 - 1 worker, `retries: 0`: selector yang flaky diperbaiki, bukan diulang. Selector berbasis role/label.
 - Tidak ada jam beku; tanggal relatif hari ini (Asia/Jakarta).
-- `test.fixme` = bug produk yang terdokumentasi (lihat K1, K2) — dihidupkan saat diperbaiki.
+- `test.fixme` = bug produk yang terdokumentasi — dihidupkan saat diperbaiki. Saat ini tidak ada (K1, K2 sudah ditutup).
 
 ## Temuan produk yang dicatat
 
-- **K1** Peran `kasir` bawaan tidak punya `payment.create`. POS tunai lalu gagal di "konfirmasi SJ"
-  (`POST /deliveries/:id/confirm` -> 400 "order tunai belum lunas"; dengan settlement -> 403), padahal UI
-  menjanjikan "order tetap bisa dibuat, bayar manual". Seed e2e memberi kasir izin itu.
-- **K2** Pembayaran piutang pihak terarsip ditolak ("pihak sudah diarsipkan",
-  `payment/application/service.go:352`), berlawanan dengan legacy BR-05/E-16 (arsip boleh dibayar).
-- Surat transfer (E08 di desain) belum punya halaman cetak di UI saat ini, jadi tidak diuji.
+- **K1 — ditutup 2026-10-21.** Masalahnya: role `kasir` bawaan tanpa `payment.create`. Akibatnya POS tunai
+  meninggalkan order yatim, karena konfirmasi SJ order tunai mewajibkan pembayaran (legacy BR-18 punya cacat
+  yang sama).
+  - Perbaikan backend: role kasir bawaan kini membawa `payment.create` + `payment.view` (`DefaultGrants`,
+    `internal/bootstrap/legacymap.go`), dan seed e2e tidak lagi menambahkannya.
+  - Perbaikan POS: akun tanpa izin itu ditolak sebelum dokumen apa pun dibuat; Bayar Nanti tetap bisa.
+  - Bukti: E02 "kasir tanpa izin pembayaran…" dan tes tunai E02 yang memakai izin bawaan.
+- **K2 — ditutup.** Pembayaran piutang pihak terarsip kembali diterima seperti legacy BR-05/E-16; arsip hanya
+  menghentikan order baru. Bukti: E07 "pembayaran piutang pihak terarsip diterima (K2)".

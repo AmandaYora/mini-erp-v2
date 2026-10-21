@@ -93,6 +93,29 @@ Sumber lengkap: [`docs/plan/redesain-ui/PLAN.md`](../docs/plan/redesain-ui/PLAN.
 - **Template halaman**: daftar (Toolbar + DataTable + Pagination, sortir lewat header), detail dokumen (PageHeader dengan
   aksi + DocumentRail + PageColumns; maksimal satu tombol primary), form berbaris barang (LineItemsEditor + StickyFooter),
   master data (FormSheet), laporan (NavTabs, format akuntansi), pengaturan (FormSection + footer bila ada perubahan).
+- **Daftar ber-filter URL** (`useUrlFilters`): beri `DataTable` sebuah `columnsKey` (pilihan kolom) dan pasang
+  `<SavedViews listKey columnsKey />` di slot `right` Toolbar — "Tampilan" menyimpan query string (tanpa `page`) + kolom
+  tersembunyi dengan sebuah nama. Kolom, tampilan, dan "Terakhir dibuka" disimpan di `localStorage` **per pengguna**
+  lewat `userKey()` (`shared/stores/ui-prefs.store.ts`, pemilik diisi store auth) dan `shared/lib/list-views.ts`.
+- **Command palette** (Ctrl/Cmd+K): menu, aksi cepat, terakhir dibuka, dan **lompat ke dokumen** — mengetik nomor
+  (`ORD-…/PJ|PB`, `PAY-`, `SJ-`, `RTR-`, `RTB-`) mencari lewat endpoint daftar yang sudah ada
+  (`app/routes/document-search.ts`, dimuat malas). Jenis dokumen baru yang daftarnya punya `search` cukup ditambah di
+  `SOURCES` di file itu.
+- **Label & pindai**: label produk yang dicetak sistem adalah **QR** (isi: barcode varian, else kode varian/produk —
+  `product/application/qr.go`). Pemindai kamera membaca QR dan barcode pabrik (EAN dsb.), dan `stock/scan-product`
+  mencocokkan barcode/kode varian/kode produk. Istilah di UI: "Pindai QR / kode"; "Barcode" hanya untuk isian data
+  barcode varian di form produk. Dijaga e2e E16.
+- **Responsif (U7-3, dijaga e2e V02)**: halaman tidak boleh menggulir menyamping di 390/768; tabel menggulir di dalam
+  kartunya. Grid yang memakai `md:/lg:/xl:grid-cols-[…]` wajib punya kolom dasar `grid-cols-1` (= `minmax(0,1fr)`):
+  tanpa itu kolom implisit `auto` melebar mengikuti tabel `min-w-[640px]` di dalamnya.
+- **LineItemsEditor** berganti ke mode kartu (label di atas isian, tanpa gulir menyamping) bila lebar **wadahnya**
+  < 600px; render kolom tetap satu, jadi isian tidak perlu tahu modenya.
+- **Keyboard (U7-2, dijaga e2e E15)**: semua alur back-office harus bisa dikerjakan tanpa tetikus. Pemilih
+  (`SearchSelect`/`AsyncSearchSelect`/`HierarchicalSelect`): Enter membuka, ketik, Enter memilih hasil pertama
+  (`AsyncSearchSelect` menunggu hasil kata kunci terbaru, tidak memilih dari daftar basi), ↓/↑ berpindah opsi;
+  opsinya ber-`role="option"`. Event keyboard dari popover (portal) tidak boleh merambat ke baris `LineItemsEditor`.
+  Pemilih di dalam baris wajib punya `aria-label` per baris (mis. `Lokasi ${produk}`, `Produk baris ${n}`).
+  `ConfirmDialog` memfokuskan "Batal" saat terbuka (Radix `AlertDialog.Cancel`) — jangan ganti dengan tombol biasa.
 - **Penempatan alur**: dialog ≤ 6 isian; `FormSheet` untuk CRUD master & aksi dokumen; halaman penuh untuk dokumen
   ber-baris barang (retur, surat jalan, penerimaan, transfer, jurnal manual: `…/new?from=<id>`).
 - **State**: skeleton (bukan teks "Memuat…"), `ErrorState` dengan `message` API asli + "Coba lagi", Empty dengan aksi.
@@ -101,5 +124,8 @@ Sumber lengkap: [`docs/plan/redesain-ui/PLAN.md`](../docs/plan/redesain-ui/PLAN.
   `usePageCrumb(nomor)`.
 - **Kepadatan** (Ringkas/Standar/Lega) lewat `data-density` di `<html>`; pilihan di menu akun.
 - **Cetak**: halaman `/print/*` tidak berubah (kertas fisik); `LEGACY_UA_CSS` memulihkan default browser.
-- **Penjaga**: `npm run ui:ratchet` (angka pola lama per modul tidak boleh naik), ESLint melarang impor primitif dari modul.
-- Tema gelap ditunda; komponen tetap hanya memakai token agar kelak cukup menambah blok `.dark`.
+- **Penjaga**: `npm run ui:ratchet` (angka pola lama per modul tidak boleh naik, plus **audit token** nol toleransi:
+  hex/`rgb()`/`oklch()`/kelas palet Tailwind seperti `text-white` di mana pun di `src` selain `theme/` dan
+  `modules/print`; pengecualian sah diberi `ui-ratchet-ignore` + alasan), ESLint melarang impor primitif dari modul.
+- Tema gelap ditunda; komponen tetap hanya memakai token (termasuk `*-foreground` dan `--shadow-*`) agar kelak cukup
+  menambah blok `.dark`.
