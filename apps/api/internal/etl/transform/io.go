@@ -115,6 +115,19 @@ func (o *Output) Write(work string) (*Manifest, error) {
 	if err := o.Log.WriteCSV(ReportDir(work)); err != nil {
 		return nil, err
 	}
+	// Every migration correction journal line, for the accountant (ADR-0018 D11).
+	cols := []string{"kind", "branch_id", "journal_number", "entry_date", "ref", "product_code", "variant_id", "stock_movement_id", "legacy_id", "amount", "debit_account", "credit_account", "reason"}
+	corr := [][]string{cols}
+	for _, r := range o.Tables["migration_corrections"] {
+		line := make([]string, len(cols))
+		for i, c := range cols {
+			line[i] = r.Str(c)
+		}
+		corr = append(corr, line)
+	}
+	if err := report.WriteTable(filepath.Join(ReportDir(work), "migration_corrections.csv"), corr); err != nil {
+		return nil, err
+	}
 	if _, err := writeAny(filepath.Join(dir, "manifest.json"), man); err != nil {
 		return nil, err
 	}

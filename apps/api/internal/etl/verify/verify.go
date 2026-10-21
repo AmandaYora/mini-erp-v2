@@ -83,7 +83,7 @@ func Run(ctx context.Context, ldb *legacydb.DB, target Querier, c *cfg.Config, w
 	v := &verifier{ctx: ctx, l: ldb, t: target, cfg: c, work: work, explain: ex}
 	for _, f := range []func(){
 		v.counts, v.orderTotals, v.orderInvariants, v.stock, v.payments, v.trialBalance, v.journalShape,
-		v.costLedger, v.media, v.numbers, v.nextNumbers, v.orphans, v.postingMarks, v.periods, v.archive, v.accessSets,
+		v.costLedger, v.migrationCorrections, v.media, v.numbers, v.nextNumbers, v.orphans, v.postingMarks, v.periods, v.archive, v.accessSets,
 		v.returns, v.balances, v.permissions, v.settings,
 	} {
 		f()
@@ -283,11 +283,11 @@ func (v *verifier) counts() {
 		{"V-01t", "transfer stok (+kelompok pasangan lokasi)", "SELECT COUNT(*) FROM {stock_transfers} WHERE {co} = :c", "SELECT COUNT(*) FROM stock_transfers", e["transfer_groups_extra"]},
 		{"V-01u", "item transfer", "SELECT COUNT(*) FROM {stock_transfer_items} i JOIN {stock_transfers} t ON t.id_stock_transfer=i.id_stock_transfer WHERE t.{co} = :c", "SELECT COUNT(*) FROM stock_transfer_items", e["synthetic_transfer_items"]},
 		{"V-01v", "mutasi stok (-digabung +koreksi)", "SELECT COUNT(*) FROM {inventory_movements} WHERE " + byBranch, "SELECT COUNT(*) FROM stock_movements", e["correction_movements"] - e["movements_merged_extra"]},
-		{"V-01w", "baris biaya HPP (+estimasi -tak termigrasi -digabung +saldo awal dibagi per mutasi)", "SELECT COUNT(*) FROM {finance_inventory_cost_movements} WHERE {co} = :c",
-			"SELECT COUNT(*) FROM finance_inventory_cost_movements", e["estimated_cost_rows"] - e["cost_rows_unmigrated"] - e["cost_rows_merged_extra"] + e["opening_cost_split_extra"]},
-		{"V-01x", "jurnal tahun berjalan + saldo awal",
+		{"V-01w", "baris biaya HPP (+estimasi -tak termigrasi -digabung +saldo awal dibagi per mutasi +baris biaya-saja)", "SELECT COUNT(*) FROM {finance_inventory_cost_movements} WHERE {co} = :c",
+			"SELECT COUNT(*) FROM finance_inventory_cost_movements", e["estimated_cost_rows"] - e["cost_rows_unmigrated"] - e["cost_rows_merged_extra"] + e["opening_cost_split_extra"] + e["baseline_cost_rows"]},
+		{"V-01x", "jurnal tahun berjalan + saldo awal + koreksi migrasi",
 			"SELECT COUNT(*) FROM {finance_journal_entries} WHERE {co} = :c AND status IN ('posted','reversed') AND DATE(DATE_ADD(journal_date, INTERVAL 7 HOUR)) >= :open AND EXISTS (SELECT 1 FROM {finance_journal_lines} zl WHERE zl.id_finance_journal_entry={finance_journal_entries}.id_finance_journal_entry AND (ROUND(zl.debit_amount) <> 0 OR ROUND(zl.credit_amount) <> 0))",
-			"SELECT COUNT(*) FROM finance_journal_entries", e["opening_entries"]},
+			"SELECT COUNT(*) FROM finance_journal_entries", e["opening_entries"] + e["migration_correction_entries"]},
 		{"V-01y", "baris jurnal tahun berjalan",
 			"SELECT COUNT(*) FROM {finance_journal_lines} l JOIN {finance_journal_entries} e ON e.id_finance_journal_entry=l.id_finance_journal_entry WHERE e.{co} = :c AND e.status IN ('posted','reversed') AND DATE(DATE_ADD(e.journal_date, INTERVAL 7 HOUR)) >= :open AND (ROUND(l.debit_amount) <> 0 OR ROUND(l.credit_amount) <> 0)",
 			"SELECT COUNT(*) FROM finance_journal_lines l JOIN finance_journal_entries e ON e.id=l.entry_id WHERE e.source_doc_type = 'legacy_je'", 0},
@@ -452,7 +452,7 @@ func (v *verifier) payments() {
 var adjRe = regexp.MustCompile(`acct=(\d+);branch=(\d+);side=(\w+);prior=(\d)`)
 
 func (v *verifier) trialBalance() {
-	const id, desc = "V-11", "neraca saldo per cabang x akun (s.d. freeze; laba rugi tahun lalu ditutup ke ekuitas)"
+	const id, desc = "V-11", "neraca saldo per cabang x akun (s.d. freeze; laba rugi tahun lalu ditutup ke ekuitas; tanpa koreksi migrasi)"
 	head, err := v.one(v.l.SQL, v.lq("SELECT code FROM {branches} WHERE {co} = :c AND is_default = 1 ORDER BY id_branch LIMIT 1"))
 	if err != nil {
 		v.fail(id, desc, err)
@@ -597,8 +597,10 @@ func (v *verifier) trialBalance() {
 		}
 	}
 	_ = head
+	// Migration corrections (ADR-0018 D11) are not legacy balances; V-26 checks them.
 	got, err := queryMap(v.ctx, v.t, `SELECT b.code, a.code, SUM(l.debit) - SUM(l.credit) FROM finance_journal_lines l JOIN finance_journal_entries e ON e.id=l.entry_id
-		JOIN finance_accounts a ON a.id=l.account_id JOIN branches b ON b.id=e.branch_id GROUP BY 1,2`)
+		JOIN finance_accounts a ON a.id=l.account_id JOIN branches b ON b.id=e.branch_id
+		WHERE COALESCE(e.source_doc_type, '') <> 'migration_correction' GROUP BY 1,2`)
 	if err != nil {
 		v.fail(id, desc, err)
 		return
@@ -633,12 +635,32 @@ func (v *verifier) costLedger() {
 		`SELECT b.code, p.product_code, SUM(CASE WHEN c.movement_type IN ('in','opening') THEN ROUND(c.total_cost_amount) ELSE -ROUND(c.total_cost_amount) END)
 		   FROM {finance_inventory_cost_movements} c JOIN {branches} b ON b.id_branch=c.id_branch JOIN {products} p ON p.id_product=c.id_product
 		  WHERE c.{co} = :c AND (c.id_inventory_movement IS NOT NULL OR c.movement_type = 'opening') GROUP BY 1,2`,
-		`SELECT b.code, p.code, SUM(CASE c.direction WHEN 'in' THEN c.total_cost ELSE -c.total_cost END) FROM finance_inventory_cost_movements c
-		   JOIN branches b ON b.id=c.branch_id JOIN products p ON p.id=c.product_id WHERE c.is_estimated = 0 GROUP BY 1,2`, nil)
+		`SELECT b.code, p.code, SUM(c.total_cost) FROM finance_inventory_cost_movements c
+		   JOIN branches b ON b.id=c.branch_id JOIN products p ON p.id=c.product_id WHERE c.is_estimated = 0 AND c.ref_type <> 'opening_cost' GROUP BY 1,2`, nil)
+	// Legacy's authority is its cost STATE (= its Persediaan account); value it
+	// moved without cost rows arrives as cost-only rows, so per (branch,
+	// product) the revamp's non-estimated ledger must equal the state.
+	v.grouped("V-14d", "nilai ledger HPP per cabang x produk = keadaan biaya legacy (finance_inventory_cost_states) ± koreksi tanpa qty/tanpa nilai",
+		`SELECT b.code, p.product_code, ROUND(s.inventory_value)
+		   FROM {finance_inventory_cost_states} s JOIN {branches} b ON b.id_branch=s.id_branch JOIN {products} p ON p.id_product=s.id_product
+		  WHERE s.{co} = :c`,
+		`SELECT b.code, p.code, SUM(c.total_cost) FROM finance_inventory_cost_movements c
+		   JOIN branches b ON b.id=c.branch_id JOIN products p ON p.id=c.product_id WHERE c.is_estimated = 0 GROUP BY 1,2`, v.lessWriteDowns)
 	v.targetZero("V-14b", "mutasi di bawah kursor HPP tanpa baris biaya",
 		`SELECT COUNT(*) FROM stock_movements m JOIN products p ON p.id=m.product_id AND p.stock_tracked=1
-		   JOIN (SELECT branch_id, MAX(stock_movement_id) mx FROM finance_inventory_cost_movements GROUP BY branch_id) c ON c.branch_id=m.branch_id
+		   JOIN (SELECT branch_id, MAX(stock_movement_id) mx FROM finance_inventory_cost_movements WHERE stock_movement_id < 4611686018427387904 GROUP BY branch_id) c ON c.branch_id=m.branch_id
 		  WHERE m.id < c.mx AND NOT EXISTS (SELECT 1 FROM finance_inventory_cost_movements x WHERE x.stock_movement_id = m.id)`)
+	// Posting matches every SJ line to its SO line (or, for a replacement, to
+	// the return's replacement line) by (product, variant, unit); a line
+	// without its partner can never be journalled after cutover.
+	v.targetZero("V-28", "item SJ terkonfirmasi punya baris SO / barang pengganti retur dengan produk, varian, satuan sama (dapat diposting)",
+		`SELECT COUNT(*) FROM delivery_note_items i JOIN delivery_notes d ON d.id = i.delivery_id WHERE d.status = 'confirmed' AND (
+		   (d.document_kind = 'order' AND NOT EXISTS (SELECT 1 FROM sales_order_items l WHERE l.order_id = d.sales_order_id AND l.product_id = i.product_id AND l.variant_id = i.variant_id AND l.uom = i.uom))
+		OR (d.document_kind = 'replacement' AND NOT EXISTS (SELECT 1 FROM sales_return_replacement_items r WHERE r.return_id = d.sales_return_id AND r.product_id = i.product_id AND r.variant_id = i.variant_id AND r.uom = i.uom)))`)
+	// The revamp sums total_cost as-is (InsertCostRow signs an out negative):
+	// an unsigned out would ADD its value to the position.
+	v.targetZero("V-14c", "tanda total biaya sesuai arah (keluar <= 0, masuk >= 0)",
+		`SELECT COUNT(*) FROM finance_inventory_cost_movements WHERE (direction = 'out' AND total_cost > 0) OR (direction = 'in' AND total_cost < 0)`)
 }
 
 // ---------------------------------------------------------------- V-15
@@ -981,3 +1003,162 @@ func WriteReport(work string, r *Report) error {
 }
 
 var _ = row.Row{}
+
+// ---------------------------------------------------------------- V-26/V-27 migration corrections
+
+// corrections reads out/migration_corrections.jsonl and the target branch codes.
+func (v *verifier) corrections() ([]row.Row, map[string]string, error) {
+	rows, err := transform.ReadRows(v.work, "migration_corrections")
+	if err != nil {
+		return nil, nil, err
+	}
+	codes := map[string]string{}
+	q, err := v.t.QueryContext(v.ctx, "SELECT id, code FROM branches")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = q.Close() }()
+	for q.Next() {
+		var id, code string
+		if err := q.Scan(&id, &code); err != nil {
+			return nil, nil, err
+		}
+		codes[id] = code
+	}
+	return rows, codes, q.Err()
+}
+
+// lessWriteDowns applies the state corrections (written down: no qty;
+// written up: no value) to the legacy state before V-14d compares it with
+// the ledger.
+func (v *verifier) lessWriteDowns(src map[string]string) {
+	rows, codes, err := v.corrections()
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		var sign int64
+		switch r.Str("kind") {
+		case "state_no_qty": // written down to zero
+			sign = -1
+		case "state_no_value": // written up to its rows' value
+			sign = 1
+		default:
+			continue
+		}
+		key := codes[r.Str("branch_id")] + "|" + r.Str("product_code")
+		cur, _ := new(big.Rat).SetString(src[key])
+		if cur == nil {
+			cur = new(big.Rat)
+		}
+		src[key] = norm(new(big.Rat).Add(cur, new(big.Rat).Mul(big.NewRat(sign, 1), r.Rat("amount"))).RatString())
+	}
+}
+
+func (v *verifier) migrationCorrections() {
+	const id22, desc22 = "V-26", "jurnal koreksi migrasi = daftar koreksi (per jurnal) = Σ temuan DN_CANCEL_COGS, COST_STATE_NO_QTY/NO_VALUE, COGS_UNPOSTED, STOCK_UNPOSTED"
+	rows, codes, err := v.corrections()
+	if err != nil {
+		v.fail(id22, desc22, err)
+		return
+	}
+	want := map[string]string{}
+	var listed int64
+	for _, r := range rows {
+		n, _ := strconv.ParseInt(want[r.Str("journal_number")], 10, 64)
+		a := r.Int("amount")
+		if a < 0 {
+			a = -a
+		}
+		want[r.Str("journal_number")] = strconv.FormatInt(n+a, 10)
+		listed += r.Int("amount")
+	}
+	got, err := queryMap(v.ctx, v.t, `SELECT e.number, SUM(l.debit) FROM finance_journal_entries e JOIN finance_journal_lines l ON l.entry_id = e.id
+		WHERE e.source_doc_type = 'migration_correction' AND e.status = 'posted' GROUP BY 1`)
+	if err != nil {
+		v.fail(id22, desc22, err)
+		return
+	}
+	// The findings carry the amounts independently of the correction table.
+	var found int64
+	if f, err := os.ReadFile(filepath.Join(transform.ReportDir(v.work), "findings.csv")); err == nil {
+		re := regexp.MustCompile(`Rp(-?\d+)`)
+		for _, line := range strings.Split(string(f), "\n") {
+			if !strings.Contains(line, ",DN_CANCEL_COGS,") && !strings.Contains(line, ",COST_STATE_NO_QTY,") &&
+				!strings.Contains(line, ",COGS_UNPOSTED,") && !strings.Contains(line, ",STOCK_UNPOSTED,") && !strings.Contains(line, ",COST_STATE_NO_VALUE,") {
+				continue
+			}
+			if m := re.FindStringSubmatch(line); m != nil {
+				n, _ := strconv.ParseInt(m[1], 10, 64)
+				found += n
+			}
+		}
+	}
+	d := diffMaps(want, got)
+	if found != listed {
+		d = append(d, fmt.Sprintf("Σ temuan %d != Σ daftar koreksi %d", found, listed))
+	}
+	if len(d) > 5 {
+		d = d[:5]
+	}
+	v.add(id22, desc22, strconv.Itoa(len(want))+" jurnal / Rp"+strconv.FormatInt(found, 10), strconv.Itoa(len(got))+" jurnal / Rp"+strconv.FormatInt(listed, 10),
+		strings.Join(d, "; "), "", len(d) == 0)
+
+	// V-27: after the corrections the books' Persediaan and the cost ledger
+	// differ by exactly what they differed in legacy (legacy books − legacy
+	// cost state, both in rupiah; production: rounding only), leaving out
+	// estimated rows of documents legacy never journalled (the posting queue
+	// books them later). Any shift made by the migration fails the rehearsal.
+	const id23, desc23 = "V-27", "buku Persediaan - ledger biaya HPP setelah koreksi = selisih bawaan legacy (buku - keadaan biaya)"
+	var book, ledger, corrected, legacyBook, legacyState int64
+	q := func(db Querier, dst *int64, sqlText string) error {
+		var s sql.NullString
+		if err := db.QueryRowContext(v.ctx, sqlText).Scan(&s); err != nil {
+			return err
+		}
+		*dst = transform.RoundHalfAway(row.ParseRat(norm(s.String)))
+		return nil
+	}
+	steps := []struct {
+		db  Querier
+		dst *int64
+		q   string
+	}{
+		{v.t, &book, `SELECT COALESCE(SUM(l.debit) - SUM(l.credit), 0) FROM finance_journal_lines l JOIN finance_account_mappings m ON m.account_id = l.account_id AND m.mapping_key = 'inventory'`},
+		{v.t, &ledger, `SELECT COALESCE(SUM(total_cost), 0) FROM finance_inventory_cost_movements WHERE is_estimated = 0`},
+		{v.l.SQL, &legacyBook, v.lq(`SELECT COALESCE(SUM(ROUND(l.debit_amount)) - SUM(ROUND(l.credit_amount)), 0) FROM {finance_journal_lines} l
+			JOIN {finance_journal_entries} e ON e.id_finance_journal_entry = l.id_finance_journal_entry JOIN {finance_accounts} a ON a.id_finance_account = l.id_finance_account
+			WHERE e.{co} = :c AND e.status IN ('posted','reversed') AND a.system_key = 'inventory'`)},
+		{v.l.SQL, &legacyState, v.lq(`SELECT COALESCE(SUM(ROUND(inventory_value)), 0) FROM {finance_inventory_cost_states} WHERE {co} = :c`)},
+	}
+	var ids []string
+	for _, r := range rows {
+		if r.Has("stock_movement_id") {
+			ids = append(ids, r.Str("stock_movement_id"))
+		}
+	}
+	if len(ids) > 0 {
+		steps = append(steps, struct {
+			db  Querier
+			dst *int64
+			q   string
+		}{v.t, &corrected, "SELECT COALESCE(SUM(total_cost), 0) FROM finance_inventory_cost_movements WHERE is_estimated = 1 AND stock_movement_id IN (" + strings.Join(ids, ",") + ")"})
+	}
+	for _, st := range steps {
+		if err := q(st.db, st.dst, st.q); err != nil {
+			v.fail(id23, desc23, err)
+			return
+		}
+	}
+	_ = codes
+	gap, legacyGap := book-(ledger+corrected), legacyBook-legacyState
+	// Journal balancing (K4) may move a rupiah or few onto an inventory line.
+	tol := v.explain["balance_entry_adjustments"] * v.cfg.MaxBalanceDelta
+	shift := gap - legacyGap
+	if shift < 0 {
+		shift = -shift
+	}
+	v.add(id23, desc23, "Rp"+strconv.FormatInt(legacyGap, 10), "Rp"+strconv.FormatInt(gap, 10),
+		fmt.Sprintf("buku Rp%d, ledger Rp%d (+ estimasi terkoreksi Rp%d)", book, ledger, corrected),
+		fmt.Sprintf("selisih bawaan legacy: buku Rp%d - keadaan biaya Rp%d; toleransi penyeimbang jurnal Rp%d", legacyBook, legacyState, tol), shift <= tol)
+}

@@ -84,6 +84,9 @@ func (l *Log) WriteCSV(dir string) error {
 	return writeCSV(filepath.Join(dir, "findings.csv"), fnd)
 }
 
+// WriteTable writes one extra CSV report (header row first).
+func WriteTable(path string, rows [][]string) error { return writeCSV(path, rows) }
+
 func writeCSV(path string, rows [][]string) error {
 	f, err := os.Create(path)
 	if err != nil {

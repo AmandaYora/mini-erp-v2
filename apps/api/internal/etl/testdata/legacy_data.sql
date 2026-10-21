@@ -149,7 +149,7 @@ INSERT INTO legacy_inventory_movements (id_inventory_movement, id_branch, id_pro
 (13, 1, 3, 4, 2, 'out', '5.000000000000', '7.000000000000', '2.000000000000', 'delivery_note', 2, NULL, 2, '2026-01-16 04:00:00.000000', NULL),
 (14, 1, 3, 4, 1, 'in', '50.000000000000', '0E-12', '50.000000000000', 'goods_receipt', 2, NULL, 2, '2026-01-21 03:00:00.000000', NULL),
 (15, 1, 1, 1, 1, 'out', '2.000000000000', '89.000000000000', '87.000000000000', 'order', 3, NULL, 2, '2026-02-02 04:00:00.000000', NULL),
-(16, 1, 1, 1, 1, 'adjustment', '1.000000000000', '87.000000000000', '86.000000000000', 'manual_adjustment', NULL, 'koreksi hitung', 2, '2026-02-03 04:00:00.000000', NULL),
+(16, 1, 1, 1, 1, 'adjustment', '86.000000000000', '87.000000000000', '86.000000000000', 'manual_adjustment', NULL, 'koreksi hitung', 2, '2026-02-03 04:00:00.000000', NULL),
 (17, 2, 1, 1, 5, 'out', '2.000000000000', '5.000000000000', '3.000000000000', 'delivery_note', 3, NULL, 2, '2026-02-11 04:00:00.000000', NULL),
 (18, 2, 1, 1, 5, 'out', '2.000000000000', '3.000000000000', '1.000000000000', 'delivery_note', 3, NULL, 2, '2026-02-11 04:00:00.000000', NULL),
 (19, 1, 1, 1, 1, 'out', '1.000000000000', '86.000000000000', '85.000000000000', 'damaged_stock', NULL, 'rusak', 2, '2026-02-12 04:00:00.000000', NULL),
@@ -264,6 +264,10 @@ INSERT INTO legacy_finance_inventory_cost_movements (id_finance_inventory_cost_m
 (7, 1, 1, 1, 1, 7, 'out', 'delivery_note', 1, '2025-12-11 04:00:00.000000', '4', '10000.000000', '10000.000000', '40000.00', '1040000.00', '1000000.00', NULL, '2025-12-11 04:00:00.000000'),
 (8, 1, 1, 2, 2, 8, 'out', 'delivery_note', 1, '2025-12-11 04:00:00.000000', '3', '12000.000000', '12000.000000', '36000.00', '240000.00', '204000.00', NULL, '2025-12-11 04:00:00.000000'),
 (9, 1, 1, 3, 4, 14, 'in', 'goods_receipt', 2, '2026-01-21 03:00:00.000000', '50', '8000.000000', '8733.333333', '444000.00', '80000.00', '524000.00', NULL, '2026-01-21 03:00:00.000000');
+INSERT INTO legacy_finance_inventory_cost_states (id_finance_inventory_cost_state, @@CO@@, id_branch, id_product, id_product_variant, inventory_qty, inventory_value, unit_cost, updated_at) VALUES
+(1, 1, 1, 1, NULL, '100', '1000000.00', '10000.000000', '2026-02-13 04:00:00.000000'),
+(2, 1, 1, 2, NULL, '22', '264000.50', '12000.020000', '2026-02-13 04:00:00.000000'),
+(3, 1, 1, 3, NULL, '60', '530000.00', '8833.333333', '2026-02-13 04:00:00.000000');
 INSERT INTO legacy_business_expenses (id_business_expense, @@CO@@, id_branch, expense_number, expense_date, id_finance_account_expense, id_finance_account_payment, id_business_party, description, amount, status, id_finance_journal_entry, id_reversal_journal_entry, cancelled_at, cancelled_by, cancel_reason, created_by, created_at, updated_at) VALUES
 (1, 1, 1, 'EXP-PST/2026/00001', '2026-01-20', 17, 1, NULL, 'Parkir Januari', '25000.00', 'posted', 7, NULL, NULL, NULL, NULL, 2, '2026-01-20 03:00:00.000000', '2026-01-20 03:00:00.000000');
 INSERT INTO legacy_finance_periods (id_finance_period, @@CO@@, period_code, date_from, date_to, status, closed_at, closed_by, created_at, updated_at) VALUES

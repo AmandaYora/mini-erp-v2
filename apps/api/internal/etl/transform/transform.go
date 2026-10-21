@@ -108,6 +108,7 @@ type state struct {
 
 	post           map[postKey]string
 	postJ          map[postKey]int64
+	journaled      map[[2]string]bool // legacy (source_type, id_source) with a live journal
 	movesByRef     map[string][]row.Row
 	directSJ       map[int64]int64 // legacy order id -> synthetic SJ id
 	dnOfLegacy     map[int64]int64
@@ -119,6 +120,8 @@ type state struct {
 	proofs         []proofRef
 	acct           map[int64]*acct
 	journalNew     map[int64]int64
+	orderLines     map[int64][]row.Row // legacy order items per legacy order
+	migCorr        []migCorrection     // legacy errors the ETL corrects with a journal (ADR-0018 D11)
 
 	// returns (returns.go)
 	srNew     map[int64]int64 // legacy sales return -> new id

@@ -79,6 +79,7 @@ var All = []Entity{
 	// Largest tables last.
 	{"inventory_balances", []string{"id_inventory_balance"}, byBranch, "stock_balances"},
 	{"inventory_movements", []string{"id_inventory_movement"}, byBranch, "stock_movements"},
+	{"finance_inventory_cost_states", []string{"id_finance_inventory_cost_state"}, "{co} = :c", "finance_inventory_cost_movements (baris biaya-saja: nilai keadaan di luar baris biaya)"},
 	{"finance_inventory_cost_movements", []string{"id_finance_inventory_cost_movement"}, "{co} = :c", "finance_inventory_cost_movements"},
 	{"finance_journal_entries", []string{"id_finance_journal_entry"}, "{co} = :c", "finance_journal_entries"},
 	{"finance_journal_lines", []string{"id_finance_journal_line"}, "{co} = :c", "finance_journal_lines"},
