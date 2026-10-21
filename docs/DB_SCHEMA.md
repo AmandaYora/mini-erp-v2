@@ -2,7 +2,7 @@
 
 Status: **kontrak kepemilikan tabel yang sudah terkunci** — 65 tabel nyata: 18 berkas baseline per
 modul, `apps/api/migrations/` (`000001_user` … `000018_assistant`), ditambah migrasi bernomor
-sesudah baseline (`000019`–`000023`, `000031`; nomor 000024–000030 sengaja kosong) — turun dari 70
+sesudah baseline (`000019`–`000023`, `000031`, `000032`; nomor 000024–000030 sengaja kosong) — turun dari 70
 entity sistem lama. Daftar tabel di §3 dibangkitkan dari berkas itu (`node scripts/db-schema-doc.mjs`;
 `--check` dijalankan CI/verify). Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi
 tiap tabel warisan; **riwayat migrasi bernomor (kolom/tabel baru sesudah baseline) ada di §8**.
@@ -67,7 +67,7 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `sales` | `000010_sales.up.sql`, `000019_sales.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
-| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql` | `payments`, `payment_allocations` | 2 |
+| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql` | `payments`, `payment_allocations` | 2 |
 | `salesreturn` | `000014_salesreturn.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
 | `purchasereturn` | `000015_purchasereturn.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
 | `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta` | 14 |
@@ -204,7 +204,7 @@ Bukti kirim (foto/dokumen) dicatat langsung sebagai baris `media_files` ber-owne
 
 | Tabel | Untuk apa |
 |---|---|
-| `payments` | Pembayaran masuk/keluar, menunjuk order (primitif, lintas modul `purchasing`/`sales`). `000023_payment_credit_source` (N-41): `credit_source_type`/`credit_source_id` = retur sumber saldo pada pasangan kaki **pakai saldo uang muka** (kaki retur method `offset`, kaki tagihan method `advance`); jumlah saldo terpakai sebuah retur = Σ alokasi aktif ke retur itu oleh kaki yang menyebutnya sebagai sumber. Legacy tak punya alur ini, ETL tidak menyentuh kolomnya |
+| `payments` | Pembayaran masuk/keluar, menunjuk order (primitif, lintas modul `purchasing`/`sales`). `000023_payment_credit_source` (N-41): `credit_source_type`/`credit_source_id` = retur sumber saldo pada pasangan kaki **pakai saldo uang muka** (kaki retur method `offset`, kaki tagihan method `advance`); jumlah saldo terpakai sebuah retur = Σ alokasi aktif ke retur itu oleh kaki yang menyebutnya sebagai sumber. Legacy tak punya alur ini, ETL tidak menyentuh kolomnya. `000032_payment_corrections`: `corrects_payment_id` = pembayaran yang digantikan lewat **koreksi pembayaran** (yang asli dibatalkan dalam transaksi yang sama); `cancel_reason`, `cancelled_at`, `cancelled_by` = jejak pembatalan (kosong untuk pembatalan sebelum migrasi) |
 | `payment_allocations` | Alokasi satu pembayaran ke satu/lebih dokumen |
 
 ### `salesreturn` (L6)
@@ -360,6 +360,7 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000022_purchasing_tax_invoice` | PO-03 | `purchase_orders.tax_invoice_number`, `tax_invoice_date`; `purchase_order_items.tax_rate` | memetakan `tax_rate_snapshot` legacy |
 | `000023_payment_credit_source` | N-41 | `payments.credit_source_type`, `credit_source_id` + indeks `ix_payments_credit_source` (retur sumber saldo uang muka pada pasangan kaki pakai-saldo) | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
 | `000031_finance_fn` | FN-01, FN-07, FN-10 | tabel baru `finance_posting_ignores` dan `finance_tax_adjustment_meta`; kolom `business_expenses.party_id` (+ `ix_business_expenses_party`): pihak lawan biaya | mengisi `party_id` dari `id_business_party` legacy bila pihak itu termigrasi |
+| `000032_payment_corrections` | Koreksi pembayaran | `payments.corrects_payment_id` (+ `ix_payments_corrects`), `cancel_reason`, `cancelled_at`, `cancelled_by` (semua nullable) | tak terpengaruh; kolom nullable, ETL tak menyentuh |
 
 Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
 bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);

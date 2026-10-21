@@ -148,22 +148,23 @@ func insertPaymentTx(ctx context.Context, q *sqlc.Queries, p *contracts.Payment,
 		return 0, err
 	}
 	res, err := q.InsertPayment(ctx, sqlc.InsertPaymentParams{
-		Number:           p.Number,
-		BranchID:         p.BranchID,
-		PartyID:          p.PartyID,
-		PartyType:        p.PartyType,
-		Direction:        p.Direction,
-		Amount:           p.Amount,
-		Method:           p.Method,
-		PaidAt:           paidAt,
-		Notes:            nullStr(p.Notes),
-		ClientRef:        nullStr(p.ClientRef),
-		AmountTendered:   sql.NullInt64{Int64: p.AmountTendered, Valid: p.AmountTendered > 0},
-		ReferenceNumber:  nullStr(p.Reference),
-		CreditSourceType: nullStr(p.CreditSourceType),
-		CreditSourceID:   nullID(p.CreditSourceID),
-		CreatedBy:        actor(actorID),
-		UpdatedBy:        actor(actorID),
+		Number:            p.Number,
+		BranchID:          p.BranchID,
+		PartyID:           p.PartyID,
+		PartyType:         p.PartyType,
+		Direction:         p.Direction,
+		Amount:            p.Amount,
+		Method:            p.Method,
+		PaidAt:            paidAt,
+		Notes:             nullStr(p.Notes),
+		ClientRef:         nullStr(p.ClientRef),
+		AmountTendered:    sql.NullInt64{Int64: p.AmountTendered, Valid: p.AmountTendered > 0},
+		ReferenceNumber:   nullStr(p.Reference),
+		CreditSourceType:  nullStr(p.CreditSourceType),
+		CreditSourceID:    nullID(p.CreditSourceID),
+		CorrectsPaymentID: nullID(p.CorrectsPaymentID),
+		CreatedBy:         actor(actorID),
+		UpdatedBy:         actor(actorID),
 	})
 	if err != nil {
 		return 0, err
@@ -244,24 +245,19 @@ func (r *Repository) SetStatus(ctx context.Context, id int64, status string, act
 }
 
 // CancelWithPair cancels an ACTIVE payment together with its paired leg (CAS:
-// only rows still active change). Returns how many rows were cancelled; 0 means
-// another writer already cancelled it.
+// only rows still active change), recording reason and who/when on every leg.
+// Returns how many rows were cancelled; 0 means another writer already
+// cancelled it.
 //
 // hook (optional) runs inside the same transaction, only when a row changed;
 // an error from it rolls the cancellation back (ADR-0011).
-func (r *Repository) CancelWithPair(ctx context.Context, id, actorID int64, hook TxHook) (int64, error) {
+func (r *Repository) CancelWithPair(ctx context.Context, id, actorID int64, reason string, hook TxHook) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := r.q.WithTx(tx).CancelActiveWithPair(ctx, sqlc.CancelActiveWithPairParams{
-		Now: timeutil.NowUTC(), Actor: actor(actorID), ID: id, PairID: nullID(id),
-	})
-	if err != nil {
-		return 0, err
-	}
-	n, err := res.RowsAffected()
+	n, err := cancelActiveTx(ctx, r.q.WithTx(tx), id, actorID, reason)
 	if err != nil {
 		return 0, err
 	}
@@ -271,6 +267,65 @@ func (r *Repository) CancelWithPair(ctx context.Context, id, actorID int64, hook
 		}
 	}
 	return n, tx.Commit()
+}
+
+func cancelActiveTx(ctx context.Context, q *sqlc.Queries, id, actorID int64, reason string) (int64, error) {
+	res, err := q.CancelActiveWithPair(ctx, sqlc.CancelActiveWithPairParams{
+		Now: timeutil.NowUTC(), Actor: actor(actorID), Reason: nullStr(reason), ID: id, PairID: nullID(id),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// ErrNotActive reports that the payment a correction replaces was no longer
+// active when the transaction reached it (a concurrent cancel won).
+var ErrNotActive = errors.New("payment: not active")
+
+// CorrectPayment writes the replacement payment (header + allocations) and
+// cancels the corrected one in ONE transaction, so a correction is never half
+// done inside this module: either both rows changed or neither did. The
+// cancel is a CAS on status; losing it returns ErrNotActive and rolls the
+// replacement back. hook runs in the same transaction with the new id
+// (ADR-0011 audit).
+func (r *Repository) CorrectPayment(ctx context.Context, replacement *contracts.Payment, oldID, actorID int64, reason string, hook func(ctx context.Context, tx *sql.Tx, id int64) error) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := r.q.WithTx(tx)
+	id, err := insertPaymentTx(ctx, q, replacement, actorID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := cancelActiveTx(ctx, q, oldID, actorID, reason)
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, ErrNotActive
+	}
+	if hook != nil {
+		if err := hook(ctx, tx, id); err != nil {
+			return 0, err
+		}
+	}
+	return id, tx.Commit()
+}
+
+// CorrectionOf returns the id and number of the payment that corrected id in
+// the branch, or 0 and "" when none did.
+func (r *Repository) CorrectionOf(ctx context.Context, branchID, id int64) (int64, string, error) {
+	row, err := r.q.GetCorrectionOf(ctx, sqlc.GetCorrectionOfParams{CorrectsPaymentID: nullID(id), BranchID: branchID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", err
+	}
+	return row.ID, row.Number, nil
 }
 
 // PairedPayment returns the opposite leg of a paired payment, or nil.

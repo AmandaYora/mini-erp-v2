@@ -34,7 +34,20 @@ func toPayment(r sqlc.GetPaymentRow) *contracts.Payment {
 		PairID:           r.PairID.Int64,
 		CreditSourceType: r.CreditSourceType.String,
 		CreditSourceID:   r.CreditSourceID.Int64,
+
+		CorrectsPaymentID: r.CorrectsPaymentID.Int64,
+		CancelReason:      r.CancelReason.String,
+		CancelledAt:       stamp(r.CancelledAt),
+		CancelledBy:       r.CancelledBy.Int64,
 	}
+}
+
+// stamp renders an optional system stamp as stored (UTC text); "" when unset.
+func stamp(t sql.NullTime) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.UTC().Format(timeLayout)
 }
 
 // parsePaidAt reads the contracts paid_at text ("2006-01-02" or with a time of

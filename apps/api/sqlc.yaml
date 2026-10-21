@@ -150,6 +150,7 @@ sql:
     schema:
       - migrations/000013_payment.up.sql
       - migrations/000023_payment_credit_source.up.sql
+      - migrations/000032_payment_corrections.up.sql
     queries: internal/modules/payment/infrastructure/queries
     gen:
       go:

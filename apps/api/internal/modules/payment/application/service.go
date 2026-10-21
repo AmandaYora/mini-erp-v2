@@ -46,15 +46,16 @@ type Service struct {
 // SetReverser wires finance's source reverser (composition-root privilege).
 func (s *Service) SetReverser(r financecontracts.SourceReverser) { s.reverser = r }
 
-// reverseJournals reverses the books for cancelled payment legs. A failure never
-// undoes the cancellation: it is audited and surfaces as an orphan the
-// readiness gate reports.
-func (s *Service) reverseJournals(ctx context.Context, actorID, branchID int64, ids []int64, number string) {
+// reverseJournals reverses the books for cancelled payment legs (memo = the
+// reversal's reason). A failure never undoes the cancellation: it is audited
+// and surfaces as an orphan the readiness gate reports. Idempotent: a leg
+// whose journal is already reversed (or never posted) is skipped.
+func (s *Service) reverseJournals(ctx context.Context, actorID, branchID int64, ids []int64, memo string) {
 	if s.reverser == nil {
 		return
 	}
 	for _, id := range ids {
-		if _, err := s.reverser.ReverseForSource(ctx, actorID, branchID, "payment", id, "Pembayaran "+number+" dibatalkan"); err != nil {
+		if _, err := s.reverser.ReverseForSource(ctx, actorID, branchID, "payment", id, memo); err != nil {
 			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "payment", EntityID: id, BranchID: branchID, ActorID: actorID, Note: err.Error()})
 		}
 	}
@@ -107,6 +108,21 @@ func (s *Service) enrich(ctx context.Context, p *contracts.Payment) (*contracts.
 	}
 	if party != nil {
 		p.PartyName, p.PartyPhone, p.PartyAddress = party.Name, party.Phone, party.Address
+	}
+	if p.CorrectsPaymentID != 0 {
+		corrected, err := s.repo.GetPayment(ctx, p.CorrectsPaymentID)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if corrected != nil {
+			p.CorrectsPaymentNumber = corrected.Number
+		}
+	}
+	if p.Status != "active" {
+		// Only a cancelled payment can have been corrected.
+		if p.CorrectedByID, p.CorrectedByNumber, err = s.repo.CorrectionOf(ctx, p.BranchID, p.ID); err != nil {
+			return nil, apperror.Internal(err)
+		}
 	}
 	return p, nil
 }
@@ -504,6 +520,14 @@ func (s *Service) insertPayment(ctx context.Context, actorID, branchID int64, pa
 	return id, nil
 }
 
+// auditNewID adapts an audit entry that needs the id of a row being inserted
+// into a repository hook running in the insert's transaction (ADR-0011).
+func (s *Service) auditNewID(entry func(id int64) auditcontracts.Entry) func(ctx context.Context, tx *sql.Tx, id int64) error {
+	return func(ctx context.Context, tx *sql.Tx, id int64) error {
+		return s.audit.LogTx(ctx, tx, entry(id))
+	}
+}
+
 func isReturnType(t string) bool {
 	return t == contracts.OrderSalesReturn || t == contracts.OrderPurchaseReturn
 }
@@ -663,7 +687,23 @@ func (s *Service) hasOpenBills(ctx context.Context, branchID, partyID int64, ord
 // simultaneous cancels cancel once (the second replays). Before cancelling,
 // every sales/purchase order it settles is checked: a COD/prepaid order that
 // already completed must not silently become "unpaid" again (legacy rule).
+//
+// Cancel records no reason: it serves internal callers (releasing an offset
+// pair). The web goes through CancelWithReason.
 func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*contracts.Payment, error) {
+	return s.CancelWithReason(ctx, actorID, branchID, id, "")
+}
+
+// MaxReasonLen bounds a cancel/correction reason (payments.cancel_reason).
+const MaxReasonLen = 255
+
+// CancelWithReason is Cancel that stores why (on every leg) and puts the
+// reason in the audit entry.
+func (s *Service) CancelWithReason(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.Payment, error) {
+	reason = strings.TrimSpace(reason)
+	if len([]rune(reason)) > MaxReasonLen {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "maksimal 255 karakter"}})
+	}
 	first, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
@@ -700,12 +740,16 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 		if err := s.guardCancel(ctx, legs); err != nil {
 			return err
 		}
-		n, err := s.repo.CancelWithPair(ctx, p.ID, actorID, func(ctx context.Context, tx *sql.Tx) error {
+		n, err := s.repo.CancelWithPair(ctx, p.ID, actorID, reason, func(ctx context.Context, tx *sql.Tx) error {
+			after := map[string]any{"status": "cancelled"}
+			if reason != "" {
+				after["reason"] = reason
+			}
 			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
 				Action: "payments.cancel", Entity: "payment", EntityID: id, BranchID: branchID, ActorID: actorID,
 				Note:   first.Number,
 				Before: map[string]any{"status": "active", "amount": p.Amount, "legs": legIDs},
-				After:  map[string]any{"status": "cancelled"},
+				After:  after,
 			})
 		})
 		if err != nil {
@@ -720,7 +764,7 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 		return nil, err
 	}
 	if !replayed {
-		s.reverseJournals(ctx, actorID, branchID, legIDs, first.Number)
+		s.reverseJournals(ctx, actorID, branchID, legIDs, "Pembayaran "+first.Number+" dibatalkan")
 	}
 	if err := s.releaseAutoOffset(ctx, first); err != nil {
 		return nil, err
@@ -789,40 +833,62 @@ func (s *Service) guardCancel(ctx context.Context, legs []*contracts.Payment) er
 		parts := strings.SplitN(key, "/", 2)
 		orderType := parts[0]
 		orderID, _ := strconv.ParseInt(parts[1], 10, 64)
-		var status, terms, number string
-		var grand int64
-		switch orderType {
-		case contracts.OrderSales:
-			o, err := s.sales.GetByID(ctx, orderID)
-			if err != nil {
-				return apperror.Internal(err)
-			}
-			if o == nil {
-				continue
-			}
-			status, terms, number, grand = o.Status, o.PaymentTerms, o.Number, o.GrandTotal
-		default:
-			o, err := s.purchasing.GetByID(ctx, orderID)
-			if err != nil {
-				return apperror.Internal(err)
-			}
-			if o == nil {
-				continue
-			}
-			status, terms, number, grand = o.Status, o.PaymentTerms, o.Number, o.GrandTotal
+		o, err := s.cashSettledOrder(ctx, orderType, orderID)
+		if err != nil {
+			return err
 		}
-		if status != salescontracts.StatusCompleted || terms == "net" {
+		if o == nil {
 			continue
 		}
 		paid, err := s.repo.PaidForOrder(ctx, orderType, orderID)
 		if err != nil {
 			return apperror.Internal(err)
 		}
-		if grand-(paid-amount) > 0 {
-			return apperror.Conflict("Order " + number + " (" + terms + ") sudah selesai; membatalkan pembayaran ini membuatnya belum lunas. Ubah termin atau buat pembayaran pengganti lebih dulu")
+		if o.grand-(paid-amount) > 0 {
+			return apperror.Conflict("Order " + o.label + " sudah selesai; membatalkan pembayaran ini membuatnya belum lunas. Ubah termin atau buat pembayaran pengganti lebih dulu")
 		}
 	}
 	return nil
+}
+
+// settledOrder is a sales/purchase order that completed on cash terms
+// (COD/prepaid): it must stay fully paid.
+type settledOrder struct {
+	grand int64
+	label string // "SO-… (cod)"
+}
+
+// cashSettledOrder returns the order when it completed on non-net terms, nil
+// for any other order (still open, net terms, missing, not a bill).
+func (s *Service) cashSettledOrder(ctx context.Context, orderType string, orderID int64) (*settledOrder, error) {
+	var status, terms, number string
+	var grand int64
+	switch orderType {
+	case contracts.OrderSales:
+		o, err := s.sales.GetByID(ctx, orderID)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if o == nil {
+			return nil, nil
+		}
+		status, terms, number, grand = o.Status, o.PaymentTerms, o.Number, o.GrandTotal
+	case contracts.OrderPurchase:
+		o, err := s.purchasing.GetByID(ctx, orderID)
+		if err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if o == nil {
+			return nil, nil
+		}
+		status, terms, number, grand = o.Status, o.PaymentTerms, o.Number, o.GrandTotal
+	default:
+		return nil, nil
+	}
+	if status != salescontracts.StatusCompleted || terms == "net" {
+		return nil, nil
+	}
+	return &settledOrder{grand: grand, label: number + " (" + terms + ")"}, nil
 }
 
 // SettleCredit offsets a confirmed return against an open bill with no cash

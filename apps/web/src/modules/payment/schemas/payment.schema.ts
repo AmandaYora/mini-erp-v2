@@ -105,3 +105,60 @@ export const settleCreditSchema = z
   });
 
 export type SettleCreditFormValues = z.infer<typeof settleCreditSchema>;
+
+// Batal pembayaran dari web: alasan wajib (backend menyimpan maks 255 di cancel_reason).
+export const cancelPaymentSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Alasan pembatalan wajib diisi")
+    .max(255, "Alasan maksimal 255 karakter"),
+});
+
+export type CancelPaymentValues = z.infer<typeof cancelPaymentSchema>;
+
+// Koreksi pembayaran (POST /payments/:id/correct, service: Correct): metode/nominal/tanggal/
+// referensi/uang diterima/catatan baru + alasan wajib 5–255 karakter. Alokasi tidak diisi pengguna:
+// backend membagi nominal baru ke dokumen pembayaran asli sesuai urutannya.
+export const paymentCorrectSchema = z
+  .object({
+    method: z.enum(["cash", "transfer", "check"], {
+      required_error: "Pilih metode",
+      invalid_type_error: "Pilih metode",
+    }),
+    amount: amountField,
+    paidAt: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Format tanggal harus YYYY-MM-DD")
+      .optional(),
+    reference: z.string().max(100, "Referensi maksimal 100 karakter").optional(),
+    amountTendered: z.coerce
+      .number({ invalid_type_error: "Uang diterima harus angka" })
+      .int("Uang diterima harus bilangan bulat")
+      .positive("Uang diterima harus lebih dari 0")
+      .optional(),
+    notes: z.string().max(500, "Catatan maksimal 500 karakter").optional(),
+    reason: z
+      .string()
+      .trim()
+      .min(5, "Alasan koreksi minimal 5 karakter")
+      .max(255, "Alasan maksimal 255 karakter"),
+  })
+  .superRefine((v, ctx) => {
+    if (v.amountTendered === undefined) return;
+    if (v.method !== "cash") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountTendered"],
+        message: "Uang diterima hanya untuk pembayaran tunai",
+      });
+    } else if (v.amountTendered < v.amount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amountTendered"],
+        message: "Uang diterima kurang dari nominal pembayaran",
+      });
+    }
+  });
+
+export type PaymentCorrectValues = z.infer<typeof paymentCorrectSchema>;

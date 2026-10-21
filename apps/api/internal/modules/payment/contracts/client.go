@@ -71,7 +71,21 @@ type Payment struct {
 	// (both legs carry it; empty/0 on every other payment, N-41).
 	CreditSourceType string
 	CreditSourceID   int64
-	Allocations      []*Allocation
+	// CorrectsPaymentID names the payment this one replaced through a
+	// correction (0 otherwise); that payment was cancelled in the same step.
+	CorrectsPaymentID int64
+	// CancelReason / CancelledAt (UTC stamp) / CancelledBy record a
+	// cancellation; empty/0 while active and on payments cancelled before
+	// they were recorded.
+	CancelReason string
+	CancelledAt  string
+	CancelledBy  int64
+	// Detail read only: the number of CorrectsPaymentID, and the payment that
+	// corrected this one (CorrectedByID 0 = not corrected).
+	CorrectsPaymentNumber string
+	CorrectedByID         int64
+	CorrectedByNumber     string
+	Allocations           []*Allocation
 }
 
 // OffsetInput offsets a confirmed return against an open bill of the same

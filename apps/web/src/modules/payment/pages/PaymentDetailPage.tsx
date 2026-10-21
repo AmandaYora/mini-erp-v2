@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Button,
-  ConfirmDialog,
   DataTable,
   DetailSkeleton,
   ErrorState,
@@ -31,10 +30,14 @@ import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { paymentService } from "@/modules/payment/services/payment.service";
 import type { Payment, PaymentAllocation, PaymentProof } from "@/modules/payment/types";
+import type { PaymentCorrectValues } from "@/modules/payment/schemas/payment.schema";
+import { CancelPaymentModal } from "@/modules/payment/components/CancelPaymentModal";
+import { CorrectPaymentModal } from "@/modules/payment/components/CorrectPaymentModal";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import {
   cancelGuardHint,
   directionLabel,
+  isCorrectable,
   methodLabel,
   orderTypeLabel,
   paymentKindLabel,
@@ -44,6 +47,7 @@ import { allocationHref, paymentRail } from "@/modules/payment/lib/payment-rail"
 
 export default function PaymentDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const canCreate = can("payment.create");
   const canCancel = can("payment.archive");
@@ -53,6 +57,9 @@ export default function PaymentDetailPage() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [acting, setActing] = useState(false);
+  const [correctOpen, setCorrectOpen] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+  const [correctError, setCorrectError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
   const { data, loading, error, errorStatus, reload } = useAsyncData(async () => {
@@ -65,12 +72,12 @@ export default function PaymentDetailPage() {
 
   usePageCrumb(payment?.number);
 
-  async function handleCancel() {
-    setConfirmOpen(false);
+  async function handleCancel(reason: string) {
     setActing(true);
     try {
-      const res = await paymentService.cancel(paymentId);
+      const res = await paymentService.cancel(paymentId, reason);
       toast.fromServer(res.message, "Pembayaran dibatalkan", res.data.number);
+      setConfirmOpen(false);
       reload();
     } catch (err) {
       // Penjaga backend (COD/prepaid selesai) → arahkan ke Retur.
@@ -79,6 +86,22 @@ export default function PaymentDetailPage() {
       toast.danger("Gagal membatalkan", hint ? `${msg} ${hint}` : msg);
     } finally {
       setActing(false);
+    }
+  }
+
+  // Koreksi salah input: server membuat pengganti lalu membatalkan yang ini → buka penggantinya.
+  async function handleCorrect(values: PaymentCorrectValues) {
+    setCorrecting(true);
+    setCorrectError(null);
+    try {
+      const res = await paymentService.correct(paymentId, values);
+      toast.fromServer(res.message, "Pembayaran dikoreksi", res.data.number);
+      setCorrectOpen(false);
+      void navigate(`${ROUTE_PATHS.payments}/${res.data.id}`);
+    } catch (err) {
+      setCorrectError(toApiError(err).message);
+    } finally {
+      setCorrecting(false);
     }
   }
 
@@ -120,6 +143,23 @@ export default function PaymentDetailPage() {
   if (!payment) return null;
 
   const cancellable = payment.status === "active";
+  const correctable = canCreate && canCancel && isCorrectable(payment);
+  const menuItems = [
+    ...(correctable
+      ? [{ key: "correct", label: "Koreksi pembayaran", disabled: acting, onSelect: () => setCorrectOpen(true) }]
+      : []),
+    ...(canCancel && cancellable
+      ? [
+          {
+            key: "cancel",
+            label: "Batalkan pembayaran",
+            destructive: true,
+            disabled: acting,
+            onSelect: () => setConfirmOpen(true),
+          },
+        ]
+      : []),
+  ];
   const allocTotal = payment.allocations.reduce((s, a) => s + a.amount, 0);
   const rail = paymentRail(payment);
 
@@ -155,24 +195,38 @@ export default function PaymentDetailPage() {
                 Cetak
               </Link>
             </Button>
-            {canCancel && cancellable && (
-              <ActionMenu
-                items={[
-                  {
-                    key: "cancel",
-                    label: "Batalkan pembayaran",
-                    destructive: true,
-                    disabled: acting,
-                    onSelect: () => setConfirmOpen(true),
-                  },
-                ]}
-              />
-            )}
+            {menuItems.length > 0 && <ActionMenu items={menuItems} />}
           </>
         }
       >
         <DocumentRail steps={rail.steps} current={rail.current} stopped={rail.stopped} related={related} />
       </PageHeader>
+
+      {(payment.correctsPaymentId ?? 0) > 0 && (
+        <Notice tone="info" title="Koreksi dari pembayaran lain">
+          Pembayaran ini menggantikan{" "}
+          <Link to={`${ROUTE_PATHS.payments}/${payment.correctsPaymentId}`} className="font-medium text-primary hover:underline">
+            {payment.correctsPaymentNumber || `#${payment.correctsPaymentId}`}
+          </Link>
+          , yang dibatalkan karena salah input.
+        </Notice>
+      )}
+
+      {payment.status === "cancelled" && (
+        <Notice tone="neutral" title={(payment.correctedById ?? 0) > 0 ? "Dikoreksi" : "Pembayaran ini sudah dibatalkan"}>
+          {(payment.correctedById ?? 0) > 0 && (
+            <>
+              Dikoreksi oleh{" "}
+              <Link to={`${ROUTE_PATHS.payments}/${payment.correctedById}`} className="font-medium text-primary hover:underline">
+                {payment.correctedByNumber || `#${payment.correctedById}`}
+              </Link>
+              .{" "}
+            </>
+          )}
+          {payment.cancelReason ? `Alasan: ${payment.cancelReason}` : "Alokasinya ke dokumen sudah terlepas."}
+          {payment.cancelledAt ? ` (${formatDateTime(payment.cancelledAt)})` : ""}
+        </Notice>
+      )}
 
       {payment.pairId > 0 && (
         <Notice tone="info" title="Offset berpasangan">
@@ -303,14 +357,28 @@ export default function PaymentDetailPage() {
         }
       />
 
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Batalkan pembayaran?"
-        message={`Batalkan pembayaran ${payment.number} sebesar ${formatIDR(payment.amount)}? Alokasi ke dokumen ikut terlepas. Bila pembatalan membuat order yang sudah selesai jadi belum lunas, server menolaknya — gunakan Retur.`}
-        confirmLabel={acting ? "Memproses…" : "Ya, batalkan"}
-        onConfirm={() => void handleCancel()}
-        onCancel={() => setConfirmOpen(false)}
-      />
+      {confirmOpen && (
+        <CancelPaymentModal
+          number={payment.number}
+          amount={payment.amount}
+          submitting={acting}
+          onClose={() => setConfirmOpen(false)}
+          onSubmit={(r) => void handleCancel(r)}
+        />
+      )}
+
+      {correctOpen && (
+        <CorrectPaymentModal
+          payment={payment}
+          submitting={correcting}
+          serverError={correctError}
+          onClose={() => {
+            setCorrectOpen(false);
+            setCorrectError(null);
+          }}
+          onSubmit={(v) => void handleCorrect(v)}
+        />
+      )}
     </Page>
   );
 }

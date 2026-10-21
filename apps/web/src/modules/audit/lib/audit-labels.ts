@@ -104,6 +104,7 @@ export const ACTION_LABELS: Record<string, string> = {
   // Pembayaran
   "payments.create": "Catat pembayaran",
   "payments.cancel": "Batalkan pembayaran",
+  "payments.correct": "Koreksi pembayaran",
   "payments.offset_return": "Kompensasi retur dengan pembayaran",
   "payments.settle_credit": "Selesaikan saldo kredit",
   "payments.use_credit": "Pakai saldo kredit",
