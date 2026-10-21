@@ -25,6 +25,7 @@ satu orang.
 | **Snapshot (Item Dokumen)** | Salinan nama/harga produk yang dibekukan saat dokumen dibuat — nota historis tidak ikut berubah saat master data produk berubah kemudian. Kontrak lintas modul, lihat SYSTEM_DESIGN §7. |
 | **Stock Balance / Stock Movement** | Saldo stok saat ini vs riwayat mutasi yang membentuknya — selalu berpasangan (kontrak modul `stock`). |
 | **Document Sequence (Penomoran Dokumen)** | Nomor berjalan per jenis dokumen per cabang, prefix dari kode cabang — kontrak milik modul `branch`. |
+| **Koreksi pembayaran** | Perbaikan salah input pembayaran (metode, nominal, tanggal, referensi): pembayaran pengganti untuk pihak dan dokumen yang sama dibuat, yang asli dibatalkan dengan alasan, jurnal yang asli dibalik. Satu-satunya jalan memperbaiki pembayaran order tunai/COD yang sudah selesai tanpa membuatnya belum lunas; modul `payment`. |
 | **Journal Entry / Journal Line** | Baris jurnal akuntansi (double-entry) — satu-satunya sumber laporan keuangan, modul `finance`. |
 | **Branch Scope** | `branchId` yang selalu diturunkan dari sesi terautentikasi (modul `auth`), tidak pernah dari body request. Tidak ada scope perusahaan (ADR-0009). |
 

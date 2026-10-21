@@ -13,6 +13,7 @@ import (
 	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the payment module HTTP surface.
@@ -45,6 +46,11 @@ func paymentView(p *contracts.Payment) map[string]any {
 		"allocations": allocs,
 		// N-41: the return whose saldo a use-credit leg spends (absent otherwise).
 		"creditSourceType": p.CreditSourceType, "creditSourceId": p.CreditSourceID,
+		// Correction links (numbers filled on the detail read) and the cancel trail.
+		"correctsPaymentId": p.CorrectsPaymentID, "correctsPaymentNumber": p.CorrectsPaymentNumber,
+		"correctedById": p.CorrectedByID, "correctedByNumber": p.CorrectedByNumber,
+		"cancelReason": p.CancelReason, "cancelledAt": timeutil.FormatWIB(p.CancelledAt),
+		"cancelledBy": p.CancelledBy,
 	}
 }
 
@@ -182,19 +188,90 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	response.Created(w, "Pembayaran dicatat", paymentView(p))
 }
 
-// Cancel handles POST /api/v1/payments/{id}/cancel.
+// Cancel handles POST /api/v1/payments/{id}/cancel with an optional
+// {reason}. The web always sends one; an empty body stays accepted for older
+// clients and scripts.
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
 	if err != nil {
 		response.Fail(w, apperror.NotFound("Pembayaran"))
 		return
 	}
-	p, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
+		if fields := httpx.DecodeJSON(r, &in); fields != nil {
+			response.Fail(w, apperror.Validation("", fields))
+			return
+		}
+	}
+	p, appErr := h.svc.CancelWithReason(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
 	response.OK(w, "Pembayaran dibatalkan", paymentView(p))
+}
+
+// Correct handles POST /api/v1/payments/{id}/correct: a replacement payment
+// with the corrected data takes over the original's orders and the original is
+// cancelled with the reason. Needs payment.create (route) AND payment.archive
+// (it cancels), plus the refund permission when the payment is a refund.
+func (h *Handler) Correct(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Pembayaran"))
+		return
+	}
+	var in struct {
+		Method         string `json:"method" validate:"required"`
+		Amount         int64  `json:"amount" validate:"required"`
+		PaidAt         string `json:"paidAt"`
+		Reference      string `json:"reference"`
+		AmountTendered int64  `json:"amountTendered"`
+		Notes          string `json:"notes"`
+		Reason         string `json:"reason" validate:"required"`
+	}
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	sess := authcontracts.SessionFromContext(r.Context())
+	if sess == nil || !sess.HasPermission("payment.archive") {
+		response.Fail(w, &apperror.AppError{Code: apperror.CodeForbidden, Message: "Anda tidak memiliki izin membatalkan pembayaran"})
+		return
+	}
+	branchID := authcontracts.BranchID(r)
+	cur, appErr := h.svc.GetByID(r.Context(), id)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	if cur == nil || cur.BranchID != branchID {
+		response.Fail(w, apperror.NotFound("Pembayaran"))
+		return
+	}
+	for _, a := range cur.Allocations {
+		if need := refundPermission(a.OrderType); need != "" && !sess.HasPermission(need) {
+			response.Fail(w, &apperror.AppError{Code: apperror.CodeForbidden, Message: "Anda tidak memiliki izin memproses refund"})
+			return
+		}
+	}
+	p, replayed, appErr := h.svc.Correct(r.Context(), application.CorrectInput{
+		ActorID: authcontracts.ActorID(r), BranchID: branchID, PaymentID: id,
+		Method: in.Method, Amount: in.Amount, PaidAt: in.PaidAt, Reference: in.Reference,
+		AmountTendered: in.AmountTendered, Notes: in.Notes, Reason: in.Reason,
+	})
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	if replayed {
+		response.OK(w, "Pembayaran sudah dikoreksi", paymentView(p))
+		return
+	}
+	response.Created(w, "Pembayaran dikoreksi", paymentView(p))
 }
 
 // SettleCredit handles POST /api/v1/payments/settle-credit. It offsets a
@@ -387,6 +464,8 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("POST /api/v1/payments", perm("payment.create", authcontracts.Guard(h.Create, branchGuard)))
 	mux.Handle("GET /api/v1/payments/{id}", perm("payment.view", authcontracts.Guard(h.Get, branchGuard)))
 	mux.Handle("POST /api/v1/payments/{id}/cancel", perm("payment.archive", authcontracts.Guard(h.Cancel, branchGuard)))
+	// Also checks payment.archive in the handler (a correction cancels the original).
+	mux.Handle("POST /api/v1/payments/{id}/correct", perm("payment.create", authcontracts.Guard(h.Correct, branchGuard)))
 	mux.Handle("POST /api/v1/payments/settle-credit", perm("payment.create", authcontracts.Guard(h.SettleCredit, branchGuard)))
 	mux.Handle("POST /api/v1/payments/use-credit", perm("payment.create", authcontracts.Guard(h.UseCredit, branchGuard)))
 	mux.Handle("GET /api/v1/payments/credit-balances", perm("payment.view", authcontracts.Guard(h.CreditBalances, branchGuard)))

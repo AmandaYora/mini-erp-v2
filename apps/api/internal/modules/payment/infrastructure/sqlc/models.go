@@ -10,27 +10,31 @@ import (
 )
 
 type Payment struct {
-	ID               int64
-	Number           string
-	BranchID         int64
-	PartyID          int64
-	PartyType        string
-	Direction        string
-	Amount           int64
-	Method           string
-	PaidAt           time.Time
-	Notes            sql.NullString
-	Status           string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	CreatedBy        sql.NullInt64
-	UpdatedBy        sql.NullInt64
-	ClientRef        sql.NullString
-	AmountTendered   sql.NullInt64
-	ReferenceNumber  sql.NullString
-	PairID           sql.NullInt64
-	CreditSourceType sql.NullString
-	CreditSourceID   sql.NullInt64
+	ID                int64
+	Number            string
+	BranchID          int64
+	PartyID           int64
+	PartyType         string
+	Direction         string
+	Amount            int64
+	Method            string
+	PaidAt            time.Time
+	Notes             sql.NullString
+	Status            string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	CreatedBy         sql.NullInt64
+	UpdatedBy         sql.NullInt64
+	ClientRef         sql.NullString
+	AmountTendered    sql.NullInt64
+	ReferenceNumber   sql.NullString
+	PairID            sql.NullInt64
+	CreditSourceType  sql.NullString
+	CreditSourceID    sql.NullInt64
+	CorrectsPaymentID sql.NullInt64
+	CancelReason      sql.NullString
+	CancelledAt       sql.NullTime
+	CancelledBy       sql.NullInt64
 }
 
 type PaymentAllocation struct {

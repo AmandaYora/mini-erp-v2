@@ -176,7 +176,7 @@ func TestSqlcPaymentPairAndCancel(t *testing.T) {
 
 	// CancelWithPair cancels both legs, hook runs once, CAS second call = 0
 	hooks := 0
-	n, err := r.CancelWithPair(ctx, id1, 8, func(context.Context, *sql.Tx) error { hooks++; return nil })
+	n, err := r.CancelWithPair(ctx, id1, 8, "", func(context.Context, *sql.Tx) error { hooks++; return nil })
 	if err != nil || n != 2 || hooks != 1 {
 		t.Fatalf("cancel: n=%d hooks=%d err=%v", n, hooks, err)
 	}
@@ -190,7 +190,7 @@ func TestSqlcPaymentPairAndCancel(t *testing.T) {
 	if ub != 8 {
 		t.Fatalf("updated_by %d", ub)
 	}
-	n, err = r.CancelWithPair(ctx, id2, 8, func(context.Context, *sql.Tx) error { hooks++; return nil })
+	n, err = r.CancelWithPair(ctx, id2, 8, "", func(context.Context, *sql.Tx) error { hooks++; return nil })
 	if err != nil || n != 0 || hooks != 1 {
 		t.Fatalf("second cancel: n=%d hooks=%d err=%v", n, hooks, err)
 	}
@@ -198,16 +198,16 @@ func TestSqlcPaymentPairAndCancel(t *testing.T) {
 	// hook failure rolls back the cancellation; single (unpaired) payment cancels alone
 	solo := sqlcMkPay(t, r, "SOLO", 1, 5, "active", "2026-10-02")
 	boom := errors.New("boom")
-	if _, err := r.CancelWithPair(ctx, solo, 1, func(context.Context, *sql.Tx) error { return boom }); !errors.Is(err, boom) {
+	if _, err := r.CancelWithPair(ctx, solo, 1, "", func(context.Context, *sql.Tx) error { return boom }); !errors.Is(err, boom) {
 		t.Fatalf("hook err: %v", err)
 	}
 	if g, _ := r.GetPayment(ctx, solo); g.Status != "active" {
 		t.Fatal("rolled back cancel must stay active")
 	}
-	if n, err := r.CancelWithPair(ctx, solo, 1, nil); err != nil || n != 1 {
+	if n, err := r.CancelWithPair(ctx, solo, 1, "", nil); err != nil || n != 1 {
 		t.Fatalf("solo cancel (nil hook): %d %v", n, err)
 	}
-	if n, err := r.CancelWithPair(ctx, 424242, 1, nil); err != nil || n != 0 {
+	if n, err := r.CancelWithPair(ctx, 424242, 1, "", nil); err != nil || n != 0 {
 		t.Fatalf("missing: %d %v", n, err)
 	}
 }
