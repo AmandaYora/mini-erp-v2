@@ -73,9 +73,11 @@ type RestateProduct struct {
 
 // RestateSkipped is a position left untouched on purpose.
 type RestateSkipped struct {
-	ProductID int64  `json:"productId"`
-	VariantID int64  `json:"variantId"`
-	Reason    string `json:"reason"`
+	ProductID   int64  `json:"productId"`
+	VariantID   int64  `json:"variantId"`
+	ProductCode string `json:"productCode"`
+	ProductName string `json:"productName"`
+	Reason      string `json:"reason"`
 }
 
 // RestateReport is the outcome of a dry run or a commit.
@@ -122,6 +124,9 @@ type RestateCostOptions struct {
 	ActorID  int64 // 0 = operator console (system)
 	Commit   bool  // false = dry run: nothing is written
 	Date     string
+	// Reason is recorded in the audit entry (required by the web endpoint;
+	// optional for the operator console).
+	Reason string
 }
 
 // RestateCost recomputes the branch's outflow costs from its ledger. Dry run
@@ -220,7 +225,7 @@ func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateRep
 		for j < len(rows) && rows[j].ProductID == rows[i].ProductID && rows[j].VariantID == rows[i].VariantID {
 			j++
 		}
-		chain := rows[i:j]
+		chain := chainOrder(rows[i:j])
 		i = j
 		rep.Positions++
 
@@ -278,16 +283,77 @@ func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateRep
 	}
 }
 
+// chainOrder puts one position's rows in the order they took effect. Real
+// movements keep their stock movement order. A cost-only row (opening cost
+// supplement, revaluation) carries a synthetic id above every real movement,
+// yet it took effect where it was written: after the real rows the ledger
+// already held (smaller ledger row id) and before the ones costed after it.
+// Replaying it at the end instead would re-price every later outflow at the
+// old average and undo the correction.
+func chainOrder(chain []infrastructure.RestateRow) []infrastructure.RestateRow {
+	synthetic := false
+	for _, r := range chain {
+		if r.MovementID >= infrastructure.SyntheticCostBase {
+			synthetic = true
+			break
+		}
+	}
+	if !synthetic {
+		return chain
+	}
+	type keyed struct {
+		row          infrastructure.RestateRow
+		anchor, kind int64
+	}
+	out := make([]keyed, 0, len(chain))
+	for _, r := range chain {
+		if r.MovementID < infrastructure.SyntheticCostBase {
+			out = append(out, keyed{row: r, anchor: r.MovementID})
+			continue
+		}
+		var anchor int64
+		for _, x := range chain {
+			if x.MovementID < infrastructure.SyntheticCostBase && x.ID < r.ID && x.MovementID > anchor {
+				anchor = x.MovementID
+			}
+		}
+		out = append(out, keyed{row: r, anchor: anchor, kind: 1})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.anchor != b.anchor {
+			return a.anchor < b.anchor
+		}
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		return a.row.ID < b.row.ID
+	})
+	ordered := make([]infrastructure.RestateRow, len(out))
+	for i, k := range out {
+		ordered[i] = k.row
+	}
+	return ordered
+}
+
 // decorateRestate names the products of the report.
 func (s *Service) decorateRestate(ctx context.Context, rep *RestateReport) {
-	ids := make([]int64, 0, len(rep.Products))
+	ids := make([]int64, 0, len(rep.Products)+len(rep.Skipped))
 	for _, p := range rep.Products {
+		ids = append(ids, p.ProductID)
+	}
+	for _, p := range rep.Skipped {
 		ids = append(ids, p.ProductID)
 	}
 	labels := s.productLabels(ctx, ids)
 	for i := range rep.Products {
 		if l, ok := labels[rep.Products[i].ProductID]; ok {
 			rep.Products[i].ProductCode, rep.Products[i].ProductName = l.Code, l.Name
+		}
+	}
+	for i := range rep.Skipped {
+		if l, ok := labels[rep.Skipped[i].ProductID]; ok {
+			rep.Skipped[i].ProductCode, rep.Skipped[i].ProductName = l.Code, l.Name
 		}
 	}
 }
@@ -343,6 +409,9 @@ func (s *Service) commitRestatement(ctx context.Context, o RestateCostOptions, d
 	}
 	summary := map[string]any{"rows": rep.RowsChanged, "positions": len(rep.Products), "delta": rep.Delta,
 		"skipped": len(rep.Skipped), "date": date}
+	if r := strings.TrimSpace(o.Reason); r != "" {
+		summary["reason"] = r
+	}
 	top := rep.Products
 	if len(top) > 20 {
 		top = top[:20]

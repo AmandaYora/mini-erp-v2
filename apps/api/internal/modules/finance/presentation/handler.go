@@ -585,4 +585,11 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("GET /api/v1/finance/close/readiness", perm("finance.view", authcontracts.Guard(h.Readiness, branchGuard)))
 	mux.Handle("POST /api/v1/finance/close/safe-close", perm("finance.manage", authcontracts.Guard(h.SafeClose, branchGuard)))
 	mux.Handle("GET /api/v1/finance/export/tax-package", perm("finance.report.view", authcontracts.Guard(h.TaxPackage, branchGuard)))
+	// Cost corrections (correction_handlers.go): previews finance.manage, commits finance.close.force.
+	mux.Handle("POST /api/v1/finance/cost-restatement/preview", perm("finance.manage", authcontracts.Guard(h.RestatePreview, branchGuard)))
+	mux.Handle("POST /api/v1/finance/cost-restatement/commit", perm("finance.close.force", authcontracts.Guard(h.RestateCommit, branchGuard)))
+	mux.Handle("GET /api/v1/finance/inventory-revaluations", perm("finance.view", authcontracts.Guard(h.ListRevaluations, branchGuard)))
+	mux.Handle("GET /api/v1/finance/inventory-revaluations/positions", perm("finance.manage", authcontracts.Guard(h.RevaluationPositions, branchGuard)))
+	mux.Handle("POST /api/v1/finance/inventory-revaluations/preview", perm("finance.manage", authcontracts.Guard(h.RevaluationPreview, branchGuard)))
+	mux.Handle("POST /api/v1/finance/inventory-revaluations/commit", perm("finance.close.force", authcontracts.Guard(h.RevaluationCommit, branchGuard)))
 }

@@ -259,19 +259,22 @@ Kapan dipakai: harga keluar (HPP) di ledger biaya masih memakai rata-rata lama k
 yang terlambat masuk ledger, perbaikan harga masuk), sehingga jurnal HPP/Persediaan ikut basi. Pemeriksa yang melihatnya:
 rekonsiliasi buku-vs-ledger (K-05) di Kesiapan Tutup Buku atau margin per produk yang janggal.
 
-Alat ini adalah perintah operasi (bukan endpoint), jalan di kontainer app terhadap DB host; biner `costrebuild` ada di
-image bersama `api` dan `seed`:
+Lewat web: **Keuangan > Hitung Ulang HPP** (`/finance/cost-restatement`): dry-run otomatis saat halaman dibuka (izin
+`finance.manage`), komit dengan alasan wajib (izin `finance.close.force`; alasan tercatat di audit), hasilnya nomor jurnal dan
+rekonsiliasi sebelum/sesudah. Mesin, gerbang, dan kuncinya sama dengan perintah konsol di bawah, yang tetap ada untuk operator
+(jalan di kontainer app terhadap DB host; biner `costrebuild` ada di image bersama `api` dan `seed`):
 
 ```bash
 # 1. DRY-RUN (bawaan): selisih per produk + status gerbang; TIDAK menulis apa pun.
 docker exec minierp-app ./costrebuild --branch-id 1
 # 2. Periksa laporan. Bila setuju, jalankan COMMIT (setelah backup DB, bagian 2):
-docker exec minierp-app ./costrebuild --branch-id 1 --commit [--date 2026-10-31] [--actor-id 5]
+docker exec minierp-app ./costrebuild --branch-id 1 --commit [--date 2026-10-31] [--actor-id 5] [--reason "…"]
 # Lokal: cd apps/api && go run ./cmd/costrebuild --branch-id 1 [--commit] [--json]
 ```
 
 Yang dilakukan: (1) menarik ledger terbaru; (2) memutar ulang tiap posisi (produk x varian) berurut id mutasi; harga masuk
-(penerimaan, saldo awal, baris biaya-saja, kaki cermin) adalah bukti dan tidak diubah; hanya baris keluar yang dijurnal dari
+(penerimaan, saldo awal, baris biaya-saja, kaki cermin) adalah bukti dan tidak diubah; baris biaya-saja (lengkapi saldo
+awal, revaluasi) diputar di titik ia ditulis, bukan di akhir rantai, sehingga koreksinya tidak dibatalkan; hanya baris keluar yang dijurnal dari
 ledger (pengiriman, selisih stok kurang, hapus stok, retur beli) yang dihitung ulang pada rata-rata bergerak saat itu, dalam
 rupiah bulat (keluar yang mengosongkan posisi mengambil tepat sisa nilainya); pasangan netral (transfer, pindah lokasi rusak)
 dan dokumen yang dibatalkan tidak disentuh (ADR-0020); **histori migrasi tidak pernah ditulis ulang**: hanya baris keluar
@@ -295,3 +298,21 @@ Gerbang (dilaporkan juga saat dry-run; commit ditolak bila ada yang gagal):
 
 Setelah commit alat mencetak ulang rekonsiliasi (harus `konsisten=true`, selisih dalam toleransi) dan menjalankan ulang
 dry-run harus melaporkan 0 baris. Pemulihan bila keliru: restore backup DB pra-commit (bagian 2). Jangan hanya membalikkan jurnal koreksi: baris ledger tidak ikut kembali dan buku-vs-ledger akan menyimpang.
+
+## 6c. Revaluasi harga modal (harga modal non-nol yang salah)
+
+Kapan dipakai: harga modal sebuah produk berstok sudah terisi tetapi salah (harga saldo awal salah ketik, barang masuk
+dengan harga keliru). "Lengkapi harga modal" di Saldo Awal hanya mengisi posisi bernilai nol, dan restatement (6b) tidak
+pernah mengubah barang masuk, jadi keduanya tidak bisa memperbaikinya.
+
+Lewat web: **Keuangan > Revaluasi Harga Modal** (`/finance/inventory-revaluations`). Pilih produk (stok, rata-rata, harga beli
+terakhir, dan harga master tampil), isi harga modal yang benar per satuan dasar, pratinjau (izin `finance.manage`), lalu
+bukukan dengan alasan (izin `finance.close.force`). Yang terjadi dalam satu transaksi di bawah kunci biaya cabang: selisih
+`round(qty × harga baru) − nilai` ditulis sebagai satu baris ledger nilai saja (`inventory_revaluation`, qty 0) dan satu
+jurnal (`inventory_revaluation`): Dr Persediaan / Cr Selisih Stok bila naik, kebalikannya bila turun; catatan revaluasi
+(sebelum/sesudah, alasan, jurnal) dan audit `finance.inventory_revaluation`. Barang keluar berikutnya memakai rata-rata baru;
+rekonsiliasi buku-vs-ledger tidak berubah. Ditolak: stok 0, harga negatif, tanpa perubahan nilai, tanggal masa depan atau
+periode tertutup, saldo awal keuangan belum diposting.
+
+Sifatnya maju saja: HPP barang yang sudah keluar sebelum revaluasi tidak diubah (gunakan restatement bila perlu, sesudahnya).
+Pemulihan bila keliru: revaluasi sekali lagi ke harga yang benar, jangan membalik jurnalnya (baris ledger tidak ikut kembali).

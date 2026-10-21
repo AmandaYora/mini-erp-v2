@@ -20,12 +20,12 @@ merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui fi
 | Ukuran | Nilai | Perintah |
 |---|---|---|
 | Modul backend | 20 | `ls apps/api/internal/modules` |
-| Rute `/api/v1` | 244 (291 panggilan frontend, semua cocok; 22 rute tidak dipanggil web) | `node scripts/contract-check.mjs` (`--list` untuk rinci) |
+| Rute `/api/v1` | 250 (297 panggilan frontend, semua cocok; 22 rute tidak dipanggil web) | `node scripts/contract-check.mjs` (`--list` untuk rinci) |
 | Kode izin | 81 | `node scripts/contract-check.mjs` |
-| Tabel | 65 (sistem lama: 70) | `node scripts/db-schema-doc.mjs` → [DB_SCHEMA.md](DB_SCHEMA.md) §3 |
-| Berkas migrasi | 24 = 18 baseline per modul + `000019`–`000023`, `000031` (nomor 24–30 sengaja kosong) | `ls apps/api/migrations/*.up.sql` |
+| Tabel | 67 (sistem lama: 70) | `node scripts/db-schema-doc.mjs` → [DB_SCHEMA.md](DB_SCHEMA.md) §3 |
+| Berkas migrasi | 25 = 18 baseline per modul + `000019`–`000023`, `000031`, `000035` (nomor 24–30 sengaja kosong) | `ls apps/api/migrations/*.up.sql` |
 | sqlc | 16 dari 18 modul bertabel `migrated`; `finance` dan `stock` masih `pending` | `scripts/sqlc-migration-status.json` |
-| Halaman frontend | 85 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
+| Halaman frontend | 87 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
 | Go non-test (`internal/modules`) | ±74 ribu baris | `find apps/api/internal/modules -name '*.go' ! -name '*_test.go' \| xargs cat \| wc -l` |
 | Test backend | 179 berkas `*_test.go` (112 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
 | Test frontend | 172 berkas (942 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |

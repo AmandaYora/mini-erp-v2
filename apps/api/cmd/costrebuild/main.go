@@ -1,6 +1,6 @@
 // Command costrebuild is the cost restatement tool (OP-04, legacy `cost:rebuild`).
 //
-//	costrebuild --branch-id N [--commit] [--date YYYY-MM-DD] [--actor-id N] [--json]
+//	costrebuild --branch-id N [--commit] [--date YYYY-MM-DD] [--actor-id N] [--reason TEXT] [--json]
 //
 // Without --commit it is a DRY RUN: it replays every position's cost chain from
 // the ledger, prints the per-product difference and the gates a commit would
@@ -11,7 +11,9 @@
 // and writes an audit entry (`finance.cost_restatement`). Afterwards the K-05
 // book-vs-ledger reconciliation is printed.
 //
-// It is an operator command, not an endpoint: it runs in the app container
+// The same restatement is available on the web (Keuangan > Hitung Ulang HPP,
+// POST /api/v1/finance/cost-restatement/{preview,commit}). This command stays
+// for the operator console: it runs in the app container
 // (`docker compose exec app ./costrebuild ...`) against the host database.
 // Like the dev seed it drives the application services through the composition
 // root, so it uses exactly the production wiring and rules.
@@ -45,6 +47,7 @@ func run(args []string, out, errOut io.Writer) int {
 	commit := fs.Bool("commit", false, "write the correction (default: dry run)")
 	date := fs.String("date", "", "date of the correction journal, YYYY-MM-DD (default: today, Asia/Jakarta)")
 	actorID := fs.Int64("actor-id", 0, "user id recorded on the journal/audit (default 0 = operator console)")
+	reason := fs.String("reason", "", "reason recorded in the audit entry")
 	asJSON := fs.Bool("json", false, "print the report as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -75,7 +78,7 @@ func run(args []string, out, errOut io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	rep, err := mods.Finance.Service().RestateCost(ctx, application.RestateCostOptions{
-		BranchID: *branchID, ActorID: *actorID, Commit: *commit, Date: *date})
+		BranchID: *branchID, ActorID: *actorID, Commit: *commit, Date: *date, Reason: *reason})
 	if rep != nil {
 		if *asJSON {
 			enc := json.NewEncoder(out)
