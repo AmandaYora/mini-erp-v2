@@ -365,3 +365,49 @@ func TestTransformRevaluesDriftedBookCost(t *testing.T) {
 		t.Error("COST_REVALUED finding missing")
 	}
 }
+
+// ADR-0018 D11h: a payment cancelled in legacy whose journal stayed live is
+// mirrored, on the customer's receivable, so the books match the documents.
+func TestTransformMirrorsCancelledPaymentJournal(t *testing.T) {
+	raw := loadRaw(t)
+	raw["payments"] = append(raw["payments"], row.Row{
+		"id_payment": int64(77), "id_order": int64(1), "id_branch": int64(1), "id_business_party": int64(3), "financial_side": "receivable",
+		"payment_number": "PAY-PST/2026/00077", "payment_date": "2026-03-02T03:00:00Z", "amount": "50000.00", "amount_tendered": nil,
+		"payment_method": "transfer", "reference_number": nil, "notes": nil, "proof_file_path": nil, "id_created_by": int64(2),
+		"created_at": "2026-03-02 10:00:00.000000", "archived_at": "2026-03-03 10:00:00.000000",
+	})
+	raw["finance_posting_sources"] = append(raw["finance_posting_sources"], row.Row{"id_finance_posting_source": int64(977), "id_branch": int64(1),
+		"source_type": "payment", "id_source": int64(77), "event_key": "customer_payment", "posting_status": "posted", "id_journal_entry": int64(991)})
+	raw["finance_journal_entries"] = append(raw["finance_journal_entries"], row.Row{"id_finance_journal_entry": int64(991), "id_company": int64(1),
+		"id_branch": int64(1), "journal_number": "JE-PST/2026/00991", "journal_date": "2026-03-02T03:00:00.000000Z", "description": "Pembayaran",
+		"event_key": "customer_payment", "source_type": "payment", "id_source": int64(77), "status": "posted", "posting_type": "auto",
+		"posted_at": "2026-03-02T03:00:00.000000Z", "posted_by": int64(2), "created_at": "2026-03-02T03:00:00.000000Z",
+		"updated_at": "2026-03-02T03:00:00.000000Z", "archived_at": nil, "id_reversal_of": nil, "metadata_json": nil, "reversed_at": nil, "reversed_by": nil})
+	line := func(id, acct int64, dr, cr string) row.Row {
+		return row.Row{"id_finance_journal_line": id, "id_company": int64(1), "id_branch": int64(1), "id_finance_journal_entry": int64(991),
+			"id_finance_account": acct, "debit_amount": dr, "credit_amount": cr, "line_no": id - 9910, "id_product": nil, "id_product_variant": nil,
+			"id_business_party": int64(3), "id_inventory_movement": nil, "id_order": nil, "id_payment": int64(77), "description": nil,
+			"metadata_json": nil, "created_at": "2026-03-02T03:00:00.000000Z"}
+	}
+	raw["finance_journal_lines"] = append(raw["finance_journal_lines"], line(9911, 2, "50000.00", "0.00"), line(9912, 3, "0.00", "50000.00"))
+	out := run(t, raw)
+
+	var entry int64
+	for _, r := range out.Tables["migration_corrections"] {
+		if r.Str("kind") == "payment_cancelled_journal" {
+			if r.Int("amount") != 50000 || r.Str("debit_account") != "1100" || r.Str("credit_account") != "1010" {
+				t.Errorf("mirror = %v, want Dr 1100 / Cr 1010 Rp50000", r)
+			}
+			entry = r.Int("entry_id")
+		}
+	}
+	if entry == 0 {
+		t.Fatal("cancelled payment with a live journal was not mirrored")
+	}
+	party, _ := newID(out, "parties", 3), 0
+	for _, l := range out.Tables["finance_journal_lines"] {
+		if l.Int("entry_id") == entry && l.Int("debit") > 0 && l.Int("party_id") != party {
+			t.Errorf("receivable leg without the customer: %v (want party %d)", l, party)
+		}
+	}
+}

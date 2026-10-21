@@ -49,10 +49,21 @@ const (
 	// to the cost its purchases support (ADR-0018 D11g) — Dr Persediaan /
 	// Cr selisih persediaan (reversed for a write-down).
 	corrCostRevalue = "cost_revalue"
+	// corrPaymentCancelled: a payment cancelled in legacy whose journal was
+	// never reversed — the journal mirrored (ADR-0018 D11h).
+	corrPaymentCancelled = "payment_cancelled_journal"
+	// corrPaymentUnjournalled: a payment before the opening legacy never
+	// journalled — booked (cash against the party's receivable/payable).
+	corrPaymentUnjournalled = "payment_unjournalled"
+	// corrPayableAlign: a fully received PO whose receipt journals booked a
+	// payable different from its total — Hutang aligned, selisih persediaan.
+	corrPayableAlign = "po_payable_align"
 )
 
 type migCorrection struct {
 	kind, refType, reason    string
+	drKey, crKey             string // explicit legacy system keys (subledger rules)
+	drAcct, crAcct           int64  // explicit legacy account ids (a mirrored journal)
 	ref                      string // document number when the group needs one (revenue: the SO)
 	branch, doc              int64
 	party                    int64 // receivable leg (revenue)
@@ -67,6 +78,9 @@ type migCorrection struct {
 // corrAccounts are the legacy system keys a correction debits and credits
 // (before a negative amount swaps them).
 func corrAccounts(c migCorrection) (dr, cr string) {
+	if c.drKey != "" {
+		return c.drKey, c.crKey
+	}
 	switch c.kind {
 	case corrDNCancel, corrCOGSUnposted:
 		return "inventory", "cogs"
@@ -135,6 +149,13 @@ func (s *state) migrationCorrections() {
 		}
 	}
 	for _, c := range s.migCorr {
+		if c.drAcct != 0 {
+			if s.acct[c.drAcct] == nil || s.acct[c.crAcct] == nil {
+				s.find(report.Blocker, "MIG_CORR_ACCOUNT", "finance_accounts", c.drAcct, "akun jurnal legacy yang dicerminkan tidak termigrasi (koreksi %s)", c.kind)
+				return
+			}
+			continue
+		}
 		dr, cr := corrAccounts(c)
 		for _, key := range []string{dr, cr} {
 			if bySys[key] == nil {
@@ -177,6 +198,8 @@ func (s *state) migrationCorrections() {
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.product), s.productRow[c.product].Str("code")
 		case corrRevenueUnbooked, corrCancelledShipped: // one journal per sales order
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), c.ref
+		case corrPaymentCancelled, corrPaymentUnjournalled, corrPayableAlign: // one journal per document
+			key, ref = fmt.Sprintf("%s|%d|%s", c.kind, c.branch, c.ref), c.ref
 		default:
 			// One journal per document; document-less movements of a branch together.
 			ref = docNumber[c.refType+":"+strconv.FormatInt(c.doc, 10)]
@@ -237,6 +260,15 @@ func (s *state) migrationCorrections() {
 			memo = fmt.Sprintf("Koreksi migrasi: penjualan %s (%s) sudah dikirim dan HPP-nya dijurnal legacy, tetapi pendapatannya tidak pernah dijurnal (legacy menjurnal saat order selesai) dan SJ-nya di bawah batas cutover; piutang dan penjualan dibukukan (Dr Piutang / Cr Penjualan)", g.ref, g.items[0].reason)
 			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
 			desc = "Koreksi migrasi: pendapatan belum dijurnal " + g.ref
+		case corrPaymentCancelled:
+			memo = fmt.Sprintf("Koreksi migrasi: pembayaran %s dibatalkan di legacy tetapi jurnalnya tidak pernah dibalik; jurnal itu dibalik di sini", g.ref)
+			desc = "Koreksi migrasi: balik jurnal pembayaran batal " + g.ref
+		case corrPaymentUnjournalled:
+			memo = fmt.Sprintf("Koreksi migrasi: pembayaran %s bertanggal sebelum saldo awal tidak pernah dijurnal legacy (saldo awal tidak memuatnya); dibukukan di sini", g.ref)
+			desc = "Koreksi migrasi: pembayaran tanpa jurnal " + g.ref
+		case corrPayableAlign:
+			memo = fmt.Sprintf("Koreksi migrasi: hutang PO %s disesuaikan ke total order yang diterima penuh (jurnal penerimaan legacy berbeda); selisih ke selisih persediaan", g.ref)
+			desc = "Koreksi migrasi: penyesuaian hutang PO " + g.ref
 		case corrCostRevalue:
 			memo = fmt.Sprintf("Koreksi migrasi: produk %s dinilai ulang ke harga modal yang didukung harga beli (nilai buku legacy menyimpang >5%%); Persediaan disesuaikan lawan selisih persediaan", g.ref)
 			desc = "Koreksi migrasi: penilaian ulang persediaan " + g.ref
@@ -257,6 +289,9 @@ func (s *state) migrationCorrections() {
 		for _, c := range g.items {
 			dk, ck := corrAccounts(c)
 			d, cc := bySys[dk], bySys[ck]
+			if c.drAcct != 0 {
+				d, cc = s.acct[c.drAcct], s.acct[c.crAcct]
+			}
 			amt := c.amount
 			if amt < 0 { // a negative write-down reverses the legs
 				d, cc, amt = cc, d, -amt
@@ -270,6 +305,12 @@ func (s *state) migrationCorrections() {
 				dr, cr int64
 			}{{d, amt, 0}, {cc, 0, amt}} {
 				var product, legVariant, party any = c.product, variant, nil
+				if c.product == 0 {
+					product = nil
+				}
+				if c.party != 0 && leg.a.dimKind == "party" && c.kind != corrRevenueUnbooked {
+					party = c.party
+				}
 				if c.kind == corrRevenueUnbooked {
 					// Dimensions as the revamp's delivery journal: the customer on
 					// Piutang, the product on Penjualan, none on PPN Keluaran.

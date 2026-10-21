@@ -36,6 +36,7 @@ var accountTypeMap = map[string]string{
 func (s *state) finance() error {
 	s.accounts()
 	s.journals()
+	s.subledgerCorrections()
 	s.migrationCorrections()
 	s.roundingSummary()
 	s.expenses()
