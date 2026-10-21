@@ -95,9 +95,12 @@ mkdir -p ~/minierp/data/storage ~/minierp/backups
 chmod 600 ~/minierp/.env && chmod +x ~/minierp/deploy.sh
 sudo chown -R 10001:10001 ~/minierp/data/storage
 
-# 3. Deploy pertama (database masih kosong -> backup dilewati), lalu seed awal
+# 3. Deploy pertama (database masih kosong -> backup dilewati), lalu seed awal:
+#    `init` = katalog izin, role, chart, cabang kepala; `admin` = user owner pertama
+#    (password acak dicetak SEKALI — arahkan ke berkas 600, ganti setelah login, hapus berkasnya)
 cd ~/minierp && SKIP_BACKUP=1 ./deploy.sh <git-sha>
-docker compose -f docker-compose.prod.yml run --rm --entrypoint ./seed app init
+docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint ./seed app init
+(umask 077; docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint ./seed app admin > ADMIN_AWAL.txt)
 
 # 4. nginx + TLS (templat: infra/nginx/nginx.conf)
 sudo cp nginx.conf /etc/nginx/sites-available/minierp && sudo ln -s ../sites-available/minierp /etc/nginx/sites-enabled/
