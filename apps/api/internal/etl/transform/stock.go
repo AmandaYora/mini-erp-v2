@@ -810,6 +810,7 @@ func (s *state) costBaseline(rows map[int64]*crow) []baselineRow {
 				s.find(report.Warn, "COST_STATE_NO_VALUE", "finance_inventory_cost_states", lid,
 					"keadaan biaya legacy ber-qty bernilai Rp%d padahal baris biayanya Rp%d: ditulis naik Rp%d, jurnal koreksi migrasi Dr Persediaan / Cr selisih persediaan", rowsValue-want, rowsValue, want)
 			}
+			value = s.revalueToPurchaseEvidence(c, lid, br, p, heldKeys, qtys, value)
 			for i, part := range SplitByQty(value, qtys) {
 				target[heldKeys[i]] = part
 			}
@@ -929,6 +930,94 @@ func (s *state) receiptCosts() func(x *mov) *big.Rat {
 		}
 		return new(big.Rat)
 	}
+}
+
+// purchaseUnitCost is the last confirmed purchase price of each product per
+// base unit (fallback: the product's purchase price) — the evidence a
+// migrated inventory value is checked against.
+func (s *state) purchaseUnitCost() map[int64]*big.Rat {
+	if s.lastBuy != nil {
+		return s.lastBuy
+	}
+	s.lastBuy = map[int64]*big.Rat{}
+	for _, p := range s.out.Tables["products"] {
+		if pp := p.Rat("purchase_price"); pp.Sign() > 0 {
+			s.lastBuy[p.Int("id")] = pp
+		}
+	}
+	live := map[int64]string{}
+	for _, o := range s.out.Tables["purchase_orders"] {
+		if st := o.Str("status"); st == "confirmed" || st == "completed" {
+			live[o.Int("id")] = o.Str("order_date")
+		}
+	}
+	type buy struct {
+		date string
+		id   int64
+		unit *big.Rat
+	}
+	latest := map[int64]buy{}
+	for _, l := range s.out.Tables["purchase_order_items"] {
+		d, ok := live[l.Int("order_id")]
+		if !ok || l.Rat("qty_base").Sign() <= 0 || l.Int("unit_price") <= 0 {
+			continue
+		}
+		unit := new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt64(l.Int("unit_price")), l.Rat("qty")), l.Rat("qty_base"))
+		b := buy{date: d, id: l.Int("id"), unit: unit}
+		if cur, ok := latest[l.Int("product_id")]; !ok || b.date > cur.date || (b.date == cur.date && b.id > cur.id) {
+			latest[l.Int("product_id")] = b
+		}
+	}
+	for p, b := range latest {
+		s.lastBuy[p] = b.unit
+	}
+	return s.lastBuy
+}
+
+// revalueToPurchaseEvidence returns the value a migrated position should
+// carry (ADR-0018 D11g). Legacy's inventory value (what its books hold) can
+// drift far from what the goods cost — the rehearsal found 128 products whose
+// book unit cost was up to twice the purchase price, which would make every
+// later sale look like a loss. When the book unit cost deviates more than 5%
+// from legacy's own average cost, and that average is the closer one to the
+// last purchase price, the position is revalued to average x units and a
+// migration correction moves the books by the same amount (Persediaan against
+// selisih persediaan), so books and ledger stay equal and future COGS is real.
+func (s *state) revalueToPurchaseEvidence(c row.Row, lid, br, p int64, heldKeys [][3]int64, qtys []*big.Rat, value int64) int64 {
+	held := new(big.Rat)
+	for _, q := range qtys {
+		held.Add(held, q)
+	}
+	avg := c.Rat("average_cost")
+	if !c.Has("average_cost") {
+		avg = c.Rat("unit_cost")
+	}
+	ref := s.purchaseUnitCost()[p]
+	if held.Sign() <= 0 || avg.Sign() <= 0 || ref == nil || ref.Sign() <= 0 || len(heldKeys) == 0 {
+		return value
+	}
+	unit := new(big.Rat).Quo(new(big.Rat).SetInt64(value), held)
+	if new(big.Rat).Abs(new(big.Rat).Sub(unit, avg)).Cmp(new(big.Rat).Mul(avg, big.NewRat(5, 100))) <= 0 {
+		return value
+	}
+	if new(big.Rat).Abs(new(big.Rat).Sub(avg, ref)).Cmp(new(big.Rat).Abs(new(big.Rat).Sub(unit, ref))) > 0 {
+		return value // the book cost is the one the purchases support
+	}
+	revalued := RoundHalfAway(new(big.Rat).Mul(avg, held))
+	delta := revalued - value
+	if delta == 0 {
+		return value
+	}
+	s.migCorr = append(s.migCorr, migCorrection{kind: corrCostRevalue, branch: br, product: p, variant: heldKeys[0][2], legacyState: lid, amount: delta})
+	s.out.Explain["cost_revalued_products"]++
+	s.out.Explain["cost_revalued_abs_delta"] += abs64(delta)
+	s.emit("cost_revaluation", row.Row{"branch": s.branchCode[br], "product_code": s.productRow[p].Str("code"), "product_name": s.productRow[p].Str("name"),
+		"qty": held.FloatString(4), "book_unit_cost": unit.FloatString(2), "legacy_avg_cost": avg.FloatString(2), "last_purchase_unit_cost": ref.FloatString(2),
+		"book_value": value, "revalued_value": revalued, "delta": delta, "legacy_state": lid})
+	s.find(report.Warn, "COST_REVALUED", "finance_inventory_cost_states", lid,
+		"nilai persediaan disesuaikan Rp%d: nilai buku legacy %s/unit menyimpang dari rata-rata legacy %s/unit yang didukung harga beli terakhir %s/unit; dinilai ulang ke rata-rata x %s unit, jurnal koreksi migrasi Persediaan / selisih persediaan",
+		delta, unit.FloatString(2), avg.FloatString(2), ref.FloatString(2), held.FloatString(4))
+	return revalued
 }
 
 // unjournalled finds the estimated cost rows no revamp journal will ever

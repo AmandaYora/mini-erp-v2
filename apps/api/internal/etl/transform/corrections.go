@@ -45,6 +45,10 @@ const (
 	// as a new order) whose COGS legacy journalled — not the cost of a sale,
 	// so Dr selisih persediaan / Cr HPP. Quantities are not touched.
 	corrCancelledShipped = "cancelled_order_cogs"
+	// corrCostRevalue: a position revalued from legacy's drifted book value
+	// to the cost its purchases support (ADR-0018 D11g) — Dr Persediaan /
+	// Cr selisih persediaan (reversed for a write-down).
+	corrCostRevalue = "cost_revalue"
 )
 
 type migCorrection struct {
@@ -169,7 +173,7 @@ func (s *state) migrationCorrections() {
 		switch c.kind {
 		case corrDNCancel:
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), docNumber["delivery:"+strconv.FormatInt(c.doc, 10)]
-		case corrStateNoQty, corrStateNoValue:
+		case corrStateNoQty, corrStateNoValue, corrCostRevalue:
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.product), s.productRow[c.product].Str("code")
 		case corrRevenueUnbooked, corrCancelledShipped: // one journal per sales order
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), c.ref
@@ -233,6 +237,9 @@ func (s *state) migrationCorrections() {
 			memo = fmt.Sprintf("Koreksi migrasi: penjualan %s (%s) sudah dikirim dan HPP-nya dijurnal legacy, tetapi pendapatannya tidak pernah dijurnal (legacy menjurnal saat order selesai) dan SJ-nya di bawah batas cutover; piutang dan penjualan dibukukan (Dr Piutang / Cr Penjualan)", g.ref, g.items[0].reason)
 			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
 			desc = "Koreksi migrasi: pendapatan belum dijurnal " + g.ref
+		case corrCostRevalue:
+			memo = fmt.Sprintf("Koreksi migrasi: produk %s dinilai ulang ke harga modal yang didukung harga beli (nilai buku legacy menyimpang >5%%); Persediaan disesuaikan lawan selisih persediaan", g.ref)
+			desc = "Koreksi migrasi: penilaian ulang persediaan " + g.ref
 		case corrCancelledShipped:
 			memo = fmt.Sprintf("Koreksi migrasi: order %s dibatalkan di legacy dan diganti order baru, tetapi SJ-nya (%s) tetap terkonfirmasi dan HPP-nya dijurnal; bukan penjualan, HPP dipindah ke selisih persediaan (Dr Selisih Persediaan / Cr HPP), qty stok tidak diubah", g.ref, g.items[0].reason)
 			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
@@ -281,7 +288,7 @@ func (s *state) migrationCorrections() {
 			}
 			var mv, legacy any = nil, c.legacyState
 			switch c.kind {
-			case corrStateNoQty, corrStateNoValue:
+			case corrStateNoQty, corrStateNoValue, corrCostRevalue:
 			case corrRevenueUnbooked:
 				legacy = c.legacyMovement // the legacy SJ (or order of a synthetic SJ)
 			default:

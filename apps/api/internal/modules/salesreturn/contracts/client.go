@@ -269,3 +269,21 @@ func PermissionCatalog() []usercontracts.PermissionSeed {
 		{Code: "salesreturn.refund", Name: "Retur Jual: Refund"},
 	}
 }
+
+// MoneyEffect is what a confirmed return means in money, the one rule every
+// reader shares: a plain return is owed back to the customer in full (refund
+// kind); an exchange owes only its difference — back to the customer when the
+// replacement is worth less (refund kind), a surcharge when it is worth more
+// (charge kind), nothing when they are equal.
+func MoneyEffect(mode string, total, difference int64) (amount int64, kind string) {
+	if mode != ReturnModeExchange {
+		return total, KindRefund
+	}
+	switch {
+	case difference < 0:
+		return -difference, KindRefund
+	case difference > 0:
+		return difference, KindCharge
+	}
+	return 0, KindRefund
+}

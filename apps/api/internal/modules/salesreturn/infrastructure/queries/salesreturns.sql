@@ -117,7 +117,7 @@ SELECT id, sales_order_id FROM sales_returns
 WHERE id IN (sqlc.slice('ids'));
 
 -- name: ConfirmedByOrders :many
-SELECT id, number, branch_id, sales_order_id, total, status FROM sales_returns
+SELECT id, number, branch_id, sales_order_id, total, status, return_mode, difference_amount FROM sales_returns
 WHERE branch_id = sqlc.arg(branch_id) AND status = 'confirmed'
   AND sales_order_id IN (sqlc.slice('order_ids'))
 ORDER BY id ASC;

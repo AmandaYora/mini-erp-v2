@@ -109,19 +109,9 @@ func (s *Service) GetReturn(ctx context.Context, id int64) (*contracts.Return, e
 // difference (refund when the customer is owed, charge when they owe).
 func projection(ret *contracts.SalesReturn) *contracts.Return {
 	out := &contracts.Return{
-		ID: ret.ID, Number: ret.Number, Branch: ret.BranchID,
-		OrderID: ret.SalesOrderID, Total: ret.Total, Kind: contracts.KindRefund, Status: ret.Status,
+		ID: ret.ID, Number: ret.Number, Branch: ret.BranchID, OrderID: ret.SalesOrderID, Status: ret.Status,
 	}
-	if ret.ReturnMode == contracts.ReturnModeExchange {
-		switch {
-		case ret.DifferenceAmount < 0:
-			out.Total = -ret.DifferenceAmount
-		case ret.DifferenceAmount > 0:
-			out.Total, out.Kind = ret.DifferenceAmount, contracts.KindCharge
-		default:
-			out.Total = 0
-		}
-	}
+	out.Total, out.Kind = contracts.MoneyEffect(ret.ReturnMode, ret.Total, ret.DifferenceAmount)
 	return out
 }
 

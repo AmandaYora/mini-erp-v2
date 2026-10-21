@@ -1,6 +1,7 @@
 package transform_test
 
 import (
+	"math/big"
 	"strings"
 	"testing"
 
@@ -328,5 +329,39 @@ func TestTransformCancelledOrderShippedCOGS(t *testing.T) {
 	}
 	if f := finding(out, "REVENUE_UNBOOKED_CANCELLED", 6); f == nil || !strings.Contains(f.Detail, "Rp33000") {
 		t.Errorf("REVENUE_UNBOOKED_CANCELLED = %+v", f)
+	}
+}
+
+// ADR-0018 D11g: a legacy book value that drifted from what the goods cost
+// (here twice the average, which the purchase price supports) is revalued to
+// average x units; the correction moves the books by the same amount.
+func TestTransformRevaluesDriftedBookCost(t *testing.T) {
+	raw := loadRaw(t)
+	for _, c := range raw["finance_inventory_cost_states"] {
+		if c.Int("id_finance_inventory_cost_state") == 1 {
+			c["inventory_value"] = "2000000.00" // book doubled; unit_cost (average) stays 10.000
+		}
+	}
+	out := run(t, raw)
+	rv := out.Tables["cost_revaluation"]
+	if len(rv) != 1 || rv[0].Str("product_code") != "BRG-001" {
+		t.Fatalf("cost_revaluation = %v, want BRG-001 only", rv)
+	}
+	qty := rv[0].Rat("qty")
+	want := new(big.Rat).Mul(qty, big.NewRat(10000, 1))
+	if got := rv[0].Rat("revalued_value"); got.Cmp(want) != 0 {
+		t.Errorf("revalued value = %s, want 10.000 x %s", got.FloatString(2), qty.FloatString(4))
+	}
+	var corr int64
+	for _, r := range out.Tables["migration_corrections"] {
+		if r.Str("kind") == "cost_revalue" {
+			corr += r.Int("amount")
+		}
+	}
+	if corr >= 0 || corr != rv[0].Int("delta") {
+		t.Errorf("revaluation correction = %d, want the (negative) delta %d", corr, rv[0].Int("delta"))
+	}
+	if f := finding(out, "COST_REVALUED", 1); f == nil {
+		t.Error("COST_REVALUED finding missing")
 	}
 }

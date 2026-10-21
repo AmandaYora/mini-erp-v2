@@ -141,6 +141,19 @@ func (o *Output) Write(work string) (*Manifest, error) {
 	if err := report.WriteTable(filepath.Join(ReportDir(work), "cost_baseline_review.csv"), review); err != nil {
 		return nil, err
 	}
+	// Products revalued to their purchase-supported cost (ADR-0018 D11g, COST_REVALUED).
+	cols = []string{"branch", "product_code", "product_name", "qty", "book_unit_cost", "legacy_avg_cost", "last_purchase_unit_cost", "book_value", "revalued_value", "delta", "legacy_state"}
+	reval := [][]string{cols}
+	for _, r := range o.Tables["cost_revaluation"] {
+		line := make([]string, len(cols))
+		for i, c := range cols {
+			line[i] = r.Str(c)
+		}
+		reval = append(reval, line)
+	}
+	if err := report.WriteTable(filepath.Join(ReportDir(work), "cost_revaluation.csv"), reval); err != nil {
+		return nil, err
+	}
 	if _, err := writeAny(filepath.Join(dir, "manifest.json"), man); err != nil {
 		return nil, err
 	}

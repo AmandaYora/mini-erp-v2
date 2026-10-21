@@ -93,14 +93,18 @@ func toConfirmed(r sqlc.ListConfirmedAfterRow) *contracts.SalesReturn {
 	}
 }
 
-// toReturnProjection maps the payment-facing projection of ConfirmedByOrders.
+// toReturnProjection maps the payment-facing projection of ConfirmedByOrders:
+// Total is the return's money effect, not its goods value (an even exchange
+// owes nothing), with the same rule as GetReturn.
 func toReturnProjection(r sqlc.ConfirmedByOrdersRow) *contracts.Return {
+	total, kind := contracts.MoneyEffect(r.ReturnMode, r.Total, r.DifferenceAmount)
 	return &contracts.Return{
 		ID:      r.ID,
 		Number:  r.Number,
 		Branch:  r.BranchID,
 		OrderID: r.SalesOrderID,
-		Total:   r.Total,
+		Total:   total,
+		Kind:    kind,
 		Status:  r.Status,
 	}
 }

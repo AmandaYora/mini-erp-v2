@@ -165,6 +165,19 @@ func TestExchangeDifferenceAndKind(t *testing.T) {
 	if equal.DifferenceAmount != 0 {
 		t.Fatalf("equal exchange diff = %d, want 0", equal.DifferenceAmount)
 	}
+	// An even exchange, once confirmed, owes the customer nothing: the party
+	// balance must not list its goods value as money owed (it would invite a
+	// refund the customer was never due).
+	if _, err := m.salesreturn.Service().Confirm(ctx(), 0, fx.branchID, equal.ID); err != nil {
+		t.Fatalf("confirm equal exchange: %v", err)
+	}
+	bal, err := m.payment.Service().GetPartyBalance(ctx(), fx.branchID, fx.customerID)
+	if err != nil {
+		t.Fatalf("party balance: %v", err)
+	}
+	if len(bal.Returns) != 0 || bal.TotalReturned != 0 {
+		t.Fatalf("even exchange counted as owed: returns=%+v totalReturned=%d", bal.Returns, bal.TotalReturned)
+	}
 }
 
 // F2a-8 #5 (purchase side): future-dated return rejected; a confirmed return

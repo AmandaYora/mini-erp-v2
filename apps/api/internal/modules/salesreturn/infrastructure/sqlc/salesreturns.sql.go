@@ -156,7 +156,7 @@ func (q *Queries) CommittedQtyBySO(ctx context.Context, salesOrderID int64) ([]C
 }
 
 const confirmedByOrders = `-- name: ConfirmedByOrders :many
-SELECT id, number, branch_id, sales_order_id, total, status FROM sales_returns
+SELECT id, number, branch_id, sales_order_id, total, status, return_mode, difference_amount FROM sales_returns
 WHERE branch_id = ? AND status = 'confirmed'
   AND sales_order_id IN (/*SLICE:order_ids*/?)
 ORDER BY id ASC
@@ -168,12 +168,14 @@ type ConfirmedByOrdersParams struct {
 }
 
 type ConfirmedByOrdersRow struct {
-	ID           int64
-	Number       string
-	BranchID     int64
-	SalesOrderID int64
-	Total        int64
-	Status       string
+	ID               int64
+	Number           string
+	BranchID         int64
+	SalesOrderID     int64
+	Total            int64
+	Status           string
+	ReturnMode       string
+	DifferenceAmount int64
 }
 
 func (q *Queries) ConfirmedByOrders(ctx context.Context, arg ConfirmedByOrdersParams) ([]ConfirmedByOrdersRow, error) {
@@ -203,6 +205,8 @@ func (q *Queries) ConfirmedByOrders(ctx context.Context, arg ConfirmedByOrdersPa
 			&i.SalesOrderID,
 			&i.Total,
 			&i.Status,
+			&i.ReturnMode,
+			&i.DifferenceAmount,
 		); err != nil {
 			return nil, err
 		}

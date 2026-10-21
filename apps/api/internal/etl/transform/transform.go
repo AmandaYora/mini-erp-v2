@@ -2,6 +2,7 @@ package transform
 
 import (
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 	"time"
@@ -129,6 +130,7 @@ type state struct {
 	orderLines     map[int64][]row.Row // legacy order items per legacy order
 	migCorr        []migCorrection     // legacy errors the ETL corrects with a journal (ADR-0018 D11)
 	revCand        []revCandidate      // order SJs whose revenue no journal will ever book (REVENUE_UNBOOKED)
+	lastBuy        map[int64]*big.Rat  // product -> last purchase unit cost per base unit (lazy)
 
 	// returns (returns.go)
 	srNew     map[int64]int64 // legacy sales return -> new id

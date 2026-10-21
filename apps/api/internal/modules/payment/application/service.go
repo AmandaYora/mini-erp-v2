@@ -1060,6 +1060,12 @@ func (s *Service) appendReturnBalances(ctx context.Context, bal *contracts.Party
 			if !ok || partyID != bal.PartyID {
 				continue
 			}
+			// Only what the return owes the customer belongs here: an even
+			// exchange owes nothing, and a surcharge is the customer's debt,
+			// collected on the return itself (Total is the money effect).
+			if r.Kind == salesreturncontracts.KindCharge || r.Total <= 0 {
+				continue
+			}
 			matched = append(matched, match{id: r.ID, total: r.Total, number: r.Number})
 		}
 		ids := make([]int64, 0, len(matched))
