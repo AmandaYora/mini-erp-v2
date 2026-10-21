@@ -48,6 +48,12 @@ import {
   isPrepaidBlocked,
 } from "@/modules/payment/lib/order-billing";
 import { hasFulfilledDocument, lineKey } from "@/modules/payment/lib/order-history";
+import { ReasonDialog } from "@/modules/purchasing/components/ReasonDialog";
+import { HeaderEditSheet } from "@/modules/purchasing/components/HeaderEditSheet";
+import { ShortCloseSheet } from "@/modules/purchasing/components/ShortCloseSheet";
+import { PriceCorrectionSheet } from "@/modules/purchasing/components/PriceCorrectionSheet";
+import { CorrectionHistoryCard } from "@/modules/purchasing/components/CorrectionHistoryCard";
+import type { PurchaseHeaderValues, PriceCorrectionLineValues } from "@/modules/purchasing/schemas/purchase-correction.schema";
 
 /** Info turunan baris barang (diskon, pajak, catatan) untuk baris kedua redup. */
 function lineSubText(it: PurchaseOrderItem): string[] {
@@ -67,6 +73,12 @@ function lineSubText(it: PurchaseOrderItem): string[] {
   return parts;
 }
 
+/** " (oleh Rani, 21 Okt 2026)" — siapa & kapan sebuah order dibatalkan/ditutup. */
+function stampText(name: string | undefined, at: string | undefined): string {
+  const parts = [name ? `oleh ${name}` : "", at ? formatDate(at) : ""].filter((p) => p !== "");
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
+
 export default function PurchaseOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -82,6 +94,10 @@ export default function PurchaseOrderDetailPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  // Panel koreksi yang terbuka (satu sekaligus) dan galat server-nya.
+  const [sheet, setSheet] = useState<"header" | "shortClose" | "price" | null>(null);
+  const [sheetBusy, setSheetBusy] = useState(false);
+  const [sheetError, setSheetError] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   // Naik tiap dokumen terkait berubah → riwayat dimuat ulang.
@@ -144,12 +160,63 @@ export default function PurchaseOrderDetailPage() {
     );
   }
 
-  function handleCancel() {
-    setCancelOpen(false);
-    void runAction(
-      () => purchaseOrderService.cancel(orderId),
-      "Order dibatalkan",
-      "Gagal membatalkan",
+  /** Aksi koreksi dari panel/dialog: galat server tampil di panel itu sendiri. */
+  async function runSheet(
+    fn: () => Promise<{ data: PurchaseOrder; message: string }>,
+    fallback: string,
+    close: () => void,
+  ) {
+    setSheetBusy(true);
+    setSheetError(null);
+    try {
+      const res = await fn();
+      toast.fromServer(res.message, fallback, res.data.number);
+      close();
+      refresh();
+    } catch (err) {
+      setSheetError(formatApiError(err));
+    } finally {
+      setSheetBusy(false);
+    }
+  }
+
+  function openSheet(kind: "header" | "shortClose" | "price") {
+    setSheetError(null);
+    setSheet(kind);
+  }
+
+  function handleCancel(reason: string) {
+    void runSheet(() => purchaseOrderService.cancel(orderId, reason), "Order dibatalkan", () => setCancelOpen(false));
+  }
+
+  function handleHeader(v: PurchaseHeaderValues) {
+    void runSheet(
+      () =>
+        purchaseOrderService.updateHeader(orderId, {
+          dueDate: v.dueDate || undefined,
+          paymentTermDays: v.paymentTermDays,
+          notes: v.notes,
+          supplierInvoiceNumber: v.supplierInvoiceNumber,
+          supplierInvoiceDate: v.supplierInvoiceDate || undefined,
+          taxInvoiceNumber: v.taxInvoiceNumber,
+          taxInvoiceDate: v.taxInvoiceDate || undefined,
+          assignedUserId: v.assignedUserId,
+          reason: v.reason || undefined,
+        }),
+      "Info dokumen disimpan",
+      () => setSheet(null),
+    );
+  }
+
+  function handleShortClose(reason: string) {
+    void runSheet(() => purchaseOrderService.shortClose(orderId, reason), "Sisa order ditutup", () => setSheet(null));
+  }
+
+  function handlePriceCorrection(lines: PriceCorrectionLineValues[], reason: string) {
+    void runSheet(
+      () => purchaseOrderService.correctPrices(orderId, { lines, reason }),
+      "Harga beli dikoreksi",
+      () => setSheet(null),
     );
   }
 
@@ -185,7 +252,11 @@ export default function PurchaseOrderDetailPage() {
   const badge = billingBadge(billing);
   const isDraft = order.status === "draft";
   const isConfirmed = order.status === "confirmed";
-  const canEdit = isDraft && canUpdate;
+  const isCompleted = order.status === "completed";
+  // Order terkonfirmasi tanpa penerimaan/pembayaran/retur masih diubah lewat form penuh.
+  const canEdit = canUpdate && (isDraft || (isConfirmed && order.hasDependents === false));
+  const canEditHeader = canUpdate && ((isConfirmed && order.hasDependents === true) || isCompleted);
+  const canCorrectPrice = canUpdate && ((isConfirmed && order.hasDependents === true) || isCompleted);
   const fulfilled = hasFulfilledDocument(history.data?.events ?? []);
   const showReceive = canReceive && canCreateReceipt(order);
   const showPay = canPay && canRecordPayment(order);
@@ -205,11 +276,29 @@ export default function PurchaseOrderDetailPage() {
   // Satu aksi utama menurut status; maksimal dua sekunder; sisanya di menu.
   const menuItems: ActionMenuItem[] = [];
   if (showReturn) menuItems.push({ key: "return", label: "Retur ke pemasok", onSelect: goReturn, disabled: acting });
+  if (canEditHeader) {
+    menuItems.push({ key: "header", label: "Ubah info dokumen", onSelect: () => openSheet("header"), disabled: acting });
+  }
+  if (canCorrectPrice) {
+    menuItems.push({ key: "price", label: "Koreksi harga", onSelect: () => openSheet("price"), disabled: acting });
+  }
+  if (isConfirmed && canCancel && fulfilled) {
+    menuItems.push({
+      key: "short-close",
+      label: "Tutup sisa order",
+      onSelect: () => openSheet("shortClose"),
+      destructive: true,
+      disabled: acting,
+    });
+  }
   if ((isDraft || isConfirmed) && canCancel) {
     menuItems.push({
       key: "cancel",
       label: "Batalkan order",
-      onSelect: () => setCancelOpen(true),
+      onSelect: () => {
+        setSheetError(null);
+        setCancelOpen(true);
+      },
       destructive: true,
       disabled: acting,
     });
@@ -270,6 +359,18 @@ export default function PurchaseOrderDetailPage() {
       {actionError && (
         <Notice tone="danger" title="Aksi ditolak">
           {actionError}
+        </Notice>
+      )}
+      {order.status === "cancelled" && order.cancelReason && (
+        <Notice tone="neutral" title="Order dibatalkan">
+          {order.cancelReason}
+          {stampText(order.cancelledByName, order.cancelledAt)}
+        </Notice>
+      )}
+      {order.shortCloseReason && (
+        <Notice tone="neutral" title="Sisa order ditutup">
+          {order.shortCloseReason}
+          {stampText(order.shortClosedByName, order.shortClosedAt)}
         </Notice>
       )}
       {prepaidBlocked && (
@@ -355,6 +456,8 @@ export default function PurchaseOrderDetailPage() {
               />
             </SectionCard>
 
+            <CorrectionHistoryCard corrections={order.corrections ?? []} />
+
             {!isDraft && (
               <OrderHistoryCard
                 events={history.data?.events ?? []}
@@ -438,15 +541,49 @@ export default function PurchaseOrderDetailPage() {
         onConfirm={() => void handleConfirm()}
         onCancel={() => setConfirmOpen(false)}
       />
-      <ConfirmDialog
+      <ReasonDialog
+        key={cancelOpen ? "cancel-open" : "cancel-closed"}
         open={cancelOpen}
         title="Batalkan order"
-        message={`Batalkan order ${order.number}? Server menolak bila masih ada penerimaan, pembayaran, atau retur aktif — batalkan dokumen itu dulu.`}
+        message={`Batalkan order ${order.number}? Order yang sudah punya penerimaan terposting tidak bisa dibatalkan: kembalikan barang lewat retur, atau tutup sisa order.`}
         confirmLabel="Batalkan order"
-        tone="danger"
-        onConfirm={() => void handleCancel()}
-        onCancel={() => setCancelOpen(false)}
+        placeholder="Mis. order dobel, pemasok batal kirim"
+        submitting={sheetBusy}
+        serverError={sheetError}
+        onClose={() => setCancelOpen(false)}
+        onConfirm={handleCancel}
       />
+      {sheet === "header" && (
+        <HeaderEditSheet
+          open
+          order={order}
+          submitting={sheetBusy}
+          serverError={sheetError}
+          onClose={() => setSheet(null)}
+          onSubmit={handleHeader}
+        />
+      )}
+      {sheet === "shortClose" && (
+        <ShortCloseSheet
+          open
+          orderId={order.id}
+          orderNumber={order.number}
+          submitting={sheetBusy}
+          serverError={sheetError}
+          onClose={() => setSheet(null)}
+          onConfirm={handleShortClose}
+        />
+      )}
+      {sheet === "price" && (
+        <PriceCorrectionSheet
+          open
+          order={order}
+          submitting={sheetBusy}
+          serverError={sheetError}
+          onClose={() => setSheet(null)}
+          onConfirm={handlePriceCorrection}
+        />
+      )}
 
       <OrderPaymentModal
         open={paymentOpen}

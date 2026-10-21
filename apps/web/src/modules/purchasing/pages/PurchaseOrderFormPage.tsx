@@ -248,7 +248,11 @@ export default function PurchaseOrderFormPage() {
   // null = otomatis (terbuka bila ada isi/galat); true/false = pilihan pengguna.
   const [detailOpenState, setDetailOpenState] = useState<boolean | null>(null);
 
-  const readOnly = isEdit && loaded !== null && loaded.status !== "draft";
+  // Draf bebas diubah; order terkonfirmasi tanpa penerimaan/pembayaran/retur
+  // juga (server menolak perubahan harga/qty bila sudah ada yang bergantung).
+  const readOnly = isEdit && loaded !== null && loaded.status !== "draft" && loaded.status !== "confirmed";
+  const editingConfirmed = isEdit && loaded?.status === "confirmed";
+  const [changeReason, setChangeReason] = useState("");
   usePageCrumb(isEdit ? loaded?.number : undefined);
 
   const draftSnapshot = useMemo<PurchaseFormDraft>(
@@ -597,6 +601,7 @@ export default function PurchaseOrderFormPage() {
         taxInvoiceDate: taxInvoiceDate.trim() === "" ? undefined : taxInvoiceDate.trim(),
         // 0 saat diedit = hapus penanggung jawab.
         assignedUserId: assignedUserId ?? 0,
+        ...(editingConfirmed && changeReason.trim() !== "" ? { reason: changeReason.trim() } : {}),
         items: lines.map((l) => ({
           productId: (l.productId as number | null) ?? 0,
           variantId: (l.variantId as number | null) ?? 0,
@@ -924,7 +929,9 @@ export default function PurchaseOrderFormPage() {
       <PageHeader
         title={isEdit ? `Ubah order ${loaded?.number ?? ""}`.trim() : "Order beli baru"}
         description={
-          isEdit ? "Hanya order berstatus draf yang bisa diubah." : "Harga dan pajak final dihitung server saat simpan."
+          isEdit
+            ? "Draf dan order terkonfirmasi yang belum diterima, dibayar, atau diretur bisa diubah."
+            : "Harga dan pajak final dihitung server saat simpan."
         }
         actions={
           showDraftIndicator ? (
@@ -940,7 +947,14 @@ export default function PurchaseOrderFormPage() {
 
       {readOnly && (
         <Notice tone="warning" title="Order tidak bisa diubah">
-          Hanya order berstatus draf yang bisa diubah. Detail bersifat baca-saja.
+          Order yang sudah selesai atau dibatalkan tidak bisa diubah. Detail bersifat baca-saja.
+        </Notice>
+      )}
+      {editingConfirmed && (
+        <Notice tone="info" title="Mengubah order terkonfirmasi">
+          Perubahan dicatat di riwayat audit beserta nilai sebelumnya. Bila order sudah punya penerimaan,
+          pembayaran, atau retur, hanya info dokumen yang bisa diubah: pakai &quot;Ubah info dokumen&quot; atau
+          &quot;Koreksi harga&quot; di halaman detail.
         </Notice>
       )}
 
@@ -1104,6 +1118,19 @@ export default function PurchaseOrderFormPage() {
                   />
                 </FormField>
               </div>
+              {editingConfirmed && (
+                <div className="sm:col-span-2 lg:col-span-4">
+                  <FormField label="Alasan perubahan" helperText="Opsional, tersimpan di riwayat audit.">
+                    <TextArea
+                      rows={2}
+                      maxLength={500}
+                      value={changeReason}
+                      placeholder="Mis. salah ketik qty dari pemasok"
+                      onChange={(e) => setChangeReason(e.target.value)}
+                    />
+                  </FormField>
+                </div>
+              )}
             </div>
           </CollapsibleContent>
         </Collapsible>

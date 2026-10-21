@@ -7,8 +7,8 @@
 // - TIDAK ada receivedQty di item — progres penerimaan dibaca dari status
 //   (completed via penerimaan), bukan dari baris order.
 // - Status: draft → confirmed → completed / cancelled (contracts/client.go).
-// - Confirm: POST /:id/confirm tanpa body. Cancel: POST /:id/cancel tanpa
-//   body (TIDAK ada reason).
+// - Confirm: POST /:id/confirm tanpa body. Cancel: POST /:id/cancel dengan
+//   body {reason} (wajib).
 //
 // Hasil verifikasi Tahap C (JANGAN ditebak ulang):
 // - orderView + orderPayload membawa supplierInvoiceNumber,
@@ -93,7 +93,125 @@ export interface PurchaseOrder {
   paymentStatus?: string;
   effectiveDueDate?: string;
   isOverdue?: boolean;
+  /** Alasan, waktu (WIB), dan pembatal order (kosong bila tidak dibatalkan). */
+  cancelReason?: string;
+  cancelledAt?: string;
+  cancelledByName?: string;
+  /** "Tutup sisa order": alasan, waktu (WIB), dan penutup. */
+  shortCloseReason?: string;
+  shortClosedAt?: string;
+  shortClosedByName?: string;
+  /** Hanya detail order terkonfirmasi: sudah ada penerimaan/pembayaran/retur. */
+  hasDependents?: boolean;
+  /** Hanya detail: riwayat koreksi (koreksi harga, tutup sisa order). */
+  corrections?: PurchaseOrderCorrection[];
   items: PurchaseOrderItem[];
+}
+
+export type PurchaseCorrectionKind = "price" | "short_close";
+
+export interface PurchaseOrderCorrectionLine {
+  itemId: number;
+  productId: number;
+  variantId: number;
+  productName: string;
+  uom: string;
+  stockTracked: boolean;
+  receivedQty: number;
+  oldQty: number;
+  newQty: number;
+  oldUnitPrice: number;
+  newUnitPrice: number;
+  oldDiscountPct: number;
+  newDiscountPct: number;
+  oldDiscountNominal: number;
+  newDiscountNominal: number;
+  oldLineTotal: number;
+  newLineTotal: number;
+  valueDelta: number;
+  taxDelta: number;
+}
+
+export interface PurchaseOrderCorrection {
+  id: number;
+  kind: PurchaseCorrectionKind;
+  date: string;
+  reason: string;
+  oldGrandTotal: number;
+  newGrandTotal: number;
+  valueDelta: number;
+  taxDelta: number;
+  createdAt: string;
+  createdByName: string;
+  lines: PurchaseOrderCorrectionLine[];
+}
+
+/** Pratinjau koreksi (handler: CorrectionPreview). */
+export interface PurchaseCorrectionPreviewLine {
+  itemId: number;
+  productId: number;
+  variantId: number;
+  productName: string;
+  uom: string;
+  stockTracked: boolean;
+  qty: number;
+  newQty: number;
+  receivedQty: number;
+  oldUnitPrice: number;
+  newUnitPrice: number;
+  oldDiscountPct: number;
+  newDiscountPct: number;
+  oldDiscountNominal: number;
+  newDiscountNominal: number;
+  oldLineTotal: number;
+  newLineTotal: number;
+  valueDelta: number;
+  taxDelta: number;
+}
+
+export interface PurchaseCorrectionPreview {
+  kind: PurchaseCorrectionKind;
+  lines: PurchaseCorrectionPreviewLine[];
+  oldGrandTotal: number;
+  newGrandTotal: number;
+  paid: number;
+  /** Total baru − dibayar; negatif = pemasok kelebihan dibayar. */
+  outstanding: number;
+  valueDelta: number;
+  taxDelta: number;
+  payableDelta: number;
+  /** Bagian barang yang masih di gudang (Persediaan). */
+  stockDelta: number;
+  /** Bagian barang yang sudah keluar/terjual (HPP). */
+  cogsDelta: number;
+  /** Baris jasa (beban). */
+  expenseDelta: number;
+  correctionId?: number;
+}
+
+export interface PurchaseHeaderPayload {
+  dueDate?: string;
+  paymentTermDays?: number;
+  notes?: string;
+  supplierInvoiceNumber?: string;
+  supplierInvoiceDate?: string;
+  taxInvoiceNumber?: string;
+  taxInvoiceDate?: string;
+  /** 0 = tanpa penanggung jawab. */
+  assignedUserId: number;
+  reason?: string;
+}
+
+export interface PriceCorrectionLinePayload {
+  lineId: number;
+  unitPrice: number;
+  discountPct?: number;
+  discountNominal?: number;
+}
+
+export interface PriceCorrectionPayload {
+  lines: PriceCorrectionLinePayload[];
+  reason?: string;
 }
 
 // --- payload keluar (kunci persis orderPayload/linePayload di handler.go) ---
@@ -130,6 +248,8 @@ export interface PurchaseOrderPayload {
   assignedUserId?: number;
   /** 0..3650; net tanpa dueDate butuh paymentTermDays > 0 + supplierInvoiceDate. */
   paymentTermDays?: number;
+  /** Alasan mengubah order terkonfirmasi (opsional, diaudit). */
+  reason?: string;
   items: PurchaseOrderLinePayload[];
 }
 
