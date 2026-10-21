@@ -503,7 +503,7 @@ export default function SalesOrderFormPage() {
     }
   }
 
-  /** Pindai barcode di form SO (SL-10): kode dikenal -> baris produk (atau qty + 1). */
+  /** Pindai QR / barcode di form SO (SL-10): kode dikenal -> baris produk (atau qty + 1). */
   async function handleScan(code: string): Promise<ScanOutcome> {
     try {
       const hit = await productsService.scanLookup(code);

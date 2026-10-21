@@ -19,7 +19,7 @@ const CORE: { perm: string; label: string }[] = [
 
 const OPTIONAL: { perms: string[]; text: string }[] = [
   { perms: ["customers.view"], text: "Tanpa izin Pelanggan: pencarian pelanggan dinonaktifkan, transaksi hanya walk-in." },
-  { perms: ["products.view"], text: "Tanpa izin Produk: katalog dan pencarian produk bisa kosong; gunakan pindai barcode." },
+  { perms: ["products.view"], text: "Tanpa izin Produk: katalog dan pencarian produk bisa kosong; gunakan pindai QR / kode produk." },
   { perms: ["stock.view"], text: "Tanpa izin Stok: ketersediaan stok tidak ditampilkan." },
   { perms: ["pricing.quote"], text: "Tanpa izin harga member: harga member tidak dihitung otomatis, memakai harga katalog." },
   { perms: ["member_types.view", "member_types.manage"], text: "Tanpa izin Tipe Member: nama tipe member tidak ditampilkan." },

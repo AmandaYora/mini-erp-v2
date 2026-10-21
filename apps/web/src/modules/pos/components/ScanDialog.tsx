@@ -191,7 +191,7 @@ function ScanBody({
         <div className="min-w-0">
           <SheetTitle className="font-display text-xl text-sidebar-strong">Pindai barang</SheetTitle>
           <SheetDescription className="text-sm text-sidebar-foreground">
-            Arahkan kamera ke kode barang. Dialog tetap terbuka untuk barang berikutnya.
+            Arahkan kamera ke QR label (atau barcode pabrik) barang. Dialog tetap terbuka untuk barang berikutnya.
           </SheetDescription>
         </div>
         <button

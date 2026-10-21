@@ -104,7 +104,7 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
     <Modal
       open={open}
       title="Label QR"
-      description="Pindai untuk mengisi keranjang POS atau pencarian — sama dengan input barcode."
+      description="Pindai untuk mengisi keranjang POS atau pencarian — sama dengan kotak pindai di POS, form order, dan saldo stok."
       onClose={onClose}
       actions={
         <>
@@ -163,7 +163,8 @@ export default function QrModal({ productId, open, onClose }: QrModalProps) {
               <img
                 src={imgUrl}
                 alt={`QR ${variant?.code ?? product.code}`}
-                className="size-60 border border-border bg-white"
+                // QR butuh latar putih murni agar terbaca pemindai, juga bila tema gelap dibuka.
+                className="size-60 border border-border bg-white" // ui-ratchet-ignore
               />
               <p className="text-sm font-bold text-foreground">
                 {product.name}

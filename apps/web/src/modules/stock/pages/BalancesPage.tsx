@@ -69,7 +69,7 @@ export default function BalancesPage() {
   const [scanCode, setScanCode] = useState("");
   const [scanning, setScanning] = useState(false);
 
-  // Pindai barcode / kode varian / kode produk: langsung menyaring saldo produk itu (ST-06).
+  // Pindai QR label (berisi barcode varian / kode) atau barcode pabrik: langsung menyaring saldo produk itu (ST-06).
   async function handleScan() {
     const code = scanCode.trim();
     if (!code || scanning) return;
@@ -209,7 +209,7 @@ export default function BalancesPage() {
         primary={
           <>
             <div className="w-56 max-w-full">
-              <FormField label="Pindai barcode / kode" htmlFor={`${uid}-scan`}>
+              <FormField label="Pindai QR / kode" htmlFor={`${uid}-scan`}>
                 <TextInput
                   id={`${uid}-scan`}
                   value={scanCode}

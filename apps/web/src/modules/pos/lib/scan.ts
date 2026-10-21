@@ -60,7 +60,7 @@ export function scanAction(res: ScanResult, code: string): ScanAction {
 /** Galat pindai: 404 = tak dikenal atau ambigu (dipakai >1 produk); lainnya pesan server. */
 export function scanErrorMessage(status: number, serverMessage: string, code: string): string {
   if (status === 404) {
-    return `Kode "${code}" tidak dikenal di katalog, atau dipakai oleh lebih dari satu produk (ambigu) — pindai barcode atau cari produknya manual.`;
+    return `Kode "${code}" tidak dikenal di katalog, atau dipakai oleh lebih dari satu produk (ambigu) — pindai ulang QR produknya atau cari produknya manual.`;
   }
   return serverMessage;
 }

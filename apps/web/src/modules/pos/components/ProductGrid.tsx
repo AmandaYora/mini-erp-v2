@@ -1,4 +1,4 @@
-import { Barcode } from "lucide-react";
+import { ScanQrCode } from "lucide-react";
 import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { Skeleton } from "@/shared/components/ui";
@@ -68,7 +68,7 @@ function Tile({
   );
 }
 
-/** Panel kiri Mode Kasir: kategori, input barcode (wedge), dan kisi tile produk. */
+/** Panel kiri Mode Kasir: kategori, input pindai (QR label / barcode pabrik, wedge), dan kisi tile produk. */
 export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCatalogApi }) {
   const { productOptions, searching } = catalog;
   const qtyByProduct = new Map<number, number>();
@@ -89,13 +89,13 @@ export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCat
             void pos.submitBarcode();
           }}
         >
-          <Barcode aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground" />
+          <ScanQrCode aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-muted-foreground" />
           <input
             id="pos-barcode"
-            aria-label="Barcode"
+            aria-label="Pindai QR / kode"
             value={pos.barcode}
             onChange={(e) => pos.setBarcode(e.target.value)}
-            placeholder="Scanner / ketik kode"
+            placeholder="Pindai QR / ketik kode"
             inputMode="none"
             enterKeyHint="done"
             autoComplete="off"
@@ -122,7 +122,7 @@ export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCat
             ))}
           </div>
         ) : productOptions.length === 0 ? (
-          <EmptyState title="Tidak ada hasil" description="Coba kata kunci atau kategori lain, atau pindai barcode produknya." />
+          <EmptyState title="Tidak ada hasil" description="Coba kata kunci atau kategori lain, atau pindai QR produknya." />
         ) : (
           <div
             className={cn(

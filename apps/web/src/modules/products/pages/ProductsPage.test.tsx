@@ -189,7 +189,7 @@ describe("daftar produk — stok, Min, dan harga beli sesuai izin", () => {
   });
 });
 
-describe("daftar produk — pindai barcode (sekali pakai)", () => {
+describe("daftar produk — pindai QR / barcode (sekali pakai)", () => {
   it("kode dikenal membuka detail produk", async () => {
     const user = userEvent.setup();
     scanLookup.mockResolvedValue({ id: 42, code: "BRG-042", name: "Teh", status: "active", via: "barcode", variantRequired: false });

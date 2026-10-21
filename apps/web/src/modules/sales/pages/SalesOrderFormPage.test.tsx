@@ -262,7 +262,7 @@ describe("form order jual — pelanggan baru cepat (PR-01)", () => {
   });
 });
 
-describe("form order jual — pindai barcode (SL-10)", () => {
+describe("form order jual — pindai QR / barcode (SL-10)", () => {
   it("kode dikenal menambah baris; pindai ulang menambah qty pada baris yang sama", async () => {
     scanLookup.mockResolvedValue({ id: 5, code: "BRG-1", name: "Barang Uji", status: "active", via: "barcode", variantRequired: false, variantId: 9 });
     seedDraft({ lines: [] });

@@ -43,14 +43,14 @@ describe("BalancesPage (ST-06)", () => {
     expect((await screen.findAllByText("1 dus 5 pcs")).length).toBeGreaterThan(0);
   });
 
-  it("pindai barcode lalu Enter menyaring saldo ke produk itu", async () => {
+  it("pindai QR / kode lalu Enter menyaring saldo ke produk itu", async () => {
     render(
       <MemoryRouter>
         <BalancesPage />
       </MemoryRouter>,
     );
     await screen.findAllByText("1 dus 5 pcs");
-    const input = screen.getByLabelText(/Pindai barcode/);
+    const input = screen.getByLabelText(/Pindai QR/);
     fireEvent.change(input, { target: { value: "8991234" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(scan).toHaveBeenCalledWith("8991234"));
