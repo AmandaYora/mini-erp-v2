@@ -45,6 +45,8 @@ export const ROUTE_PATHS = {
   financeAccounts: "/finance/accounts",
   financePeriods: "/finance/periods",
   financeIntegrity: "/finance/integrity",
+  financeCostRestatement: "/finance/cost-restatement",
+  financeRevaluations: "/finance/inventory-revaluations",
   opsIntegrity: "/ops/integrity",
   financeOpening: "/finance/opening",
   taxAdjustments: "/finance/tax-adjustments",

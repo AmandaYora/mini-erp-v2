@@ -146,7 +146,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "finance.posting.restore": "Pulihkan transaksi yang diabaikan",
   "finance.cutover": "Cutover keuangan",
   "finance.autoreverse_failed": "Pembalikan jurnal otomatis gagal",
-  "finance.cost_restatement": "Restatement biaya persediaan",
+  "finance.cost_restatement": "Hitung ulang HPP (restatement biaya persediaan)",
+  "finance.inventory_revaluation": "Revaluasi harga modal persediaan",
 
   // Sistem
   "error.unexpected": "Galat server tak terduga",
@@ -191,6 +192,7 @@ export const ENTITY_LABELS: Record<string, string> = {
   finance_cutover: "Cutover keuangan",
   posting_source: "Transaksi antrian posting",
   cost_ledger: "Ledger biaya persediaan",
+  inventory_revaluation: "Revaluasi harga modal",
   error: "Galat sistem",
 };
 
