@@ -117,9 +117,22 @@ func TestSystemRoleLocks(t *testing.T) {
 	}
 }
 
-// TestSuperadminHidden (F1-7): akun pemegang superadmin tak terlihat oleh
+// grantSuperadmin makes userID a holder of the superadmin role in SQL (the
+// API refuses to grant it), the way the hidden developer account exists.
+func grantSuperadmin(t *testing.T, userID, superRoleID int64) {
+	t.Helper()
+	if _, err := testMods.db.Exec(`DELETE FROM user_roles WHERE user_id = ?`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testMods.db.Exec(`INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)`, userID, superRoleID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSuperadminHidden (F1-7): akun pemegang role superadmin tak terlihat oleh
 // sesi non-superadmin (list tanpa, get/status/password 404); penetapan via
-// API ditolak; user id 1 selalu kembali ke superadmin.
+// API ditolak; UpdateUser tidak bisa mencabut role superadmin pemegangnya.
+// Pemegang dikenali dari role-nya, bukan dari id (user id 1 di sini biasa).
 func TestSuperadminHidden(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
@@ -131,18 +144,19 @@ func TestSuperadminHidden(t *testing.T) {
 		t.Fatalf("superadmin role: %v %v", superRole, err)
 	}
 
-	// User pertama (id 1) dipaksa menjadi superadmin lewat UpdateUser.
-	rootID := makeUser(t, fx.branchID, "root", "rahasia-kuat-1")
-	if rootID != 1 {
-		t.Fatalf("asumsi uji: user pertama id=1, got %d", rootID)
+	if first := makeUser(t, fx.branchID, "pertama", "rahasia-kuat-1"); first != 1 {
+		t.Fatalf("asumsi uji: user pertama id=1, got %d", first)
 	}
+	rootID := makeUser(t, fx.branchID, "root", "rahasia-kuat-1")
+	grantSuperadmin(t, rootID, superRole.ID)
+	// Mengganti role pemegang lewat UpdateUser tidak mencabut superadmin.
 	plain := makeRole(t, "POLOS", "Polos")
 	if err := setUserRoles(t, fx.branchID, rootID, []int64{plain}); err != nil {
 		t.Fatalf("update root: %v", err)
 	}
 	roleIDs, err := testMods.user.Service().GetRoleIDs(ctx(), rootID)
 	if err != nil || len(roleIDs) != 1 || roleIDs[0] != superRole.ID {
-		t.Fatalf("user 1 harus kembali superadmin: %v %v", roleIDs, err)
+		t.Fatalf("pemegang superadmin harus tetap superadmin: %v %v", roleIDs, err)
 	}
 
 	adminID := makeUser(t, fx.branchID, "admin", "rahasia-kuat-1")
@@ -194,5 +208,81 @@ func TestSuperadminHidden(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("actor sistem harus tetap melihat pemegang superadmin")
+	}
+}
+
+// TestOwnerWithIDOneIsOrdinary: setelah migrasi data, users.id = 1 adalah
+// pemilik usaha sungguhan (superadmin legacy tidak dimigrasi). Mengubahnya
+// tidak boleh menjadikannya superadmin tersembunyi: role-nya tetap, ia tetap
+// terlihat dan bisa dikelola owner lain.
+func TestOwnerWithIDOneIsOrdinary(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	if err := bootstrap.EnsureAuthz(ctx(), testMods.user.Service()); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	svc := testMods.user.Service()
+	owner, err := svc.GetRoleByCode(ctx(), "owner")
+	if err != nil || owner == nil {
+		t.Fatalf("owner: %v %v", owner, err)
+	}
+	admin, err := svc.GetRoleByCode(ctx(), "admin")
+	if err != nil || admin == nil {
+		t.Fatalf("admin: %v %v", admin, err)
+	}
+	ibu := makeUserWithRole(t, fx.branchID, "ibu-pemilik", owner.ID)
+	if ibu != 1 {
+		t.Fatalf("asumsi uji: pemilik hasil migrasi id=1, got %d", ibu)
+	}
+	rekan := makeUserWithRole(t, fx.branchID, "rekan-pemilik", owner.ID)
+	branches := []usercontracts.BranchAccess{{BranchID: fx.branchID, IsDefault: true}}
+
+	// Owner lain mengubah nomor HP user 1 dengan role yang sama.
+	if _, err := svc.UpdateUser(ctx(), rekan, ibu, userapp.UpdateUserInput{
+		Username: "ibu-pemilik", Phone: "081234567890", RoleIDs: []int64{owner.ID}, Branches: branches,
+	}); err != nil {
+		t.Fatalf("ubah HP user 1: %v", err)
+	}
+	if roleIDs, err := svc.GetRoleIDs(ctx(), ibu); err != nil || len(roleIDs) != 1 || roleIDs[0] != owner.ID {
+		t.Fatalf("user 1 harus tetap owner: %v %v", roleIDs, err)
+	}
+	if got, err := svc.GetUser(ctx(), rekan, ibu); err != nil || got.Phone != "081234567890" {
+		t.Fatalf("user 1 harus terlihat dengan HP baru: %+v %v", got, err)
+	}
+	list, err := svc.ListUsers(ctx(), rekan, "", "", 1, 50)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	found := false
+	for _, u := range list.Users {
+		found = found || u.ID == ibu
+	}
+	if !found {
+		t.Fatal("user 1 harus ada di daftar user owner lain")
+	}
+	// Tetap bisa dikelola: ganti sandi, nonaktif/aktifkan, ganti role.
+	if err := svc.ChangePassword(ctx(), rekan, ibu, "sandi-baru-kuat-2"); err != nil {
+		t.Fatalf("ganti sandi user 1: %v", err)
+	}
+	if err := svc.SetStatus(ctx(), rekan, ibu, "inactive"); err != nil {
+		t.Fatalf("nonaktifkan user 1: %v", err)
+	}
+	if err := svc.SetStatus(ctx(), rekan, ibu, "active"); err != nil {
+		t.Fatalf("aktifkan user 1: %v", err)
+	}
+	if _, err := svc.UpdateUser(ctx(), rekan, ibu, userapp.UpdateUserInput{
+		Username: "ibu-pemilik", RoleIDs: []int64{admin.ID}, Branches: branches,
+	}); err != nil {
+		t.Fatalf("ganti role user 1: %v", err)
+	}
+	if roleIDs, err := svc.GetRoleIDs(ctx(), ibu); err != nil || len(roleIDs) != 1 || roleIDs[0] != admin.ID {
+		t.Fatalf("user 1 harus menjadi admin: %v %v", roleIDs, err)
+	}
+	if super, err := testMods.user.Service().GetRoleByCode(ctx(), "superadmin"); err != nil || super == nil {
+		t.Fatalf("superadmin: %v %v", super, err)
+	} else if _, err := svc.UpdateUser(ctx(), rekan, ibu, userapp.UpdateUserInput{
+		Username: "ibu-pemilik", RoleIDs: []int64{super.ID}, Branches: branches,
+	}); mustAppErr(t, err).Code != apperror.CodeValidation {
+		t.Fatalf("menetapkan superadmin ke user 1: want 400, got %v", err)
 	}
 }
