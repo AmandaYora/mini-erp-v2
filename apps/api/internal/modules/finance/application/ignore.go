@@ -99,9 +99,9 @@ func (s *Service) RestoreSource(ctx context.Context, actorID, branchID int64, do
 	was, err := s.repo.RestoreSource(ctx, branchID, docType, docID, func(ctx context.Context, tx *infrastructure.Tx, was infrastructure.PostingIgnore) error {
 		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
 			Action: "finance.posting.restore", Entity: "posting_source", BranchID: branchID, ActorID: actorID,
-			Note:   docType + " #" + strconv.FormatInt(docID, 10),
-			Before: map[string]any{"ignored": true, "reason": was.Reason},
-			After:  map[string]any{"ignored": false},
+			Note:     docType + " #" + strconv.FormatInt(docID, 10),
+			Before:   map[string]any{"ignored": true, "reason": was.Reason},
+			After:    map[string]any{"ignored": false},
 			Metadata: map[string]any{"docType": docType, "docId": docID},
 		})
 	})

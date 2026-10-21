@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"mini-erp/internal/bootstrap"
-	productapp "mini-erp/internal/modules/product/application"
 	partyapp "mini-erp/internal/modules/party/application"
+	productapp "mini-erp/internal/modules/product/application"
 )
 
 // Catalog parity (PR-03 … PR-10): search ranking, stock/cost list columns,

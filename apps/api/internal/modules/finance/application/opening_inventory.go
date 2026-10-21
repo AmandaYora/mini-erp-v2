@@ -366,8 +366,8 @@ type InventoryRecon struct {
 	Tolerance int64 `json:"tolerance"`
 	// Pending counts documents not yet journalled; while any exist the gap can
 	// be explained by them, so the check degrades from blocker to warning.
-	Pending     int  `json:"pending"`
-	MissingCost int  `json:"missingCost"`
+	Pending     int `json:"pending"`
+	MissingCost int `json:"missingCost"`
 	// TransferNet is the ledger value cross-branch transfers moved into (+) or
 	// out of (-) this branch. Transfers carry no journal by design, so it is
 	// excluded from Ledger before comparing.
@@ -375,7 +375,7 @@ type InventoryRecon struct {
 	// OpeningUnposted is the opening-stock value awaiting the finance opening
 	// journal; excluded from Ledger until that journal exists.
 	OpeningUnposted int64 `json:"openingUnposted"`
-	Consistent  bool `json:"consistent"`
+	Consistent      bool  `json:"consistent"`
 }
 
 // ReconcileInventory computes the book-vs-ledger comparison for a branch.

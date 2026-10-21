@@ -16,8 +16,8 @@ type ListFilter struct {
 	// Search through the purchasing contract (order number / supplier, RT-01).
 	SearchPurchaseOrderIDs []int64
 	Statuses               []string
-	PurchaseOrderID int64
-	From, To        string // return_date, YYYY-MM-DD, half-open on the upper bound
+	PurchaseOrderID        int64
+	From, To               string // return_date, YYYY-MM-DD, half-open on the upper bound
 }
 
 // where is the single source of the filter, shared by ListFiltered and CountFiltered.

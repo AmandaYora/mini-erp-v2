@@ -191,17 +191,17 @@ type TaxDetailRow struct {
 	// parent order behind it (sales order for sales/sales_return, purchase order
 	// for purchase). The gross-turnover working paper uses EntryID to show only
 	// the rows that sit under the ceiling.
-	EntryID int64  `json:"entryId"`
+	EntryID int64 `json:"entryId"`
 	// BranchID/BranchName name the branch of the journal in an "all branches"
 	// report (empty for a single-branch one).
 	BranchID   int64  `json:"branchId,omitempty"`
 	BranchName string `json:"branchName,omitempty"`
 	OrderID    int64  `json:"orderId"`
-	Date    string `json:"date"`
-	Number  string `json:"number"`
-	Memo    string `json:"memo"`
-	Revenue int64  `json:"revenue"`
-	Ppn     int64  `json:"ppn"`
+	Date       string `json:"date"`
+	Number     string `json:"number"`
+	Memo       string `json:"memo"`
+	Revenue    int64  `json:"revenue"`
+	Ppn        int64  `json:"ppn"`
 	// Kind is sales | sales_return (negative amounts) | purchase |
 	// purchase_return (negative amounts); purchases carry PpnIn, not Ppn.
 	Kind             string `json:"kind"`

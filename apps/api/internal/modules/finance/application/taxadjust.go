@@ -165,11 +165,11 @@ func (s *Service) ListTaxAdjustments(ctx context.Context, branchID int64) ([]*Ta
 
 // TaxAdjustmentFile is one supporting scan of a correction.
 type TaxAdjustmentFile struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	MIME         string `json:"mime"`
-	SizeBytes    int64  `json:"sizeBytes"`
-	URL          string `json:"url"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	MIME      string `json:"mime"`
+	SizeBytes int64  `json:"sizeBytes"`
+	URL       string `json:"url"`
 }
 
 // taxAdjustmentEntry resolves a correction journal of this branch.

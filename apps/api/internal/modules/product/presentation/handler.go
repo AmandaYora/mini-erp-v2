@@ -84,7 +84,7 @@ func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
 // CreateCategory handles POST /api/v1/product-categories.
 func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Code     string `json:"code" validate:"required"`
+		Code      string `json:"code" validate:"required"`
 		Name      string `json:"name" validate:"required"`
 		ParentID  *int64 `json:"parentId"`
 		SortOrder *int   `json:"sortOrder"`

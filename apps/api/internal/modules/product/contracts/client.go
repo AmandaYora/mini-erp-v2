@@ -40,15 +40,15 @@ type Variant struct {
 // Product is the catalog row other modules snapshot (name/prices frozen into
 // order lines at order time — never live-joined).
 type Product struct {
-	ID              int64
-	Code            string
-	Name            string
-	CategoryID      *int64
-	CategoryName    string
+	ID           int64
+	Code         string
+	Name         string
+	CategoryID   *int64
+	CategoryName string
 	// ArchivedAt is when an archived product was archived (nil otherwise).
 	// Archived products are frozen (updates refused), so it is the row's last
 	// write; only the list query fills it.
-	ArchivedAt *time.Time
+	ArchivedAt      *time.Time
 	Type            string // barang | jasa | paket | non_stok
 	Tracked         bool
 	BaseUOM         string

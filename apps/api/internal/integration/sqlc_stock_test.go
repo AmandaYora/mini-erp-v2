@@ -669,6 +669,3 @@ func TestSqlcStockTransfersReservations(t *testing.T) {
 		t.Fatalf("purge again: %d", n)
 	}
 }
-
-
-

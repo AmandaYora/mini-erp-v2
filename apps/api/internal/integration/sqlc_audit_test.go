@@ -292,7 +292,7 @@ func TestSqlcAuditRepository(t *testing.T) {
 		t.Fatalf("purge limit 4: %d %v", gone, err)
 	}
 	gone, err = repo.Purge(c, cutoff, 0) // default 5000
-	if err != nil || gone != 7 { // 3 late + 6 b.two + a.empty + a.big (aged 2024) - 4 already purged
+	if err != nil || gone != 7 {         // 3 late + 6 b.two + a.empty + a.big (aged 2024) - 4 already purged
 		t.Fatalf("purge rest: %d %v", gone, err)
 	}
 	gone, err = repo.Purge(c, cutoff, 10)

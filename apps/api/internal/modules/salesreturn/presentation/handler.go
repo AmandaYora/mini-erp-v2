@@ -89,7 +89,7 @@ func returnView(ret *contracts.SalesReturn) map[string]any {
 		"replacementDeliveryStatus": ret.ReplacementDeliveryStatus,
 		"items":                     items, "replacementItems": repl,
 		"settlements": settlements, "settledTotal": settled,
-		"unsettledTotal": ret.Total - settled,
+		"unsettledTotal":    ret.Total - settled,
 		"externalRemaining": ret.ExternalRemaining, "chargeRemaining": ret.ChargeRemaining,
 		"allowedSettlementTypes": allowedTypes(ret.AllowedSettlementTypes),
 	}

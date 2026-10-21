@@ -17,8 +17,8 @@ type ListFilter struct {
 	// row matches by its own text OR by one of those orders.
 	SearchOrderIDs []int64
 	Statuses       []string
-	SalesOrderID int64
-	From, To     string // return_date, YYYY-MM-DD, half-open on the upper bound
+	SalesOrderID   int64
+	From, To       string // return_date, YYYY-MM-DD, half-open on the upper bound
 }
 
 // where is the single source of the filter, shared by ListFiltered and CountFiltered.

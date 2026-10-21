@@ -51,7 +51,7 @@ func TestSqlcDeliveryCreateGetItems(t *testing.T) {
 		Number: "SJ-1", BranchID: 1, SalesOrderID: 10, DeliveryDate: "2026-10-05",
 		DriverName: "Budi", VehiclePlate: "B 1234", WarehouseStaffName: "Asep",
 		DropLocationNote: "belakang",
-		Notes: "catatan", ClientRef: "c-1",
+		Notes:            "catatan", ClientRef: "c-1",
 		Items: []*contracts.Item{
 			{ProductID: 1, VariantID: 2, LocationID: 3, UOM: "pcs", UOMFactor: 1, Qty: 2.5, QtyBase: 2.5, ReservationKey: "hold-9"},
 			{ProductID: 4, VariantID: 0, LocationID: 3, UOM: "box", UOMFactor: 12, Qty: 1, QtyBase: 12},
@@ -70,7 +70,7 @@ func TestSqlcDeliveryCreateGetItems(t *testing.T) {
 		ID: id, Number: "SJ-1", BranchID: 1, SalesOrderID: 10, DeliveryDate: "2026-10-05 00:00:00",
 		DriverName: "Budi", VehiclePlate: "B 1234", WarehouseStaffName: "Asep",
 		DropLocationNote: "belakang",
-		DocumentKind: "order", Status: "draft", Notes: "catatan",
+		DocumentKind:     "order", Status: "draft", Notes: "catatan",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("note mismatch:\n got %+v\nwant %+v", got, want)

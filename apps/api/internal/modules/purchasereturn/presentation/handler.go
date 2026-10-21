@@ -64,7 +64,7 @@ func returnView(ret *contracts.PurchaseReturn) map[string]any {
 		"taxType": ret.TaxType, "taxRate": ret.TaxRate, "total": ret.Total,
 		"status": ret.Status, "notes": ret.Notes, "reason": ret.Reason, "payableReduction": ret.PayableReduction, "items": items,
 		"settlements": settlements, "settledTotal": settled,
-		"unsettledTotal": ret.Total - settled,
+		"unsettledTotal":    ret.Total - settled,
 		"externalRemaining": ret.ExternalRemaining, "allowedSettlementTypes": allowedTypes(ret.AllowedSettlementTypes),
 	}
 }

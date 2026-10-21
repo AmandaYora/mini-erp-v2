@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	branchapp "mini-erp/internal/modules/branch/application"
-	usercontracts "mini-erp/internal/modules/user/contracts"
 	userapp "mini-erp/internal/modules/user/application"
+	usercontracts "mini-erp/internal/modules/user/contracts"
 )
 
 // TestRevokedBranchDropsActiveBranch (F-03/K-01): a branch whose access is

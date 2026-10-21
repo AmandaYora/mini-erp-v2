@@ -20,7 +20,9 @@ type multiBranches struct {
 	list []*branchcontracts.Branch
 }
 
-func (m multiBranches) ListAll(context.Context) ([]*branchcontracts.Branch, error) { return m.list, nil }
+func (m multiBranches) ListAll(context.Context) ([]*branchcontracts.Branch, error) {
+	return m.list, nil
+}
 
 // recordingFinance records which branches NetProfit was asked about (the
 // isolation tests assert nothing outside the scope is ever read).
@@ -75,17 +77,17 @@ func TestMatchBranchesByNameCodeCity(t *testing.T) {
 		text string
 		want string
 	}{
-		{"penjualan Bandung hari ini", "BDG"},             // city / name without the generic lead word
-		{"omzet cabang bandung", "BDG"},                   // full name
-		{"omzet bdg kemarin", "BDG"},                      // code, any case
-		{"stok kritis surabaya timur", "SBY"},             // multi-word name part
-		{"omzet SBY", "SBY"},                              // code
-		{"omzet hari ini", ""},                            // no name -> none
-		{"omzet bandungan", ""},                           // whole word only, never a substring
-		{"omzet jakarta", "JKT"},                          // city of the only accessible Jakarta branch
-		{"bandung dan surabaya", "BDG,SBY"},               // two distinct branches -> ambiguous upstream
-		{"omzet Cabang Bandung, hari ini!", "BDG"},        // punctuation
-		{"info produk 'bandung kopi'", "BDG"},             // raw matcher sees the quote; Run strips it (below)
+		{"penjualan Bandung hari ini", "BDG"},      // city / name without the generic lead word
+		{"omzet cabang bandung", "BDG"},            // full name
+		{"omzet bdg kemarin", "BDG"},               // code, any case
+		{"stok kritis surabaya timur", "SBY"},      // multi-word name part
+		{"omzet SBY", "SBY"},                       // code
+		{"omzet hari ini", ""},                     // no name -> none
+		{"omzet bandungan", ""},                    // whole word only, never a substring
+		{"omzet jakarta", "JKT"},                   // city of the only accessible Jakarta branch
+		{"bandung dan surabaya", "BDG,SBY"},        // two distinct branches -> ambiguous upstream
+		{"omzet Cabang Bandung, hari ini!", "BDG"}, // punctuation
+		{"info produk 'bandung kopi'", "BDG"},      // raw matcher sees the quote; Run strips it (below)
 	}
 	for _, c := range cases {
 		got := names(matchBranches(c.text, active))

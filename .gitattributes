@@ -1,0 +1,2 @@
+# Go wajib LF: gerbang CI `gofmt -l` menolak CRLF (gofmt selalu menulis LF).
+*.go text eol=lf

@@ -295,8 +295,8 @@ type LedgerLine struct {
 	Credit  int64  `json:"credit"`
 	Balance int64  `json:"balance"`
 	// Dimensions of the leg (FN-08), with names resolved in one batch read.
-	PartyID     int64  `json:"partyId,omitempty"`
-	PartyName   string `json:"partyName,omitempty"`
+	PartyID   int64  `json:"partyId,omitempty"`
+	PartyName string `json:"partyName,omitempty"`
 	// BranchName is set only in the multi-branch tax package ledger.
 	BranchName  string `json:"branchName,omitempty"`
 	ProductID   int64  `json:"productId,omitempty"`

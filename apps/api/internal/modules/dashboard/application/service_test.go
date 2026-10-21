@@ -1,9 +1,9 @@
 package application
 
 import (
-	dashboardcontracts "mini-erp/internal/modules/dashboard/contracts"
 	"context"
 	"fmt"
+	dashboardcontracts "mini-erp/internal/modules/dashboard/contracts"
 	"testing"
 
 	financecontracts "mini-erp/internal/modules/finance/contracts"
