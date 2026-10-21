@@ -1,17 +1,10 @@
-import { AxiosError, AxiosHeaders } from "axios";
 import { describe, expect, it } from "vitest";
 
 import { fieldErrorMessages, formatApiError } from "./http-client";
 
-function axios422(data: unknown): AxiosError {
-  const headers = new AxiosHeaders();
-  return new AxiosError("Request failed", "ERR_BAD_REQUEST", { headers }, null, {
-    status: 422,
-    statusText: "Unprocessable Entity",
-    headers,
-    config: { headers },
-    data,
-  });
+// Bentuk yang dikenali axios.isAxiosError (tanpa mengimpor axios — arch-check aturan D).
+function axios422(data: unknown) {
+  return { isAxiosError: true, message: "Request failed", response: { status: 422, data } };
 }
 
 describe("formatApiError", () => {
