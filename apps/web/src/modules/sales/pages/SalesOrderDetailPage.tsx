@@ -4,7 +4,6 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Badge,
   Button,
-  ConfirmDialog,
   DataTable,
   DateInput,
   DetailSkeleton,
@@ -28,16 +27,21 @@ import {
 } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
-import { formatDate, formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
+import { formatDate, formatDateTime, formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import type { MutateResult } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
-import { ROUTE_PATHS } from "@/app/routes/route-paths";
+import { ROUTE_PATHS, posReceiptPrintPath } from "@/app/routes/route-paths";
 import { salesService } from "@/modules/sales/services/sales.service";
 import { salesOrderRail } from "@/modules/sales/lib/sales-order-rail";
+import { editAction, headerEditPayload } from "@/modules/sales/lib/order-correction";
+import type { HeaderEditValues } from "@/modules/sales/schemas/order-correction.schema";
+import { CancelOrderModal } from "@/modules/sales/components/CancelOrderModal";
+import { HeaderEditModal } from "@/modules/sales/components/HeaderEditModal";
+import { ShortCloseModal } from "@/modules/sales/components/ShortCloseModal";
 import { channelLabel, paymentTermsLabel, pricingSourceLabel } from "@/modules/sales/types";
 import type { SalesOrder, SalesOrderItem } from "@/modules/sales/types";
 import { OrderBillingCard } from "@/modules/payment/components/OrderBillingCard";
@@ -79,6 +83,9 @@ export default function SalesOrderDetailPage() {
   const [creditDue, setCreditDue] = useState(todayWIB());
   const [creditError, setCreditError] = useState<string | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [headerOpen, setHeaderOpen] = useState(false);
+  const [headerError, setHeaderError] = useState<string | null>(null);
+  const [shortCloseOpen, setShortCloseOpen] = useState(false);
   // Naik tiap dokumen terkait berubah → riwayat dimuat ulang.
   const [historyVersion, setHistoryVersion] = useState(0);
 
@@ -131,9 +138,32 @@ export default function SalesOrderDetailPage() {
     void runAction(() => salesService.confirm(orderId), "Order dikonfirmasi", "Gagal mengonfirmasi");
   }
 
-  function handleCancel() {
+  function handleCancel(reason: string) {
     setCancelOpen(false);
-    void runAction(() => salesService.cancel(orderId), "Order dibatalkan", "Gagal membatalkan");
+    void runAction(() => salesService.cancel(orderId, reason), "Order dibatalkan", "Gagal membatalkan");
+  }
+
+  function handleShortClose(reason: string) {
+    setShortCloseOpen(false);
+    void runAction(() => salesService.closeShort(orderId, reason), "Sisa order ditutup", "Gagal menutup sisa order");
+  }
+
+  // Ubah info order: pesan server tampil di dalam dialog agar isian tidak hilang.
+  async function handleHeaderEdit(o: SalesOrder, initial: HeaderEditValues, values: HeaderEditValues) {
+    setBusy(true);
+    setHeaderError(null);
+    try {
+      const res = await salesService.update(o.id, headerEditPayload(o, initial, values));
+      toast.fromServer(res.message, "Info order disimpan", res.data.number);
+      setHeaderOpen(false);
+      refresh();
+    } catch (err) {
+      const msg = toApiError(err).message;
+      setHeaderError(msg);
+      toast.danger("Gagal menyimpan info order", msg);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handleApproveCredit(e: FormEvent<HTMLFormElement>) {
@@ -185,7 +215,15 @@ export default function SalesOrderDetailPage() {
   const showReturn = canReturn && canCreateReturn(order, fulfilled);
   const showCredit = canApprove && canSwitchToNet(order);
   const showConfirm = isDraft && canConfirm;
-  const showEdit = isDraft && canEdit;
+  // Draf dan order terkonfirmasi bisa dikoreksi; mode (form lengkap atau info
+  // saja) ditentukan server dari dokumen turunan (editMode di GET detail).
+  const edit = canEdit ? editAction(order) : null;
+  const showEdit = edit !== null;
+  const editLabel = isDraft ? "Ubah" : edit === "header" ? "Ubah info order" : "Ubah order";
+  const editUrl = `${ROUTE_PATHS.salesOrders}/${order.id}/edit`;
+  // Tutup sisa order: terkonfirmasi, sudah ada kiriman terkonfirmasi, tanpa draf SJ.
+  const showShortClose = canCancel && order.status === "confirmed" && order.canCloseShort === true;
+  const isPos = order.channel === "pos";
   const prepaidBlocked = order.status === "confirmed" && order.channel !== "pos" && isPrepaidBlocked(order);
   const progress = history.data?.progress ?? null;
   const hiddenNotes: string[] = [];
@@ -220,8 +258,18 @@ export default function SalesOrderDetailPage() {
   if (secondary.includes("edit") && !visibleSecondary.includes("edit")) {
     menuItems.push({
       key: "edit",
-      label: "Ubah order",
-      onSelect: () => navigate(`${ROUTE_PATHS.salesOrders}/${order.id}/edit`),
+      label: editLabel,
+      disabled: busy,
+      onSelect: () => (edit === "header" ? openHeaderEdit() : navigate(editUrl)),
+    });
+  }
+  if (showShortClose) {
+    menuItems.push({
+      key: "close-short",
+      label: "Tutup sisa order",
+      destructive: true,
+      disabled: busy,
+      onSelect: () => setShortCloseOpen(true),
     });
   }
   if (showReturn) {
@@ -256,6 +304,11 @@ export default function SalesOrderDetailPage() {
 
   const showBillingBadge = billing.available && !isDraft && order.status !== "cancelled";
 
+  function openHeaderEdit() {
+    setHeaderError(null);
+    setHeaderOpen(true);
+  }
+
   return (
     <Page>
       <PageHeader
@@ -276,16 +329,28 @@ export default function SalesOrderDetailPage() {
                 </Link>
               </Button>
             )}
+            {isPos && order.status !== "draft" && order.status !== "cancelled" && (
+              <Button variant="secondary" asChild>
+                <Link to={posReceiptPrintPath(order.id)} target="_blank" rel="noreferrer">
+                  Cetak struk
+                </Link>
+              </Button>
+            )}
             {visibleSecondary.includes("pay") && (
               <Button variant="secondary" onClick={() => setPaymentOpen(true)} disabled={busy}>
                 Catat pembayaran
               </Button>
             )}
-            {visibleSecondary.includes("edit") && (
-              <Button variant="secondary" asChild>
-                <Link to={`${ROUTE_PATHS.salesOrders}/${order.id}/edit`}>Ubah</Link>
-              </Button>
-            )}
+            {visibleSecondary.includes("edit") &&
+              (edit === "header" ? (
+                <Button variant="secondary" onClick={openHeaderEdit} disabled={busy}>
+                  {editLabel}
+                </Button>
+              ) : (
+                <Button variant="secondary" asChild>
+                  <Link to={editUrl}>{editLabel}</Link>
+                </Button>
+              ))}
             <ActionMenu items={menuItems} />
             {primary === "confirm" && (
               <Button onClick={handleConfirm} loading={busy}>
@@ -311,6 +376,20 @@ export default function SalesOrderDetailPage() {
       {actionError && (
         <Notice tone="danger" title="Aksi ditolak">
           {actionError}
+        </Notice>
+      )}
+      {order.status === "cancelled" && order.cancelReason && (
+        <Notice tone="warning" title="Order dibatalkan">
+          {order.cancelReason}
+          {order.cancelledAt
+            ? ` (${[order.cancelledByName, formatDateTime(order.cancelledAt)].filter((t) => t).join(", ")})`
+            : ""}
+        </Notice>
+      )}
+      {order.shortClosedAt && (
+        <Notice tone="info" title="Sisa order ditutup">
+          Order ditagih sebesar barang yang sudah terkirim. Alasan: {order.shortCloseReason || "-"} (
+          {[order.shortClosedByName, formatDateTime(order.shortClosedAt)].filter((t) => t).join(", ")})
         </Notice>
       )}
       {prepaidBlocked && (
@@ -495,14 +574,36 @@ export default function SalesOrderDetailPage() {
         }
       />
 
-      <ConfirmDialog
-        open={cancelOpen}
-        title="Batalkan order?"
-        message={`Order ${order.number} akan dibatalkan dan tidak bisa diproses lagi. Server menolak bila masih ada surat jalan, pembayaran, atau retur aktif — batalkan dokumen itu dulu.`}
-        confirmLabel="Ya, batalkan"
-        onConfirm={handleCancel}
-        onCancel={() => setCancelOpen(false)}
-      />
+      {cancelOpen && (
+        <CancelOrderModal
+          number={order.number}
+          submitting={busy}
+          onClose={() => setCancelOpen(false)}
+          onSubmit={handleCancel}
+        />
+      )}
+
+      {headerOpen && (
+        <HeaderEditModal
+          order={order}
+          lockReason={order.editLockReason}
+          canPickUser={can("users.view")}
+          submitting={busy}
+          serverError={headerError}
+          onClose={() => setHeaderOpen(false)}
+          onSubmit={(initial, values) => void handleHeaderEdit(order, initial, values)}
+        />
+      )}
+
+      {shortCloseOpen && (
+        <ShortCloseModal
+          orderId={order.id}
+          number={order.number}
+          submitting={busy}
+          onClose={() => setShortCloseOpen(false)}
+          onSubmit={handleShortClose}
+        />
+      )}
 
       <Modal
         open={creditOpen}

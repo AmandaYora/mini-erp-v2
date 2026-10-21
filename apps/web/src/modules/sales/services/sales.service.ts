@@ -6,6 +6,7 @@ import type {
   SalesClientRefState,
   SalesOrder,
   SalesOrderPayload,
+  ShortClosePlan,
 } from "@/modules/sales/types";
 
 export interface SalesListParams {
@@ -51,7 +52,7 @@ export function buildSalesListQuery(p: SalesListParams): Record<string, unknown>
 
 // Rute + permission backend (sales/presentation/handler.go RegisterRoutes):
 // list/get sales.view, create sales.create, update/confirm sales.update,
-// cancel sales.archive, approve-credit sales.approve.
+// cancel + close-short (+ pratinjau) sales.archive, approve-credit sales.approve.
 
 export const salesService = {
   list: (p: SalesListParams, signal?: AbortSignal) =>
@@ -72,8 +73,17 @@ export const salesService = {
   confirm: (id: number) =>
     apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/confirm`),
 
-  cancel: (id: number) =>
-    apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/cancel`),
+  /** Alasan disimpan di order (cancel_reason) dan jejak audit. */
+  cancel: (id: number, reason: string) =>
+    apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/cancel`, { reason }),
+
+  /** Pratinjau tutup sisa order (tanpa tulis). */
+  closeShortPreview: (id: number) =>
+    apiGet<ShortClosePlan>(`/api/v1/sales-orders/${id}/close-short/preview`),
+
+  /** Tutup sisa order: baris dipotong ke qty terkirim, order selesai. */
+  closeShort: (id: number, reason: string) =>
+    apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/close-short`, { reason }),
 
   approveCredit: (id: number, dueDate: string) =>
     apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/approve-credit`, { dueDate }),
