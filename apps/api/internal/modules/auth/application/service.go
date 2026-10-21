@@ -32,6 +32,15 @@ const AbsoluteSessionLifetime = 30 * 24 * time.Hour
 // reuse of the previous hash within this window is a race, not an attack.
 const RefreshReuseGrace = 30 * time.Second
 
+// Failed-login allowances per minute. Only failures count, so a user who
+// types the right password is never throttled by her own logins, and the
+// username-wide cap is the only lever others have against her account.
+const (
+	LoginFailuresPerIPUser = 10
+	LoginFailuresPerIP     = 30
+	LoginFailuresPerUser   = 30
+)
+
 // Service implements sessions, JWT issuance, and permission resolution.
 type Service struct {
 	repo     *infrastructure.Repository
@@ -43,10 +52,14 @@ type Service struct {
 	access   time.Duration
 	refresh  time.Duration
 	log      *slog.Logger
-	limiter  *ratelimit.Limiter
-	userLim  *ratelimit.Limiter
-	audit    auditcontracts.AuditClient
-	cache    *sessionCache
+	// Login throttles count FAILED attempts only (a correct login never uses
+	// allowance): per IP+username, per IP across usernames (password
+	// spraying), and per username across IPs (distributed guessing).
+	limiter *ratelimit.Limiter
+	ipLim   *ratelimit.Limiter
+	userLim *ratelimit.Limiter
+	audit   auditcontracts.AuditClient
+	cache   *sessionCache
 }
 
 // NewService wires auth use cases. All cross-module links are contracts.
@@ -64,8 +77,11 @@ func NewService(
 	return &Service{
 		repo: repo, users: users, roles: roles, branches: branches, company: company,
 		jwtKey: []byte(jwtSecret), access: accessTTL, refresh: refreshTTL,
-		log: log, limiter: ratelimit.New(10, time.Minute), userLim: ratelimit.New(30, time.Minute), audit: audit,
-		cache: newSessionCache(sessionCacheTTL),
+		log: log, audit: audit,
+		limiter: ratelimit.New(LoginFailuresPerIPUser, time.Minute),
+		ipLim:   ratelimit.New(LoginFailuresPerIP, time.Minute),
+		userLim: ratelimit.New(LoginFailuresPerUser, time.Minute),
+		cache:   newSessionCache(sessionCacheTTL),
 	}
 }
 
@@ -238,11 +254,20 @@ func (s *Service) Login(ctx context.Context, username, password, ip string) (*Lo
 // same either way so nothing leaks which one matched.
 func (s *Service) LoginWithMeta(ctx context.Context, identifier, password string, meta LoginMeta) (*LoginResult, *apperror.AppError) {
 	username, ip := strings.TrimSpace(identifier), meta.IP
-	if !s.limiter.Allow(ip+"|"+strings.ToLower(username)) || !s.userLim.Allow("u|"+strings.ToLower(username)) {
+	pairKey, ipKey, userKey := ip+"|"+strings.ToLower(username), "ip|"+ip, "u|"+strings.ToLower(username)
+	// Checked before bcrypt so a throttled caller costs nothing; concurrent
+	// attempts may overshoot a cap by the number in flight, which is fine.
+	if s.limiter.Exhausted(pairKey) || s.ipLim.Exhausted(ipKey) || s.userLim.Exhausted(userKey) {
 		return nil, apperror.RateLimited()
 	}
 	u, err := s.users.VerifyCredentials(ctx, username, password)
 	if err != nil {
+		// Only a refused credential uses allowance; an internal error does not.
+		if appErr(err).Code == apperror.CodeUnauthorized {
+			s.limiter.Allow(pairKey)
+			s.ipLim.Allow(ipKey)
+			s.userLim.Allow(userKey)
+		}
 		// Failed attempts are logged for intrusion review (OQ-A03); the
 		// persistent trail arrives with the audit module.
 		s.log.Warn("login failed", "username", username, "ip", ip)

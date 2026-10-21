@@ -52,3 +52,18 @@ func (l *Limiter) Allow(key string) bool {
 	b.count++
 	return b.count <= l.limit
 }
+
+// Exhausted reports, without recording an event, whether key has already
+// used its whole allowance in the current window. Paired with Allow it
+// counts only some events (e.g. failed logins): check Exhausted before the
+// attempt, call Allow only when the attempt fails.
+func (l *Limiter) Exhausted(key string) bool {
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.buckets[key]
+	if !ok || now.After(b.reset) {
+		return false
+	}
+	return b.count >= l.limit
+}

@@ -166,7 +166,9 @@ seberapa lengkap test yang dibutuhkan saat modul itu didesain:
 - Autentikasi: JWT access token (masa pakai pendek) + refresh token (hash dirotasi tiap dipakai,
   replay terdeteksi) — properti yang sudah benar di sistem lama, dipertahankan. Batas umur sesi
   mutlak 30 hari di atas refresh sliding 7 hari (OQ-A02). Kegagalan login dicatat dan endpoint
-  login di-rate-limit (OQ-A03/A04, keputusan analis).
+  login di-rate-limit (OQ-A03/A04, keputusan analis): yang dihitung hanya login **gagal**, per menit
+  10 per IP+username, 30 per IP (semua username — penyemprotan sandi) dan 30 per username (semua IP);
+  login yang benar tidak memakai jatah.
 - Otorisasi: permission tidak disimpan di token. Auth me-resolve sesi dari DB lalu men-cache-nya;
   user dan branch mengumumkan setiap perubahan hak akses lewat `AuthzHub` sehingga cache dibuang dan
   perubahan berlaku pada request berikutnya tanpa logout (TTL pendek sebagai batas atas).
