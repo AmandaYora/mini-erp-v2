@@ -3,7 +3,7 @@ import { Badge, Button, DataTable, PageHeader, SectionCard, SummaryCard } from "
 import { FileDropzone, Money, Page, Qty, Stepper, StickyFooter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatNumber } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { openingPreviewSummary } from "@/modules/stock/lib/opening";
@@ -91,7 +91,7 @@ export default function OpeningPage() {
         toast.warning(openingPreviewSummary(res.data));
       }
     } catch (err) {
-      setError(toApiError(err).message);
+      setError(formatApiError(err));
     } finally {
       setPreviewing(false);
     }
@@ -113,7 +113,7 @@ export default function OpeningPage() {
         `Dibukukan ${formatNumber(res.data.posted)}, dilewati ${formatNumber(res.data.skipped)}`,
       );
     } catch (err) {
-      setError(toApiError(err).message);
+      setError(formatApiError(err));
     } finally {
       setCommitting(false);
     }

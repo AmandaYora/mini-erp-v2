@@ -23,7 +23,7 @@ import {
 import { ActionMenu, Page, Toolbar } from "@/shared/components/patterns";
 import type { ActionMenuItem } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { formatDateTime } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
@@ -321,7 +321,7 @@ export default function UsersPage() {
       setStatusTarget(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal mengubah status", toApiError(err).message);
+      toast.danger("Gagal mengubah status", formatApiError(err));
     }
   }
 

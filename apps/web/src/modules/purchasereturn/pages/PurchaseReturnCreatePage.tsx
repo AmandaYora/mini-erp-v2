@@ -18,7 +18,7 @@ import { Notice } from "@/shared/components/feedback/notice";
 import { ReturnLinesTable } from "@/shared/components/ui/return-lines-table";
 import { formatIDR, todayWIB } from "@/shared/lib/format";
 import { parseQty, validateReason, validateReturnDate } from "@/shared/lib/return-lines";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
@@ -244,7 +244,7 @@ export default function PurchaseReturnCreatePage() {
       .then((res) => setPreview(res.data))
       .catch((err) => {
         setPreview(null);
-        setPreviewError(toApiError(err).message);
+        setPreviewError(formatApiError(err));
       })
       .finally(() => setPreviewBusy(false));
   }
@@ -271,7 +271,7 @@ export default function PurchaseReturnCreatePage() {
         toast.fromServer(res.message, "Retur pembelian dibuat", res.data.number);
         void navigate(`${ROUTE_PATHS.purchaseReturns}/${res.data.id}`);
       })
-      .catch((err) => setFormError(toApiError(err).message))
+      .catch((err) => setFormError(formatApiError(err)))
       .finally(() => setBusy(false));
   }
 

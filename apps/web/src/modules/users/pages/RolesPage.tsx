@@ -19,7 +19,7 @@ import { ActionMenu, Page } from "@/shared/components/patterns";
 import type { ActionMenuItem } from "@/shared/components/patterns";
 import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -157,7 +157,7 @@ export default function RolesPage() {
       setDeleteTarget(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal menghapus role", toApiError(err).message);
+      toast.danger("Gagal menghapus role", formatApiError(err));
     }
   }
 
@@ -216,7 +216,7 @@ export default function RolesPage() {
       toast.fromServer(res.message, "Izin role disimpan");
       setPermRole(null);
     } catch (err) {
-      toast.danger("Gagal menyimpan izin", toApiError(err).message);
+      toast.danger("Gagal menyimpan izin", formatApiError(err));
     } finally {
       setSavingPerms(false);
     }

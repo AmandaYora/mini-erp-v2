@@ -16,7 +16,7 @@ import {
 import { ActionMenu, DocNumber, Money, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, statusLabel } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useUrlFilters } from "@/shared/hooks/use-url-filters";
@@ -90,7 +90,7 @@ export default function ExpensesPage() {
       setFilters({ page: 1 });
       reload();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -105,7 +105,7 @@ export default function ExpensesPage() {
       setCancelTarget(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal membatalkan biaya", toApiError(err).message);
+      toast.danger("Gagal membatalkan biaya", formatApiError(err));
     } finally {
       setCancelling(false);
     }

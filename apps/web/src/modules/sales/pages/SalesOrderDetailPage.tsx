@@ -29,7 +29,7 @@ import {
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { formatDate, formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import type { MutateResult } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
@@ -117,7 +117,7 @@ export default function SalesOrderDetailPage() {
       toast.fromServer(res.message, fallback, res.data.number);
       refresh();
     } catch (err) {
-      const msg = toApiError(err).message;
+      const msg = formatApiError(err);
       // Pesan penjaga server (mis. ada surat jalan/pembayaran aktif) tampil
       // menetap di halaman, bukan hanya toast sesaat.
       setActionError(`${fail}: ${msg}`);

@@ -17,7 +17,7 @@ import { DescriptionList, DocNumber, Page, useUrlTab } from "@/shared/components
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { toast } from "@/shared/stores/toast.store";
@@ -90,7 +90,7 @@ export default function SupplierDetailPage() {
       setEditOpen(false);
       reload();
     } catch (err) {
-      setEditError(toApiError(err).message);
+      setEditError(formatApiError(err));
     } finally {
       setEditSubmitting(false);
     }
@@ -110,7 +110,7 @@ export default function SupplierDetailPage() {
       setConfirm(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal", toApiError(err).message);
+      toast.danger("Gagal", formatApiError(err));
     } finally {
       setBusy(false);
     }

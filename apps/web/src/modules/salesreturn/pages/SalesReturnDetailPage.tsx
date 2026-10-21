@@ -34,7 +34,7 @@ import type { ActionMenuItem, RelatedDocument } from "@/shared/components/patter
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate, formatIDR, statusTone, todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import type { MutateResult } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
@@ -155,7 +155,7 @@ export default function SalesReturnDetailPage() {
       setRet(res.data);
       toast.fromServer(res.message, fallback, res.data.number);
     } catch (err) {
-      toast.danger(fail, toApiError(err).message);
+      toast.danger(fail, formatApiError(err));
     } finally {
       setBusy(false);
     }
@@ -203,10 +203,7 @@ export default function SalesReturnDetailPage() {
         setDispatchOpen(false);
         reload();
       })
-      .catch((err) => {
-        const apiErr = toApiError(err);
-        setDispatchError([apiErr.message, ...(apiErr.errors ?? []).map((f) => f.message)].join(" — "));
-      })
+      .catch((err) => setDispatchError(formatApiError(err)))
       .finally(() => setDispatchBusy(false));
   }
 
@@ -295,7 +292,7 @@ export default function SalesReturnDetailPage() {
         setConfirmOpen(false);
         reload();
       })
-      .catch((err) => setConfirmError(toApiError(err).message))
+      .catch((err) => setConfirmError(formatApiError(err)))
       .finally(() => setConfirmBusy(false));
   }
 
@@ -346,7 +343,7 @@ export default function SalesReturnDetailPage() {
         toast.fromServer(res.message, "Penyelesaian dicatat");
         setSettleOpen(false);
       })
-      .catch((err) => setSettleError(toApiError(err).message))
+      .catch((err) => setSettleError(formatApiError(err)))
       .finally(() => setSettleBusy(false));
   }
 

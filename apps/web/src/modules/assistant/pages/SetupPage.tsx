@@ -25,7 +25,7 @@ import type { ActionMenuItem, StepperStep } from "@/shared/components/patterns";
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDateTime } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -117,7 +117,7 @@ export default function SetupPage() {
       reloadChannel();
       toast.fromServer(res.message, "Kanal dihubungkan");
     } catch (err) {
-      toast.danger("Gagal menghubungkan kanal", toApiError(err).message);
+      toast.danger("Gagal menghubungkan kanal", formatApiError(err));
     } finally {
       setChannelBusy(null);
     }
@@ -131,7 +131,7 @@ export default function SetupPage() {
       reloadChannel();
       toast.fromServer(res.message, "Kanal diputuskan");
     } catch (err) {
-      toast.danger("Gagal memutuskan kanal", toApiError(err).message);
+      toast.danger("Gagal memutuskan kanal", formatApiError(err));
     } finally {
       setChannelBusy(null);
     }
@@ -145,7 +145,7 @@ export default function SetupPage() {
       reloadChannel();
       toast.fromServer(res.message, "Sesi kanal direset");
     } catch (err) {
-      toast.danger("Gagal mereset sesi kanal", toApiError(err).message);
+      toast.danger("Gagal mereset sesi kanal", formatApiError(err));
     } finally {
       setChannelBusy(null);
     }
@@ -253,7 +253,7 @@ export default function SetupPage() {
       toast.fromServer(res.message, "Otorisasi nomor dicabut");
       reloadAuths();
     } catch (err) {
-      toast.danger("Gagal mencabut otorisasi", toApiError(err).message);
+      toast.danger("Gagal mencabut otorisasi", formatApiError(err));
     } finally {
       setRevoking(false);
     }
@@ -331,7 +331,7 @@ export default function SetupPage() {
       setTurns((prev) => [...prev, { id: turnId.current++, question: parsed.data.message, result: res.data }]);
       setChatMessage("");
     } catch (err) {
-      toast.danger("Gagal mengirim pesan uji", toApiError(err).message);
+      toast.danger("Gagal mengirim pesan uji", formatApiError(err));
     } finally {
       setChatSending(false);
     }

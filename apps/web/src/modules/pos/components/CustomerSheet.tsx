@@ -16,6 +16,7 @@ import { newCustomerBody, validateNewCustomer } from "@/modules/pos/lib/new-cust
 import { posService } from "@/modules/pos/services/pos.service";
 import { readApiError } from "@/modules/pos/lib/api-error";
 import type { PosCustomer, PosMemberType } from "@/modules/pos/types";
+import { formatApiError } from "@/shared/services/http-client";
 
 const ROW =
   "flex min-h-14 w-full touch-manipulation items-center gap-3 rounded-lg border border-border bg-card px-4 py-2 text-left select-none active:bg-accent";
@@ -66,7 +67,7 @@ function NewCustomerForm({
       const created = await posService.createCustomer(newCustomerBody(input));
       onCreated(created.id);
     } catch (err) {
-      setServerError(readApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSubmitting(false);
     }

@@ -11,14 +11,19 @@ import {
   lineGross,
   lineTotal,
   maxLineDiscount,
+  reclampLineDiscounts,
+  type MemberPrices,
 } from "@/modules/pos/lib/cart";
 import {
   CHECKOUT_STEP_LABEL,
   NO_PAY_PERMISSION_MESSAGE,
+  PAY_LATER_NEEDS_CUSTOMER_MESSAGE,
   buildPosOrderPayload,
+  payLaterBlockReason,
   runCheckout,
   type CheckoutApi,
 } from "@/modules/pos/lib/checkout";
+import { formatApiError } from "@/shared/services/http-client";
 import {
   clearDraft,
   loadOrCreateDraft,
@@ -47,6 +52,15 @@ import type {
 } from "@/modules/pos/types";
 
 let nextKey = 1;
+
+/** Harga member per produk dari quote (hanya baris yang applied). */
+function memberPriceMap(quote: PricingQuote | null): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const l of quote?.lines ?? []) {
+    if (l.applied) map.set(l.productId, l.memberPrice);
+  }
+  return map;
+}
 
 /** Satuan jual: salesUom dulu, lalu sisanya tanpa duplikat/kosong. */
 function saleUoms(p: PosProductDetail): string[] {
@@ -92,6 +106,10 @@ export function usePosCart() {
   // true setelah order di server dibuat (atau mungkin dibuat): isi keranjang
   // dikunci sampai checkout selesai atau transaksi dibatalkan.
   const [started, setStarted] = useState(initialDraft.started);
+  const startedLive = useRef(initialDraft.started);
+  useEffect(() => {
+    startedLive.current = started;
+  }, [started]);
   const [heldSnap, setHeldSnap] = useState<HeldSnapshot>(initialDraft.held);
   const [resumeStep, setResumeStep] = useState<string | null>(null);
 
@@ -103,7 +121,9 @@ export function usePosCart() {
   const [variantChoice, setVariantChoice] = useState<VariantChoiceState | null>(null);
 
   // --- keranjang ---
-  const [customerId, setCustomerId] = useState<number | null>(initialDraft.customerId);
+  const [customerId, setCustomerIdState] = useState<number | null>(initialDraft.customerId);
+  // Diskon baris yang diturunkan otomatis karena harga efektif berubah (tampil menetap).
+  const [discountNotice, setDiscountNotice] = useState<string | null>(null);
   const [cart, setCartState] = useState<CartLine[]>(initialDraft.lines);
   // Cermin sinkron isi keranjang: pindai beruntun bisa menambah lebih cepat dari render.
   const cartLive = useRef<CartLine[]>(initialDraft.lines);
@@ -149,6 +169,15 @@ export function usePosCart() {
   }, [canMemberTypes]);
   if (customerId === null && customerDetail !== null) {
     setCustomerDetail(null);
+  }
+  // Bayar Nanti (termin net) hanya untuk pelanggan terdaftar bertelepon — server menolak
+  // selain itu. Detail yang belum termuat (atau milik pelanggan lain) tidak memblokir.
+  const payLaterBlock = payLaterBlockReason({
+    customerId,
+    customerPhone: customerDetail !== null && customerDetail.id === customerId ? customerDetail.phone : undefined,
+  });
+  if (payLaterBlock !== null && mode === "pay_later" && !started) {
+    setMode("pay_now");
   }
   useEffect(() => {
     if (customerId === null) return;
@@ -216,6 +245,28 @@ export function usePosCart() {
     setQuoteStatus("idle");
     setQuoteError(null);
   }
+  /** Klem ulang diskon semua baris terhadap harga efektif baru (harga member tiba,
+   * berubah, atau hilang): nominal yang sah pada harga katalog bisa melampaui harga
+   * member → baris negatif ditolak server. Keranjang terkunci (checkout berjalan)
+   * tidak diubah — isinya harus sama dengan order di server. */
+  function reclampDiscounts(prices: MemberPrices) {
+    // Dibaca dari ref: quote bisa tiba setelah checkout dimulai (closure efek basi).
+    if (startedLive.current) return;
+    const r = reclampLineDiscounts(cartLive.current, prices);
+    if (r.reduced.length === 0) return;
+    setCart(() => r.lines);
+    const names = r.reduced.map((l) => l.productName).join(", ");
+    const text = `Diskon ${names} diturunkan agar tidak melebihi harga yang berlaku (harga member / harga jual minimum). Periksa kembali sebelum membayar.`;
+    setDiscountNotice(text);
+    toast.warning("Diskon disesuaikan dengan harga baru", text);
+  }
+
+  /** Ganti pelanggan. Dilepas (walk-in) = harga katalog langsung berlaku lagi. */
+  function selectCustomer(id: number | null) {
+    setCustomerIdState(id);
+    if (id === null) reclampDiscounts(new Map());
+  }
+
   useEffect(() => {
     if (customerId === null || cartProductIds.length === 0) {
       return;
@@ -228,9 +279,11 @@ export function usePosCart() {
         .then((q) => {
           setQuote(q);
           setQuoteStatus("idle");
+          reclampDiscounts(memberPriceMap(q));
         })
         .catch((err) => {
           setQuote(null);
+          reclampDiscounts(new Map());
           setQuoteStatus("error");
           setQuoteError(
             `Harga member tidak dapat dimuat (${readApiError(err).message}) — memakai harga katalog.`,
@@ -242,13 +295,7 @@ export function usePosCart() {
   }, [customerId, cartProductKey]);
 
   /** Harga member per produk — peta, bukan pencarian linier. */
-  const memberPrices = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const l of quote?.lines ?? []) {
-      if (l.applied) map.set(l.productId, l.memberPrice);
-    }
-    return map;
-  }, [quote]);
+  const memberPrices = useMemo(() => memberPriceMap(quote), [quote]);
   // Galat per baris dari quote: tampil di baris itu, bukan menggagalkan seluruh quote.
   const quoteLineErrors = useMemo(() => {
     const map = new Map<number, string>();
@@ -594,16 +641,23 @@ export function usePosCart() {
    * tanpa dokumen ganda (clientRef idempoten). Bayar Nanti = termin net, tanpa
    * settlement. */
   async function handleCheckout() {
-    const parsed = posCheckoutSchema.safeParse({ method, tendered, mode, dueDate });
+    const parsed = posCheckoutSchema.safeParse({ method, tendered, mode, dueDate, partyId: customerId ?? 0 });
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
       setCheckoutError(
         issue?.path[0] === "method"
           ? "Metode pembayaran tidak valid."
-          : issue?.path[0] === "dueDate"
-            ? "Jatuh tempo wajib diisi untuk Bayar Nanti."
-            : "Nominal tunai tidak valid — isi angka rupiah ≥ 0.",
+          : issue?.path[0] === "partyId"
+            ? PAY_LATER_NEEDS_CUSTOMER_MESSAGE
+            : issue?.path[0] === "dueDate"
+              ? "Jatuh tempo wajib diisi untuk Bayar Nanti."
+              : "Nominal tunai tidak valid — isi angka rupiah ≥ 0.",
       );
+      return;
+    }
+    // Order yang sudah dibuat (resume) tidak dinilai ulang — server sudah menerimanya.
+    if (mode === "pay_later" && payLaterBlock !== null && !started) {
+      setCheckoutError(payLaterBlock);
       return;
     }
     const values = parsed.data;
@@ -675,6 +729,7 @@ export function usePosCart() {
     // Kunci isi keranjang SEBELUM panggilan tulis pertama (disimpan sinkron):
     // bila tab mati di tengah jalan, reload tak boleh mengubah isi order yang sama.
     setStarted(true);
+    startedLive.current = true;
     saveDraft({
       ref: cartRef,
       lines: cart,
@@ -717,18 +772,20 @@ export function usePosCart() {
         setProcessing(false);
         return;
       }
-      const e = readApiError(outcome.error);
+      // message server + pesan per-field (mis. "Validasi gagal — customer termin net
+      // wajib memiliki nomor telepon"), bukan "Validasi gagal" saja.
+      const reason = formatApiError(outcome.error);
       // Penolakan pasti (4xx) di langkah 1 = order tak pernah dibuat → buka kunci.
       if (outcome.step === "create_order" && !outcome.orderCreated && isDefiniteRejection(outcome.error)) {
         setStarted(false);
       }
       const where = CHECKOUT_STEP_LABEL[outcome.step];
-      setCheckoutError(`Gagal ${where}: ${e.message}`);
+      setCheckoutError(`Gagal ${where}: ${reason}`);
       toast.danger(
         `Gagal ${where}`,
         outcome.orderCreated || outcome.step !== "create_order"
-          ? `${e.message} Tekan "Lanjutkan" untuk meneruskan dari langkah ini — dokumen yang sudah dibuat tidak digandakan.`
-          : `${e.message} Keranjang tetap tersimpan.`,
+          ? `${reason} Tekan "Lanjutkan" untuk meneruskan dari langkah ini — dokumen yang sudah dibuat tidak digandakan.`
+          : `${reason} Keranjang tetap tersimpan.`,
       );
       setProcessing(false);
       return;
@@ -835,6 +892,7 @@ export function usePosCart() {
     setHideDiscount(false);
     setCheckoutError(null);
     setResumeStep(null);
+    setDiscountNotice(null);
   }
 
   function newTransaction() {
@@ -882,6 +940,9 @@ export function usePosCart() {
     totals,
     estimateTotal,
     holds,
+    /** Pemberitahuan diskon yang diturunkan otomatis (harga efektif berubah). */
+    discountNotice,
+    dismissDiscountNotice: () => setDiscountNotice(null),
     // pindai
     barcode,
     setBarcode,
@@ -894,7 +955,7 @@ export function usePosCart() {
     setVariantChoice,
     // pelanggan + harga member
     customerId,
-    setCustomerId,
+    setCustomerId: selectCustomer,
     customerDetail,
     memberName,
     quote,
@@ -911,6 +972,8 @@ export function usePosCart() {
     setMethod,
     mode,
     setMode,
+    /** Alasan Bayar Nanti tidak tersedia (null = tersedia). */
+    payLaterBlock,
     dueDate,
     setDueDate,
     tendered,

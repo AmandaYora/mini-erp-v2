@@ -16,7 +16,7 @@ import {
 } from "@/shared/components/ui";
 import { ActionMenu, DocNumber, Page } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { toast } from "@/shared/stores/toast.store";
@@ -118,7 +118,7 @@ export default function CategoriesPage() {
         setSheet(null);
         reload();
       } catch (err) {
-        toast.danger("Gagal membuat kategori", toApiError(err).message);
+        toast.danger("Gagal membuat kategori", formatApiError(err));
       } finally {
         setSaving(false);
       }
@@ -150,7 +150,7 @@ export default function CategoriesPage() {
         setSheet(null);
         reload();
       } catch (err) {
-        toast.danger("Gagal menyimpan kategori", toApiError(err).message);
+        toast.danger("Gagal menyimpan kategori", formatApiError(err));
       } finally {
         setSaving(false);
       }
@@ -166,7 +166,7 @@ export default function CategoriesPage() {
       setArchiveTarget(null);
       reload();
     } catch (err) {
-      toast.danger("Gagal mengarsipkan kategori", toApiError(err).message);
+      toast.danger("Gagal mengarsipkan kategori", formatApiError(err));
     } finally {
       setArchiving(false);
     }

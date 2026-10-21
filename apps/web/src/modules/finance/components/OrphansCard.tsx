@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Badge, Button, ConfirmDialog, DataTable, SectionCard } from "@/shared/components/ui";
 import { DocNumber } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { financeService } from "@/modules/finance/services/finance.service";
@@ -38,7 +38,7 @@ export function OrphansCard({ canPost, onChanged }: OrphansCardProps) {
       reload();
       onChanged();
     } catch (err) {
-      toast.danger("Gagal membalik jurnal", toApiError(err).message);
+      toast.danger("Gagal membalik jurnal", formatApiError(err));
     } finally {
       setBusy(false);
       setConfirmAll(false);

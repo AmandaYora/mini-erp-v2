@@ -7,7 +7,7 @@ import { ErrorState } from "@/shared/components/feedback/error-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { formatDate } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
@@ -48,7 +48,7 @@ export default function ExpenseDetailPage() {
       setConfirmOpen(false);
       reload();
     } catch (err) {
-      toast.danger("Gagal membatalkan biaya", toApiError(err).message);
+      toast.danger("Gagal membatalkan biaya", formatApiError(err));
     } finally {
       setCancelling(false);
     }

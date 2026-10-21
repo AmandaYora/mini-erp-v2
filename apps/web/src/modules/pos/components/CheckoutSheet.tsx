@@ -38,7 +38,7 @@ function Choice<T extends string>({
   onChange,
 }: {
   label: string;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; disabled?: boolean; describedBy?: string }[];
   value: T;
   disabled: boolean;
   onChange: (v: T) => void;
@@ -49,7 +49,8 @@ function Choice<T extends string>({
         <button
           key={o.value}
           type="button"
-          disabled={disabled}
+          disabled={disabled || o.disabled}
+          aria-describedby={o.describedBy}
           aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
@@ -91,9 +92,20 @@ function PaymentForm({ pos }: { pos: PosCartApi }) {
         onChange={pos.setMode}
         options={[
           { value: "pay_now", label: "Bayar Sekarang" },
-          { value: "pay_later", label: "Bayar Nanti" },
+          {
+            value: "pay_later",
+            label: "Bayar Nanti",
+            // Termin net ditolak server untuk walk-in / pelanggan tanpa telepon.
+            disabled: pos.payLaterBlock !== null && mode !== "pay_later",
+            describedBy: pos.payLaterBlock !== null ? "pos-pay-later-hint" : undefined,
+          },
         ]}
       />
+      {pos.payLaterBlock !== null && (
+        <p id="pos-pay-later-hint" className="-mt-2 text-xs text-muted-foreground">
+          {pos.payLaterBlock}
+        </p>
+      )}
 
       {mode === "pay_now" && !pos.canPay && (
         <Notice tone="warning" title="Bayar sekarang tidak tersedia untuk akun ini">
@@ -117,9 +129,6 @@ function PaymentForm({ pos }: { pos: PosCartApi }) {
             />
             <p className="mt-1 text-xs text-muted-foreground">Order dicatat sebagai piutang termin net.</p>
           </div>
-          {pos.customerId === null && (
-            <Notice tone="warning" title="Piutang tanpa customer — penagihan harus dilakukan manual" />
-          )}
         </>
       ) : (
         <>

@@ -6,6 +6,7 @@ import {
   lineDiscount,
   lineTotal,
   maxLineDiscount,
+  reclampLineDiscounts,
 } from "@/modules/pos/lib/cart";
 
 describe("lineTotal / cartEstimate", () => {
@@ -101,5 +102,38 @@ describe("cashChange", () => {
   });
   it("is zero on exact payment", () => {
     expect(cashChange(35000, 35000)).toBe(0);
+  });
+});
+
+describe("reclampLineDiscounts (harga member tiba / pelanggan berganti)", () => {
+  const base = { productId: 1, qty: 1, unitPrice: 100000, minSellingPrice: 0, discountPct: 0, discountNominal: 0 };
+
+  it("nominal yang melampaui harga member baru dipotong — baris tidak negatif", () => {
+    const lines = [{ ...base, discountNominal: 90000 }];
+    const r = reclampLineDiscounts(lines, new Map([[1, 80000]]));
+    expect(r.reduced).toEqual(lines);
+    expect(r.lines[0].discountNominal).toBe(80000);
+    expect(lineTotal({ ...r.lines[0], unitPrice: 80000 })).toBe(0);
+  });
+
+  it("harga member hilang (pelanggan dilepas): minimum katalog berlaku lagi", () => {
+    const lines = [{ ...base, minSellingPrice: 95000, discountNominal: 20000 }];
+    const r = reclampLineDiscounts(lines, new Map());
+    expect(r.lines[0].discountNominal).toBe(5000);
+    expect(r.reduced.map((l) => l.productId)).toEqual([1]);
+  });
+
+  it("baris ber-harga member dikecualikan dari minimum katalog", () => {
+    const lines = [{ ...base, minSellingPrice: 95000, discountNominal: 20000 }];
+    const r = reclampLineDiscounts(lines, new Map([[1, 90000]]));
+    expect(r.reduced).toEqual([]);
+    expect(r.lines).toBe(lines);
+  });
+
+  it("tanpa perubahan mengembalikan array yang sama", () => {
+    const lines = [{ ...base, discountPct: 10 }, { ...base, productId: 2 }];
+    const r = reclampLineDiscounts(lines, new Map([[2, 50000]]));
+    expect(r.lines).toBe(lines);
+    expect(r.reduced).toEqual([]);
   });
 });

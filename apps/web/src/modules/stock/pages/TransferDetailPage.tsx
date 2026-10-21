@@ -14,7 +14,7 @@ import { ActionMenu, DescriptionList, DocNumber, DocumentRail, Page, PageColumns
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
@@ -110,7 +110,7 @@ export default function TransferDetailPage() {
       reload();
     } catch (err) {
       setAction(null);
-      toast.danger("Aksi gagal", toApiError(err).message);
+      toast.danger("Aksi gagal", formatApiError(err));
     } finally {
       setRunning(false);
     }

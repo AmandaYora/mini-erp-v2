@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { Button, DataTable, FormField, FormSheet, SectionCard, TextInput } from "@/shared/components/ui";
 import { Qty } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { financeService } from "@/modules/finance/services/finance.service";
@@ -52,7 +52,7 @@ export function CutoverCard({ canManage, onChanged }: CutoverCardProps) {
       reload();
       onChanged();
     } catch (err) {
-      setServerError(toApiError(err).message);
+      setServerError(formatApiError(err));
     } finally {
       setSaving(false);
     }

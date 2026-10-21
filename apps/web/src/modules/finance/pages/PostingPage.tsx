@@ -22,7 +22,7 @@ import {
 import { DocNumber, Money, Page, useUrlTab } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate, formatNumber, todayWIB } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -189,7 +189,7 @@ export default function PostingPage() {
       setIgnoreTarget(null);
       reloadQueue();
     } catch (err) {
-      toast.danger("Gagal mengabaikan dokumen", toApiError(err).message);
+      toast.danger("Gagal mengabaikan dokumen", formatApiError(err));
     } finally {
       setBusy(false);
     }
@@ -202,7 +202,7 @@ export default function PostingPage() {
       toast.fromServer(res.message, "Dokumen dikembalikan ke antrian", row.number);
       reloadQueue();
     } catch (err) {
-      toast.danger("Gagal memulihkan dokumen", toApiError(err).message);
+      toast.danger("Gagal memulihkan dokumen", formatApiError(err));
     } finally {
       setBusy(false);
     }

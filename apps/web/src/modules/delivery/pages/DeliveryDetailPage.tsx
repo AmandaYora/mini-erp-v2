@@ -31,7 +31,7 @@ import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { formatDate, formatDateTime, formatIDR, todayWIB } from "@/shared/lib/format";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
@@ -231,7 +231,7 @@ export default function DeliveryDetailPage() {
       toast.fromServer(res.message, "Surat jalan dibatalkan", res.data.number);
       reload();
     } catch (err) {
-      toast.danger("Gagal membatalkan", toApiError(err).message);
+      toast.danger("Gagal membatalkan", formatApiError(err));
     } finally {
       setActing(false);
     }
@@ -245,7 +245,7 @@ export default function DeliveryDetailPage() {
       toast.fromServer(res.message, "Bukti kirim diunggah");
       reload();
     } catch (err) {
-      toast.danger("Gagal mengunggah bukti", toApiError(err).message);
+      toast.danger("Gagal mengunggah bukti", formatApiError(err));
     } finally {
       setUploading(false);
     }

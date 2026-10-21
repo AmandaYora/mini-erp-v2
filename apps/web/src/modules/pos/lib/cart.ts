@@ -92,3 +92,41 @@ export function clampLineDiscount(
   }
   return { discountPct: pct, discountNominal: nominal, clamped };
 }
+
+/** Baris keranjang minimal untuk klem ulang (CartLine memenuhinya). */
+export interface ReclampLine extends LineDiscount {
+  productId: number;
+  qty: number;
+  unitPrice: number;
+  minSellingPrice: number;
+}
+
+/** Harga member per produk dari quote; produk tanpa entri = harga katalog. */
+export type MemberPrices = ReadonlyMap<number, number>;
+
+/**
+ * Klem ulang diskon SEMUA baris terhadap harga efektif baru. Dipanggil saat harga
+ * member tiba atau pelanggan berganti: nominal yang sah terhadap harga katalog bisa
+ * melampaui harga member yang lebih rendah (baris negatif → server 422), dan
+ * sebaliknya batas minimum kembali berlaku saat harga member hilang. Baris ber-harga
+ * member dikecualikan dari minSellingPrice (seperti server). Mengembalikan array
+ * yang SAMA bila tak ada yang berubah, plus baris (versi lama) yang diskonnya diturunkan.
+ */
+export function reclampLineDiscounts<L extends ReclampLine>(
+  lines: L[],
+  memberPrices: MemberPrices,
+): { lines: L[]; reduced: L[] } {
+  const reduced: L[] = [];
+  const next = lines.map((l) => {
+    const member = memberPrices.get(l.productId);
+    const c = clampLineDiscount(
+      { qty: l.qty, unitPrice: member ?? l.unitPrice },
+      { discountPct: l.discountPct, discountNominal: l.discountNominal },
+      member !== undefined ? 0 : l.minSellingPrice,
+    );
+    if (c.discountPct === l.discountPct && c.discountNominal === l.discountNominal) return l;
+    reduced.push(l);
+    return { ...l, discountPct: c.discountPct, discountNominal: c.discountNominal };
+  });
+  return reduced.length === 0 ? { lines, reduced } : { lines: next, reduced };
+}

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button, CardSkeleton, Modal } from "@/shared/components/ui";
 import { FileDropzone } from "@/shared/components/patterns";
 import { ErrorState } from "@/shared/components/feedback/error-state";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { financeService } from "@/modules/finance/services/finance.service";
@@ -27,7 +27,7 @@ export function TaxAdjustmentFilesModal({ adjustment, canManage, onClose }: TaxA
       toast.success("Lampiran diunggah");
       reload();
     } catch (err) {
-      toast.danger("Gagal mengunggah lampiran", toApiError(err).message);
+      toast.danger("Gagal mengunggah lampiran", formatApiError(err));
     } finally {
       setUploading(false);
     }

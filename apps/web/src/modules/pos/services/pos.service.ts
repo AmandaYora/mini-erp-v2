@@ -19,6 +19,7 @@
 // - POST /api/v1/stock/allocations/suggest (stock.view — saran lokasi + shortfall)
 // - POST /api/v1/stock/reservations/hold|release (stock.reserve — tahanan keranjang)
 // - POST /api/v1/payments (payment.create)
+// - GET /api/v1/payments?orderType=sales&orderId= (payment.view — pembayaran order, resume/kembalian)
 
 import { apiGet, apiPage, apiPost } from "@/shared/services/http-client";
 import { readApiError } from "@/modules/pos/lib/api-error";
@@ -154,12 +155,16 @@ export const posService = {
 };
 
 /** Pembayaran tersimpan untuk satu order POS (kembalian dari data server).
+ * Disaring server lewat alokasi (orderType=sales&orderId) — bukan 20 pembayaran
+ * terbaru cabang, yang melewatkan order lama di cabang ramai.
  * Best-effort: butuh izin payment.view; kegagalan = null. */
 export async function findPosPayment(
   partyId: number,
   orderId: number,
 ): Promise<PosCreatedPayment | null> {
   const page = await apiPage<PosCreatedPayment & { status?: string }>("/api/v1/payments", {
+    orderType: "sales",
+    orderId,
     partyId: partyId > 0 ? partyId : undefined,
     status: "active",
     page: 1,

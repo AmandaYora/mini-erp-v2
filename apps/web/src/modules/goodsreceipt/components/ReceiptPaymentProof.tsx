@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { SectionCard } from "@/shared/components/ui";
 import { FileDropzone } from "@/shared/components/patterns";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { paymentService } from "@/modules/payment/services/payment.service";
@@ -27,7 +27,7 @@ export function ReceiptPaymentProof({ payment }: ReceiptPaymentProofProps) {
       toast.fromServer(res.message, "Bukti bayar diunggah");
       setUploaded((prev) => [...prev, file.name]);
     } catch (err) {
-      toast.danger("Gagal mengunggah bukti", toApiError(err).message);
+      toast.danger("Gagal mengunggah bukti", formatApiError(err));
     } finally {
       setUploading(false);
     }

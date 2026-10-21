@@ -230,6 +230,32 @@ export function toApiError(error: unknown): ApiError {
   return { status: 0, message: "Terjadi kesalahan tak terduga" };
 }
 
+/** Pesan per-field dari `errors[]` (tanpa yang kosong, ganda, atau sama dengan `message`). */
+export function fieldErrorMessages(error: unknown): string[] {
+  const e = toApiError(error);
+  const seen = new Set<string>([e.message.trim()]);
+  const out: string[] = [];
+  for (const fe of e.errors ?? []) {
+    const msg = (fe?.message ?? "").trim();
+    if (msg === "" || seen.has(msg)) continue;
+    seen.add(msg);
+    out.push(msg);
+  }
+  return out;
+}
+
+/**
+ * Teks galat lengkap untuk toast/notice: `message` server DIIKUTI pesan per-field.
+ * Validasi backend menjawab `{message: "Validasi gagal", errors: [{field, message}]}`
+ * — tanpa `errors[]` pengguna hanya melihat "Validasi gagal" tanpa alasannya.
+ * Pakai ini di setiap handler tulis yang tidak memetakan `errors[]` ke input form.
+ */
+export function formatApiError(error: unknown): string {
+  const e = toApiError(error);
+  const details = fieldErrorMessages(e);
+  return details.length > 0 ? `${e.message} — ${details.join("; ")}` : e.message;
+}
+
 /** True untuk request yang kita batalkan sendiri (ganti filter / pindah
  * halaman). Bukan kegagalan: tidak boleh muncul sebagai pesan error. */
 export function isAbort(error: unknown): boolean {

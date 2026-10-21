@@ -33,7 +33,7 @@ import {
 } from "@/modules/goodsreceipt/lib/settlement-draft";
 import type { SettlementDraft } from "@/modules/goodsreceipt/lib/settlement-draft";
 import { goodsReceiptRail } from "@/modules/goodsreceipt/lib/goods-receipt-rail";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
@@ -140,7 +140,7 @@ export default function GoodsReceiptDetailPage() {
       reload();
     } catch (err) {
       setDiscardOpen(false);
-      toast.danger("Gagal membatalkan penerimaan", toApiError(err).message);
+      toast.danger("Gagal membatalkan penerimaan", formatApiError(err));
     } finally {
       setActing(false);
     }

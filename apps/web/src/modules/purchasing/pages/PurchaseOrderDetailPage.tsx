@@ -25,7 +25,7 @@ import {
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { formatDate, formatIDR } from "@/shared/lib/format";
-import { toApiError } from "@/shared/services/http-client";
+import { formatApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { toast } from "@/shared/stores/toast.store";
@@ -125,7 +125,7 @@ export default function PurchaseOrderDetailPage() {
       toast.fromServer(res.message, fallback, res.data.number);
       refresh();
     } catch (err) {
-      const msg = toApiError(err).message;
+      const msg = formatApiError(err);
       // Pesan penjaga server (penerimaan/pembayaran/retur aktif) tampil menetap.
       setActionError(`${fail}: ${msg}`);
       toast.danger(fail, msg);
