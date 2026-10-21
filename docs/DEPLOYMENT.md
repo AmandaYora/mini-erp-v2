@@ -52,66 +52,89 @@ npm run arch:check      # penjaga arsitektur; npm run arch:selftest menguji penj
 npm run verify          # semuanya: build, vet, test, tsc, lint, vitest, arch, sqlc-sync, schema-doc, contract
 ```
 
-## 4. Docker (Produksi)
+## 4. Docker (Produksi) — VPS elcodelabs
 
-Default: **satu container aplikasi**, database MySQL tetap di level host/OS — bukan container
-terpisah. Image: `infra/docker/Dockerfile` (Go 1.26.7 + Node 20, `npm ci`,
-`ca-certificates`, user non-root 10001, HEALTHCHECK ke `/readyz`).
+Target: VPS **elcodelabs** (`ssh elcodelabs`, 103.189.235.79), mengikuti
+`/opt/elcodelabs/SERVER_PLAYBOOK.md` di server ([ADR-0019](../knowledge/decisions/ADR-0019-deploy-elcodelabs-ghcr.md)).
+Satu container aplikasi; MySQL di level host, dipakai bersama aplikasi lain dengan database + user
+sendiri. Image: `infra/docker/Dockerfile` (Go 1.26.7 + Node 22, user non-root 10001, HEALTHCHECK
+`/readyz`).
 
 ```txt
-1 VPS / host
-├── MySQL terpasang di level OS/sistem
-├── nginx di host (terminasi TLS, lihat infra/nginx/nginx.conf)
+VPS elcodelabs
+├── MySQL 8 di host (bersama) ── minierp_db / minierp_user@'172.%'
+├── nginx host: situs <domain> -> 127.0.0.1:8084, TLS certbot
 └── Docker
-    └── satu container aplikasi
-        ├── build statis frontend (apps/web)
-        └── backend API (apps/api, hasil `go build`)
+    ├── elkasir-app :8081 · elproof-app :8082 · elwedding-app :8083   (aplikasi lain)
+    └── minierp-app :8084 -> 8080   (frontend statis + API Go)
 ```
 
-Urutan deploy (jangan dibalik; detail + rollback: `docs/RUNBOOK.md`):
+| Konvensi | Nilai mini-erp-v2 |
+|---|---|
+| Folder server | `~/minierp` (`docker-compose.prod.yml`, `.env` 600, `deploy.sh`, `data/storage`, `backups/`) |
+| Container / port | `minierp-app` / `127.0.0.1:8084` -> 8080 |
+| Database / user | `minierp_db` / `minierp_user@'172.%'` (`mysql_native_password`) |
+| Image | `ghcr.io/amandayora/mini-erp-v2:<git-sha>` (+ `:latest`), dibangun `release-image.yml` |
+| Domain | `<domain>` dengan `server_name` sendiri, **tanpa** `default_server` (milik elkasir) |
+
+**Build di CI, jalan di server.** `.github/workflows/release-image.yml` berjalan setelah `ci` hijau
+untuk push ke `main` dan mendorong image `linux/amd64`. VPS (2 GB RAM) **tidak pernah** membangun
+image. `docker-compose.yml` di akar repo hanya untuk uji lokal (membangun dari sumber).
+
+### Setup pertama di server (sekali)
 
 ```bash
-cp .env.production.example .env   # isi nilai asli di host, jangan commit
-chown -R 10001:10001 ./data/storage
-APP_VERSION=<gitsha> ./scripts/ops/deploy.sh
-# = backup DB -> build -> migrate up -> up -d app -> tunggu /readyz
+# 1. Database + user (host MySQL); password: openssl rand -hex 24
+sudo mysql -e "CREATE DATABASE minierp_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  CREATE USER 'minierp_user'@'172.%' IDENTIFIED WITH mysql_native_password BY '<hex>';
+  GRANT ALL PRIVILEGES ON minierp_db.* TO 'minierp_user'@'172.%'; FLUSH PRIVILEGES;"
+
+# 2. Folder app — salin dari repo: infra/elcodelabs/{docker-compose.prod.yml,deploy.sh}
+#    dan .env.production.example (sebagai .env), lalu isi nilai asli.
+mkdir -p ~/minierp/data/storage ~/minierp/backups
+chmod 600 ~/minierp/.env && chmod +x ~/minierp/deploy.sh
+sudo chown -R 10001:10001 ~/minierp/data/storage
+
+# 3. Deploy pertama (database masih kosong -> backup dilewati), lalu seed awal
+cd ~/minierp && SKIP_BACKUP=1 ./deploy.sh <git-sha>
+docker compose -f docker-compose.prod.yml run --rm --entrypoint ./seed app init
+
+# 4. nginx + TLS (templat: infra/nginx/nginx.conf)
+sudo cp nginx.conf /etc/nginx/sites-available/minierp && sudo ln -s ../sites-available/minierp /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx && sudo certbot --nginx -d <domain>
 ```
 
-`docker-compose.yml` mengikat port hanya ke loopback (`127.0.0.1:8080:8080`),
-me-mount `./data/storage` ke `/data/storage` (`media/` disajikan lewat URL
-bertanda tangan `/media/*`; `_private/` sesi WA tak disajikan), read-only
-rootfs, `stop_grace_period: 30s`, dan service sekali-pakai `migrate`
-(`--profile ops`) yang menjalankan `migrate up` sebelum container baru start.
-TLS/body-limit/header diteruskan nginx host (`client_max_body_size 6m`,
-`proxy_read_timeout 120s`, `/metrics` di-deny).
+Lalu perbarui tabel *App registry* di `SERVER_PLAYBOOK.md` server (port 8084, `minierp_db`).
+Paket GHCR baru defaultnya **privat**: login `docker login ghcr.io` dengan PAT `read:packages` yang
+sudah tersimpan di server (dipakai aplikasi `amandayora/*` lain), atau jadikan paket publik.
 
-Container mengekspos satu port (hanya loopback `127.0.0.1:8080`):
+### Deploy rutin & rollback
+
+```bash
+cd ~/minierp && ./deploy.sh <git-sha>
+# = cek awal -> pull -> backup DB (sudo mysqldump -> backups/) -> migrate up -> up -d -> /readyz
+```
+
+Rollback = `./deploy.sh <git-sha-lama>` (detail: `docs/RUNBOOK.md` §4). `deploy.sh` menolak tag
+`latest` dan menulis `IMAGE_TAG` ke `.env`; compose produksi menolak jalan tanpa `IMAGE_TAG`.
+
+### Isi container
+
+`docker-compose.prod.yml` mengikat port hanya ke loopback, me-mount `./data/storage` ke
+`/data/storage` (`media/` bila `STORAGE_DRIVER=local`; `_private/` sesi WA, tak disajikan), rootfs
+read-only, batas memori 768 MB, log 10m×3, `stop_grace_period: 30s`, dan service sekali-pakai
+`migrate` (`--profile ops`). Container mengekspos satu port:
 
 - `/api/v1/*` → backend API (+ `/healthz`, `/readyz`, `/api/v1/metrics` ber-token)
 - `/media/*?exp&sig` → berkas media (HMAC + expiry, tanpa listing; `/uploads/*` = 404)
 - selain itu → berkas statis SPA frontend
 
-Koneksi DB dari container ke MySQL host (Linux VPS): pakai user aplikasi
-khusus (`mini_erp_app`, bukan root) — lihat `.env.production.example`:
-
-```env
-DB_HOST=host.docker.internal
-DB_PORT=3306
-DB_USER=mini_erp_app
-DB_PASSWORD=<isi-asli>
-DB_NAME=mini_erp_db
-DB_DSN=mini_erp_app:<isi-asli>@tcp(host.docker.internal:3306)/mini_erp_db
-```
-
-`docker-compose.yml` sudah menyertakan `extra_hosts: host.docker.internal:host-gateway` agar
-resolusi ini bekerja di Linux VPS (bukan hanya Docker Desktop).
-
-**Jangan** menambahkan service `mysql:` ke `docker-compose.yml` secara default — ini menyalahi
-standar Docker Dimas (satu app container, DB di host).
+Koneksi DB dari container ke MySQL host lewat `host.docker.internal` (`extra_hosts:
+host-gateway`). **Jangan** menambahkan service `mysql:` ke compose — melanggar standar server.
 
 ## 5. Migrasi di Produksi
 
-- Jalankan `docker compose --profile ops run --rm migrate up` sebagai langkah deploy terpisah
+- `deploy.sh` menjalankan `docker compose -f docker-compose.prod.yml --profile ops run --rm migrate up` sebagai langkah terpisah
   **sebelum** container baru mulai menerima trafik — jangan menjalankan migrasi otomatis di setiap
   start container (ini salah satu penyebab masalah di sistem lama: migration runner tanpa tabel
   pelacak, migrasi dijalankan ulang tiap start).
@@ -124,12 +147,15 @@ standar Docker Dimas (satu app container, DB di host).
 
 ## 6. Variabel Environment Produksi
 
-Salin `.env.production.example` ke `.env` di host, isi nilai asli. Poin yang
+Salin `.env.production.example` ke `~/minierp/.env` di server, isi nilai asli, `chmod 600`. Poin yang
 wajib diperhatikan khusus produksi (gagal start bila dilanggar):
 
 - `APP_ENV=production` wajib; `CORS_ALLOWED_ORIGINS` domain eksplisit — jangan `*`.
 - `JWT_SECRET` acak kuat (>=32 char) + `MEDIA_SIGNING_KEY` terpisah dan beda.
-- `DB_DSN` user aplikasi (`mini_erp_app`), bukan root tanpa password.
+- `DB_DSN` user aplikasi (`minierp_user`), bukan root tanpa password; password hex (dipakai juga di
+  URL `migrate`, karakter seperti `@`/`/` merusaknya).
+- `TRUSTED_PROXIES=172.16.0.0/12,…`: nginx host terlihat dari bridge docker; tanpa ini semua
+  pengguna tampak satu IP bagi pembatas login.
 - S3: `STORAGE_UPLOAD_ROOT_PREFIX` eksplisit dan tak bertumpuk
   `STORAGE_PROTECTED_PREFIXES`; `STORAGE_DRIVER=local` butuh `STORAGE_DIR` absolut.
 - `APP_TIMEZONE=Asia/Jakarta` dan `APP_LOCALE=id-ID` adalah konstanta aplikasi — tidak perlu (dan
@@ -185,4 +211,4 @@ Checklist cutover (RUNBOOK §5c) memuat butir ini.
 - [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) — arsitektur & stack
 - [API_CONTRACT.md](API_CONTRACT.md) — konfigurasi environment lengkap
 - [RUNBOOK.md](RUNBOOK.md) — backup/restore/rollback operasi harian, checklist cutover (§5c)
-- `.env.production.example`, `infra/docker/Dockerfile`, `infra/nginx/nginx.conf`, `docker-compose.yml` — implementasi konkret
+- `.env.production.example`, `infra/docker/Dockerfile`, `infra/elcodelabs/` (compose produksi + `deploy.sh`), `infra/nginx/nginx.conf`, `.github/workflows/release-image.yml` — implementasi konkret; `docker-compose.yml` akar = uji lokal

@@ -19,7 +19,7 @@ apps/web (React 19 + Tailwind 4)  →  /api/v1/*  →  apps/api (Go modular mono
 - **Wiring:** `internal/bootstrap.Wire` merakit semua modul dan diakhiri `Modules.Verify()`.
 - **Frontend:** SPA React; satu instance Axios, lazy routes, Design System v2. Detail:
   [FRONTEND_GUIDE.md](FRONTEND_GUIDE.md).
-- **Deployment:** satu container Docker (frontend statis + API Go, port 8080), database tetap di host.
+- **Deployment:** satu container Docker (frontend statis + API Go, port 8080), database tetap di host; produksi di VPS elcodelabs, image dari GHCR ([ADR-0019](decisions/ADR-0019-deploy-elcodelabs-ghcr.md)).
   Detail: [../docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 - **Konstanta terkunci:** `id-ID` / `Asia/Jakarta` / IDR, uang integer rupiah —
   [ADR-0006](decisions/ADR-0006-locale-timezone-locked.md), [ADR-0005](decisions/ADR-0005-money-as-integer-rupiah.md).

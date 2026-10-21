@@ -1,24 +1,33 @@
 # RUNBOOK — Operasi mini-erp (F6-7)
 
-Satu container app + MySQL di host. Skrip: `scripts/ops/`. Detail deploy
-penuh: `docs/DEPLOYMENT.md`. Pedoman ETL/cutover: `docs/plan/menuju-pengganti-production/PLAN.md` §9.
+Satu container app + MySQL di host, di VPS **elcodelabs** (`ssh elcodelabs`, folder `~/minierp`,
+container `minierp-app`, `127.0.0.1:8084`, ADR-0019). Skrip server: `infra/elcodelabs/` (disalin ke
+`~/minierp`); skrip backup/restore: `scripts/ops/`. Detail deploy penuh: `docs/DEPLOYMENT.md`. Pedoman ETL/cutover: `docs/plan/menuju-pengganti-production/PLAN.md` §9.
 
 ## 1. Deploy normal (setiap rilis)
 
-```bash
-APP_VERSION=<gitsha-pendek> ./scripts/ops/deploy.sh
-# = backup DB -> build -> migrate up -> up -d app -> tunggu /readyz -> smoke /health
-```
-
-Urutan manual bila skrip tak dipakai:
+Image dibangun CI (`release-image.yml`, setelah `ci` hijau di `main`) dan didorong ke
+`ghcr.io/amandayora/mini-erp-v2:<git-sha>`. VPS **tidak pernah** membangun image.
 
 ```bash
-./scripts/ops/backup.sh --db-only
-docker compose build --build-arg VERSION=<gitsha> app
-docker compose --profile ops run --rm migrate up
-docker compose up -d app
-curl -fsS http://127.0.0.1:8080/readyz
+ssh elcodelabs
+cd ~/minierp && ./deploy.sh <git-sha-lengkap>
+# = cek awal -> pull -> backup DB (sudo mysqldump) -> migrate up -> up -d -> tunggu /readyz
 ```
+
+Urutan manual bila skrip tak dipakai (di `~/minierp`):
+
+```bash
+export IMAGE_TAG=<git-sha>
+docker compose -f docker-compose.prod.yml pull app
+sudo mysqldump --single-transaction minierp_db | gzip > backups/pre-deploy-$(date +%F-%H%M).sql.gz
+docker compose -f docker-compose.prod.yml --profile ops run --rm migrate up
+docker compose -f docker-compose.prod.yml up -d app
+curl -fsS http://127.0.0.1:8084/readyz
+```
+
+`deploy.sh` menulis `IMAGE_TAG` yang sedang berjalan ke `.env`, sehingga `docker compose up` manual
+tetap di versi itu (compose menolak jalan bila `IMAGE_TAG` kosong — tidak ada jatuh ke `latest`).
 
 Jangan menjalankan migrasi otomatis saat start (keputusan F6-3). Biner
 menolak start bila schema lebih tua dari biner (`schema_migrations.version`
@@ -64,12 +73,14 @@ SEHAT. Wajib uji restore ke DB uji tiap bulan dan sebelum cutover (gladi L).
 ## 4. Rollback aplikasi (rilis bermasalah)
 
 ```bash
-APP_VERSION=<versi-lama-baik> docker compose up -d app   # image lama
+cd ~/minierp && ./deploy.sh <git-sha-lama-yang-baik>   # image lama dari GHCR
 # Bila migrasi sudah naik dan harus turun (hanya bila *.down.sql terverifikasi
-# di CI + backup ayat 2 sudah ada):
-docker compose --profile ops run --rm migrate down 1
+# di CI + backup pra-deploy di ~/minierp/backups sudah ada):
+IMAGE_TAG=<git-sha-baru> docker compose -f docker-compose.prod.yml --profile ops run --rm migrate down 1
 # Bila ragu: restore backup pra-deploy (ayat 3), jangan down.
 ```
+
+Deploy yang gagal sehat mencetak perintah rollback ke versi sebelumnya.
 
 ## 5. Rollback cutover ke legacy (jalur balik)
 
@@ -77,7 +88,7 @@ Legacy dibiarkan hidup **read-only** selama jendela yang disepakati (input
 pemilik). Kriteria kembali: rekonsiliasi saldo/stok gagal, galat kritis,
 atau perintah pemilik.
 
-1. Hentikan trafik revamp (`docker compose stop app`).
+1. Hentikan trafik revamp (`cd ~/minierp && docker compose -f docker-compose.prod.yml stop app`).
 2. Kembalikan DNS/proxy ke legacy, buka tulis legacy.
 3. Konsekuensi: transaksi yang sudah dicatat di revamp setelah cutover tidak
    ada di legacy — ekspor delta (CSV dari tabel dokumen) untuk entri ulang
@@ -163,9 +174,9 @@ image bersama `api` dan `seed`:
 
 ```bash
 # 1. DRY-RUN (bawaan): selisih per produk + status gerbang; TIDAK menulis apa pun.
-docker compose exec app ./costrebuild --branch-id 1
+docker exec minierp-app ./costrebuild --branch-id 1
 # 2. Periksa laporan. Bila setuju, jalankan COMMIT (setelah backup DB, bagian 2):
-docker compose exec app ./costrebuild --branch-id 1 --commit [--date 2026-10-31] [--actor-id 5]
+docker exec minierp-app ./costrebuild --branch-id 1 --commit [--date 2026-10-31] [--actor-id 5]
 # Lokal: cd apps/api && go run ./cmd/costrebuild --branch-id 1 [--commit] [--json]
 ```
 

@@ -1,4 +1,5 @@
 # F6-1: satu image app (frontend statis + API Go). Database tetap di host (F6-2).
+# - Node 22 sesuai .nvmrc (vitest/jsdom di lockfile menolak Node 20).
 # - Go 1.26.7 sesuai apps/api/go.mod (toolchain go1.26.7); GOTOOLCHAIN=local agar
 #   gagal cepat bila tag image lebih tua, bukan resolve diam-diam.
 # - npm ci memakai package-lock.json root (reproducible); bukan npm install.
@@ -6,7 +7,7 @@
 # - non-root 10001 + HEALTHCHECK ke /readyz (DB + direktori + versi migrasi).
 # - -buildvcs=false wajib: .git dikecualikan .dockerignore sehingga stamping VCS gagal.
 
-FROM node:20-alpine AS web
+FROM node:22-alpine AS web
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY packages ./packages

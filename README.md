@@ -9,7 +9,7 @@ rehearsal, physical print checks). Current figures and open work: [`docs/STATUS.
 
 ## Development
 
-Requires **Go 1.26** (toolchain pinned in `apps/api/go.mod`), **Node 20+**, and **MySQL 8.4** on the host.
+Requires **Go 1.26** (toolchain pinned in `apps/api/go.mod`), **Node 22+** (`.nvmrc`; the pinned vitest/jsdom refuse Node 20), and **MySQL 8.0+** on the host (production: 8.0.46).
 Tool install commands: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §1.
 
 ```bash
@@ -64,5 +64,5 @@ frontend calls in line with the router. Session-derived scope, integer-rupiah mo
 
 ## Deployment
 
-One Docker app container serving both the static frontend and the API on port 8080. The database
+One Docker app container serving both the static frontend and the API on port 8080 (published on the VPS as `127.0.0.1:8084`, see `docs/DEPLOYMENT.md`). The database
 runs on the host — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md).

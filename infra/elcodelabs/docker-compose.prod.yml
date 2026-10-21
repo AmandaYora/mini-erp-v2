@@ -1,0 +1,57 @@
+# Compose PRODUKSI di VPS elcodelabs (ADR-0019, /opt/elcodelabs/SERVER_PLAYBOOK.md).
+# IMAGE-ONLY — tidak ada `build:`: VPS 2 GB hanya MENARIK image siap pakai dari GHCR
+# (dibangun .github/workflows/release-image.yml). Jangan pernah build di server.
+#
+# Di server: ~/minierp/docker-compose.prod.yml, di samping ~/minierp/.env (chmod 600)
+# dan ~/minierp/deploy.sh. Deploy: `cd ~/minierp && ./deploy.sh <git-sha>`.
+#
+# IMAGE_TAG WAJIB (tanpa default `latest`): deploy.sh menuliskannya ke .env, jadi
+# `docker compose up` manual pun tetap memakai versi yang terakhir dideploy — tidak
+# pernah diam-diam turun ke tag `latest` lokal yang lebih tua.
+services:
+  app:
+    image: ghcr.io/amandayora/mini-erp-v2:${IMAGE_TAG:?IMAGE_TAG belum di-set — jalankan ./deploy.sh <git-sha>}
+    container_name: minierp-app
+    restart: unless-stopped
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # MySQL di host (bukan container)
+    ports:
+      - "127.0.0.1:8084:8080" # hanya loopback; nginx host + TLS di depannya
+    volumes:
+      # media/ (lokal, bila STORAGE_DRIVER=local) + _private/ (sesi WhatsApp, tak disajikan).
+      # Pemilik di host harus uid 10001 (user non-root image): deploy.sh memeriksanya.
+      - ./data/storage:/data/storage
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - "no-new-privileges:true"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: # batasi log agar disk tak penuh
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Sekali pakai: `docker compose -f docker-compose.prod.yml --profile ops run --rm migrate up`
+  # (deploy.sh menjalankannya SEBELUM container baru start). Image yang sama, entrypoint
+  # golang-migrate; DSN dibaca dari DB_DSN di .env.
+  migrate:
+    image: ghcr.io/amandayora/mini-erp-v2:${IMAGE_TAG:?IMAGE_TAG belum di-set — jalankan ./deploy.sh <git-sha>}
+    profiles: ["ops"]
+    entrypoint: ["migrate", "-path", "/app/migrations", "-database", "mysql://${DB_DSN}"]
+    command: ["up"]
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
