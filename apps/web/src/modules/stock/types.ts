@@ -88,6 +88,11 @@ export interface StockTransfer {
   vehiclePlate?: string;
   /** YYYY-MM-DD (WIB). */
   transferDate?: string;
+  /** Jejak pembatalan (alasan wajib sejak koreksi salah input); kosong bila tidak/belum dibatalkan. */
+  cancelReason?: string;
+  /** Waktu batal, "YYYY-MM-DD HH:mm:ss" WIB ("" bila tidak dibatalkan). */
+  cancelledAt?: string;
+  cancelledBy?: number;
 }
 
 export interface ProductOption {

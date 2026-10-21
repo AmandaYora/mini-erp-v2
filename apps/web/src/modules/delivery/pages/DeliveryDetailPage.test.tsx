@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
@@ -8,6 +8,7 @@ const proofs = vi.fn();
 const salesOrderDetail = vi.fn();
 const uploadProof = vi.fn();
 const confirm = vi.fn();
+const cancel = vi.fn();
 vi.mock("@/modules/delivery/services/delivery.service", () => ({
   deliveryService: {
     get: (...a: unknown[]) => get(...a),
@@ -15,7 +16,7 @@ vi.mock("@/modules/delivery/services/delivery.service", () => ({
     salesOrderDetail: (...a: unknown[]) => salesOrderDetail(...a),
     uploadProof: (...a: unknown[]) => uploadProof(...a),
     confirm: (...a: unknown[]) => confirm(...a),
-    cancel: vi.fn(),
+    cancel: (...a: unknown[]) => cancel(...a),
   },
 }));
 
@@ -125,5 +126,35 @@ describe("DeliveryDetailPage — bukti kirim bertipe (DL-01) dan peringatan stok
     fireEvent.click(buttons[buttons.length - 1]);
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect((await screen.findAllByText(/Surat jalan tetap draf/)).length).toBeGreaterThan(0);
+  });
+});
+
+describe("DeliveryDetailPage — batal dengan alasan (koreksi salah input)", () => {
+  it("dialog batal mewajibkan alasan lalu mengirimkannya", async () => {
+    cancel.mockResolvedValue({ message: "Surat jalan dibatalkan", data: { ...note, status: "cancelled" } });
+    open();
+    await screen.findAllByText("SJ-0005");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Aksi lainnya" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Batalkan surat jalan" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Batalkan surat jalan" }));
+    expect(await within(dialog).findByText("Alasan wajib diisi")).toBeTruthy();
+    expect(cancel).not.toHaveBeenCalled();
+    fireEvent.change(within(dialog).getByLabelText(/Alasan/), { target: { value: "jumlah salah" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Batalkan surat jalan" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith(5, "jumlah salah"));
+  });
+
+  it("SJ batal menampilkan alasan dan waktu batal", async () => {
+    get.mockResolvedValue({
+      ...note,
+      status: "cancelled",
+      cancelReason: "sopir salah",
+      cancelledAt: "2026-10-21 09:30:00",
+      cancelledBy: 4,
+    });
+    open();
+    expect(await screen.findByText("sopir salah")).toBeTruthy();
+    expect(screen.getByText("Alasan batal")).toBeTruthy();
   });
 });

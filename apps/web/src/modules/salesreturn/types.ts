@@ -145,6 +145,11 @@ export interface SalesReturn {
   chargeRemaining: number;
   /** Jenis penyelesaian manual yang masih sah ([] bila tak ada). */
   allowedSettlementTypes: string[];
+  /** Jejak pembatalan (alasan wajib sejak koreksi salah input); kosong bila tidak/belum dibatalkan. */
+  cancelReason?: string;
+  /** Waktu batal, "YYYY-MM-DD HH:mm:ss" WIB ("" bila tidak dibatalkan). */
+  cancelledAt?: string;
+  cancelledBy?: number;
 }
 
 /** Satu baris body POST — kunci persis struct Create di handler.go. */

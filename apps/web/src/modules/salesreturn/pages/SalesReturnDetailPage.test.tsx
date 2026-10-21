@@ -9,6 +9,8 @@ const getReturn = vi.fn();
 const addSettlement = vi.fn();
 const confirmReplacement = vi.fn();
 const findReplacementDelivery = vi.fn();
+const cancelReturn = vi.fn();
+const cancelReplacement = vi.fn();
 vi.mock("@/modules/salesreturn/services/sales-return.service", () => ({
   salesReturnService: {
     get: (...a: unknown[]) => getReturn(...a),
@@ -16,7 +18,8 @@ vi.mock("@/modules/salesreturn/services/sales-return.service", () => ({
     confirmReplacement: (...a: unknown[]) => confirmReplacement(...a),
     findReplacementDelivery: (...a: unknown[]) => findReplacementDelivery(...a),
     confirm: vi.fn(),
-    cancel: vi.fn(),
+    cancel: (...a: unknown[]) => cancelReturn(...a),
+    cancelReplacement: (...a: unknown[]) => cancelReplacement(...a),
     dispatchReplacement: vi.fn(),
   },
 }));
@@ -191,5 +194,66 @@ describe("konfirmasi terima pengganti: tagih selisih saat serah (K-04e)", () => 
     useAuthStore.setState({ permissions: ["salesreturn.view", "salesreturn.create"], user: null, ready: true });
     await openConfirm();
     expect(screen.queryByRole("checkbox", { name: /Tagih selisih sekarang/ })).toBeNull();
+  });
+});
+
+describe("koreksi: batalkan retur & pengiriman pengganti dengan alasan", () => {
+  const dispatched = () =>
+    ret({ returnMode: "exchange", replacementDeliveryStatus: "dispatched", allowedSettlementTypes: [] });
+  const sj = (status: string) => ({ id: 88, number: "SJ-88", salesOrderId: 7, status, documentKind: "replacement", salesReturnId: 5 });
+
+  it("SJ pengganti masih draf: aksi tarik pengiriman meminta alasan lalu mengirimnya", async () => {
+    getReturn.mockResolvedValue(dispatched());
+    findReplacementDelivery.mockResolvedValue(sj("draft"));
+    cancelReplacement.mockResolvedValue({
+      message: "Pengiriman pengganti dibatalkan",
+      data: ret({ returnMode: "exchange", replacementDeliveryStatus: "pending", allowedSettlementTypes: [] }),
+    });
+    renderPage();
+    expect(await screen.findByText("SJ-88")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Aksi lainnya" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Batalkan pengiriman pengganti" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Batalkan pengiriman pengganti" }));
+    expect(await within(dialog).findByText("Alasan wajib diisi")).toBeTruthy();
+    expect(cancelReplacement).not.toHaveBeenCalled();
+    await userEvent.type(within(dialog).getByLabelText(/Alasan/), "salah supir");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Batalkan pengiriman pengganti" }));
+    await waitFor(() => expect(cancelReplacement).toHaveBeenCalledWith(5, "salah supir"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("SJ pengganti sudah terkonfirmasi: tidak ada aksi tarik pengiriman", async () => {
+    getReturn.mockResolvedValue(dispatched());
+    findReplacementDelivery.mockResolvedValue(sj("confirmed"));
+    renderPage();
+    expect(await screen.findByText("SJ-88")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Aksi lainnya" }));
+    await screen.findByRole("menuitem", { name: "Batalkan retur" });
+    expect(screen.queryByRole("menuitem", { name: "Batalkan pengiriman pengganti" })).toBeNull();
+  });
+
+  it("batal retur mengirim alasan dan menampilkan jejak batal", async () => {
+    getReturn.mockResolvedValue(ret({ status: "draft", allowedSettlementTypes: [] }));
+    cancelReturn.mockResolvedValue({
+      message: "Retur penjualan dibatalkan",
+      data: ret({
+        status: "cancelled",
+        allowedSettlementTypes: [],
+        cancelReason: "salah pilih order",
+        cancelledAt: "2026-10-21 10:00:00",
+        cancelledBy: 3,
+      }),
+    });
+    renderPage();
+    await screen.findByRole("heading", { name: "RJ-0005" });
+    await userEvent.click(screen.getByRole("button", { name: "Aksi lainnya" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Batalkan retur" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText(/Alasan/), "salah pilih order");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Batalkan retur" }));
+    await waitFor(() => expect(cancelReturn).toHaveBeenCalledWith(5, "salah pilih order"));
+    expect(await screen.findByText("Alasan batal")).toBeTruthy();
+    expect(screen.getByText("salah pilih order")).toBeTruthy();
   });
 });

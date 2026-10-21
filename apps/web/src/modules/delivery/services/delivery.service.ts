@@ -4,7 +4,7 @@
 // - GET /api/v1/deliveries?search&status(CSV)&salesOrderId&salesReturnId&
 //   documentKind(order|replacement)&from&to&page&limit → paginasi
 //   noteView[] (List). Confirm: POST /:id/confirm tanpa body. Cancel:
-//   POST /:id/cancel tanpa body (hanya draft).
+//   POST /:id/cancel {reason} — alasan wajib (hanya draft).
 // - POST /api/v1/deliveries {salesOrderId, deliveryDate, driverName,
 //   vehiclePlate, warehouseStaffName, dropLocationNote, notes,
 //   items[{productId, variantId, locationId, uom, qty}]} (Create, draf).
@@ -76,12 +76,12 @@ export const deliveryService = {
     apiPostFull<DeliveryNote>("/api/v1/deliveries", body),
 
   // Body opsional (bukti serah terima) — body kosong tetap valid
-  // (handler.go: Confirm). Cancel tanpa body, hanya draf.
+  // (handler.go: Confirm). Cancel {reason} wajib, hanya draf.
   confirm: (id: number, body?: DeliveryConfirmPayload) =>
     apiPostFull<DeliveryNote>(`/api/v1/deliveries/${id}/confirm`, body),
 
-  cancel: (id: number) =>
-    apiPostFull<DeliveryNote>(`/api/v1/deliveries/${id}/cancel`),
+  cancel: (id: number, reason: string) =>
+    apiPostFull<DeliveryNote>(`/api/v1/deliveries/${id}/cancel`, { reason }),
 
   proofs: (id: number) =>
     apiGet<DeliveryProof[]>(`/api/v1/deliveries/${id}/proofs`),

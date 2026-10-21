@@ -9,7 +9,7 @@
 // - GET /api/v1/stock/locations → array langsung StockLocation[]
 //   (stock.service.ts: listLocations) untuk dropdown lokasi per baris.
 // - POST /api/v1/goods-receipts/:id/complete {settlement?} → posting ulang
-//   receipt pending (idempoten); POST :id/discard → batalkan receipt pending
+//   receipt pending (idempoten); POST :id/discard {reason} → batalkan receipt pending
 //   (handler.go: Complete/Discard, izin goodsreceipt.create).
 
 import { apiGet, apiPage, apiPostFull } from "@/shared/services/http-client";
@@ -52,8 +52,8 @@ export const goodsreceiptService = {
     ),
 
   /** Batalkan receipt pending (stok yang sudah bergerak dibalik server). */
-  discard: (id: number) =>
-    apiPostFull<GoodsReceipt>(`/api/v1/goods-receipts/${id}/discard`),
+  discard: (id: number, reason: string) =>
+    apiPostFull<GoodsReceipt>(`/api/v1/goods-receipts/${id}/discard`, { reason }),
 
   /** Satu PO beserta barisnya (untuk membangun baris terima + nama produk). */
   purchaseOrderDetail: (id: number) =>

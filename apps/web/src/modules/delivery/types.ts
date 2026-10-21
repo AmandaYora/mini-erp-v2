@@ -69,6 +69,11 @@ export interface DeliveryNote {
   /** Peringatan lunak hanya pada respons create (DL-04): [0] = stok belum ditahan, sisanya per posisi. */
   warnings?: string[];
   items: DeliveryItem[];
+  /** Jejak pembatalan (alasan wajib sejak koreksi salah input); kosong bila tidak/belum dibatalkan. */
+  cancelReason?: string;
+  /** Waktu batal, "YYYY-MM-DD HH:mm:ss" WIB ("" bila tidak dibatalkan). */
+  cancelledAt?: string;
+  cancelledBy?: number;
 }
 
 // --- payload keluar (kunci persis struct Create di handler.go) ---

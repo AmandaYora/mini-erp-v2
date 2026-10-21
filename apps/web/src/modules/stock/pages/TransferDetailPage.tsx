@@ -10,7 +10,17 @@ import {
   SectionCard,
   StatusBadge,
 } from "@/shared/components/ui";
-import { ActionMenu, DescriptionList, DocNumber, DocumentRail, Page, PageColumns, Qty } from "@/shared/components/patterns";
+import {
+  ActionMenu,
+  cancellationItems,
+  DescriptionList,
+  DocNumber,
+  DocumentRail,
+  Page,
+  PageColumns,
+  Qty,
+  ReasonDialog,
+} from "@/shared/components/patterns";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate } from "@/shared/lib/format";
@@ -48,7 +58,8 @@ const ACTION_META: Record<Action, { title: string; message: string; confirmLabel
   },
   cancel: {
     title: "Batalkan transfer",
-    message: "Batalkan transfer ini? Hanya transfer yang belum diterima yang bisa dibatalkan.",
+    message:
+      "Transfer dibatalkan; bila sudah dikirim, stok kembali ke lokasi asal. Alasan dicatat pada transfer dan jejak audit.",
     confirmLabel: "Batalkan transfer",
     done: "Transfer dibatalkan",
   },
@@ -94,7 +105,7 @@ export default function TransferDetailPage() {
     return l ? `${l.code} — ${l.name}` : `Lokasi #${locationId}`;
   };
 
-  async function runAction() {
+  async function runAction(reason = "") {
     if (!action || !transfer) return;
     const current = action;
     setRunning(true);
@@ -104,12 +115,13 @@ export default function TransferDetailPage() {
           ? await stockService.dispatchTransfer(transfer.id)
           : current === "receive"
             ? await stockService.receiveTransfer(transfer.id)
-            : await stockService.cancelTransfer(transfer.id);
+            : await stockService.cancelTransfer(transfer.id, reason);
       toast.fromServer(res.message, ACTION_META[current].done);
       setAction(null);
       reload();
     } catch (err) {
-      setAction(null);
+      // Dialog alasan tetap terbuka agar alasan yang sudah diketik tidak hilang.
+      if (current !== "cancel") setAction(null);
       toast.danger("Aksi gagal", formatApiError(err));
     } finally {
       setRunning(false);
@@ -223,6 +235,7 @@ export default function TransferDetailPage() {
                 { label: "Tanggal transfer", value: transfer.transferDate ? formatDate(transfer.transferDate) : null },
                 { label: "Sopir", value: transfer.driverName },
                 { label: "Kendaraan", value: transfer.vehiclePlate },
+                ...cancellationItems(transfer),
                 { label: "Catatan", value: transfer.notes, wide: true },
               ]}
             />
@@ -231,17 +244,29 @@ export default function TransferDetailPage() {
       />
 
       <ConfirmDialog
-        open={action !== null}
+        open={action === "dispatch" || action === "receive"}
         title={action ? ACTION_META[action].title : ""}
         message={action ? ACTION_META[action].message : ""}
         confirmLabel={running ? "Memproses…" : action ? ACTION_META[action].confirmLabel : "Konfirmasi"}
-        tone={action === "cancel" ? "danger" : "primary"}
+        tone="primary"
         onConfirm={() => {
           if (!running) void runAction();
         }}
         onCancel={() => {
           if (!running) setAction(null);
         }}
+      />
+      <ReasonDialog
+        open={action === "cancel"}
+        title={ACTION_META.cancel.title}
+        description={`${transfer.number}: ${ACTION_META.cancel.message}`}
+        confirmLabel={ACTION_META.cancel.confirmLabel}
+        placeholder="Mis. salah lokasi tujuan, jumlah salah"
+        submitting={running}
+        onClose={() => {
+          if (!running) setAction(null);
+        }}
+        onSubmit={(reason) => void runAction(reason)}
       />
     </Page>
   );

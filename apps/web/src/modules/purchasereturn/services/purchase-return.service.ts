@@ -7,7 +7,7 @@
 // - POST /api/v1/purchase-returns {purchaseOrderId, returnDate?, notes?,
 //   items[]} → 201 returnView (Create).
 // - POST /api/v1/purchase-returns/:id/confirm → returnView, TANPA body.
-// - POST /api/v1/purchase-returns/:id/cancel → returnView, TANPA body.
+// - POST /api/v1/purchase-returns/:id/cancel {reason} → returnView (alasan wajib).
 // - Kandidat sumber: GET /api/v1/purchase-orders?status=confirmed|completed
 //   (hanya PO terkonfirmasi/selesai yang bisa diretur) + detail
 //   GET /api/v1/purchase-orders/:id untuk baris item.
@@ -75,12 +75,12 @@ export const purchaseReturnService = {
   create: (body: PurchaseReturnPayload) =>
     apiPostFull<PurchaseReturn>("/api/v1/purchase-returns", body),
 
-  // Tanpa body — backend hanya butuh :id (handler.go: Confirm/Cancel).
+  // Confirm tanpa body; Cancel {reason} wajib (handler.go: Confirm/Cancel).
   confirm: (id: number) =>
     apiPostFull<PurchaseReturn>(`/api/v1/purchase-returns/${id}/confirm`),
 
-  cancel: (id: number) =>
-    apiPostFull<PurchaseReturn>(`/api/v1/purchase-returns/${id}/cancel`),
+  cancel: (id: number, reason: string) =>
+    apiPostFull<PurchaseReturn>(`/api/v1/purchase-returns/${id}/cancel`, { reason }),
 
   /** Pratinjau perhitungan (dry-run, tanpa tulis, tanpa nomor dokumen). */
   preview: (body: PurchaseReturnPreviewPayload) =>
