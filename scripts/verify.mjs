@@ -58,6 +58,9 @@ if (doApi) {
   run("go build", "go", ["build", "./..."], "apps/api");
   run("go vet", "go", ["vet", "./..."], "apps/api");
   if (fast) {
+    // --fast = tanpa MySQL: paket ETL memakai etltest yang melewati (skip) tesnya bila
+    // INTEGRATION_OPTIONAL di-set; tanpa ini "--fast" diam-diam butuh MySQL hidup.
+    env.INTEGRATION_OPTIONAL ??= "1";
     const list = spawnSync("go", ["list", "./..."], { cwd: "apps/api", env, encoding: "utf8", shell: true });
     const pkgs = list.stdout.split(/\r?\n/).filter((p) => p && !p.endsWith("/internal/integration"));
     run("go test (tanpa integrasi)", "go", ["test", "-count=1", ...pkgs], "apps/api");

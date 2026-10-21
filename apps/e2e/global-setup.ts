@@ -36,7 +36,14 @@ export default async function globalSetup() {
   // 3. Seed deterministik (migrasi bila perlu + TRUNCATE + data tetap).
   run(path.join(RUN_DIR, "seed.exe"), ["-profile=e2e"], API_DIR, serverEnv());
 
-  // 4. Server Go dengan PUBLIC_DIR=apps/web/dist.
+  // 4. Server Go dengan PUBLIC_DIR=apps/web/dist. Port yang masih dipakai server lain (mis. sisa run
+  //    sebelumnya) membuat spec diam-diam menguji binari lama: tolak dengan pesan jelas.
+  try {
+    await fetch(`${BASE_URL}/api/v1/auth/me`);
+    throw new Error(`port ${BASE_URL} sudah dipakai proses lain; hentikan dulu (sisa server e2e sebelumnya?)`);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("port ")) throw err;
+  }
   const logPath = path.join(RUN_DIR, "server.log");
   rmSync(logPath, { force: true });
   const out = fs.openSync(logPath, "a");

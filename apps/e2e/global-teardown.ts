@@ -7,7 +7,10 @@ export default async function globalTeardown() {
   const pidFile = path.join(RUN_DIR, "server.pid");
   try {
     const pid = Number(readFileSync(pidFile, "utf8"));
-    if (pid) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    if (pid) {
+      if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+      else process.kill(pid, "SIGTERM");
+    }
     rmSync(pidFile, { force: true });
   } catch {
     /* sudah berhenti */
