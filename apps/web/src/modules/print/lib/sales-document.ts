@@ -19,13 +19,33 @@ export const HIDE_DISCOUNT_UNPAID_NOTE = "Tagihan harus menunjukkan jumlah yang 
  * Diskon boleh disembunyikan hanya bila server menyatakan order lunas (sisa 0).
  * Tanpa ringkasan bayar dari server, lunas tidak bisa dipastikan -> tidak boleh.
  */
-export function hideDiscountAllowed(o: { paidAmount?: number; outstandingAmount?: number }): boolean {
+export function hideDiscountAllowed(o: { status?: string; paidAmount?: number; outstandingAmount?: number }): boolean {
+  // Draf & batal tidak pernah "lunas": server mengirim sisa 0 untuk keduanya.
+  if (o.status === "draft" || o.status === "cancelled") return false;
   return o.paidAmount !== undefined && o.outstandingAmount !== undefined && o.outstandingAmount <= 0;
 }
 
 /** Permintaan sembunyikan diskon yang benar-benar berlaku untuk order ini. */
-export function effectiveHideDiscount(requested: boolean, o: { paidAmount?: number; outstandingAmount?: number }): boolean {
+export function effectiveHideDiscount(
+  requested: boolean,
+  o: { status?: string; paidAmount?: number; outstandingAmount?: number },
+): boolean {
   return requested && hideDiscountAllowed(o);
+}
+
+/** Total tagihan tercetak: bersih setelah retur (paritas summary.totalAmount legacy). */
+export function billedTotal(o: Pick<DocOrder, "grandTotal" | "netTotal">): number {
+  return o.netTotal ?? o.grandTotal;
+}
+
+/**
+ * Sisa tagihan riil. Server mengirim 0 untuk draf/batal (daftar), jadi draf
+ * dihitung seperti legacy (total - dibayar); order batal tidak menagih apa pun.
+ */
+function realOutstandingOf(o: DocOrder, total: number, paid: number): number {
+  if (o.status === "cancelled") return 0;
+  if (o.status === "draft") return Math.max(0, total - paid);
+  return Math.max(0, o.outstandingAmount ?? total - paid);
 }
 
 export function readHideDiscount(params: URLSearchParams): boolean {
@@ -54,7 +74,11 @@ export interface DocLine {
 }
 
 export interface DocOrder {
+  /** draft | confirmed | completed | cancelled (server). */
+  status?: string;
   grandTotal: number;
+  /** Total bersih setelah retur (server); sama dengan grandTotal bila tanpa retur. */
+  netTotal?: number;
   discountTotal: number;
   taxTotal: number;
   dueDate: string;
@@ -125,8 +149,9 @@ export interface DocTotals {
 
 export function documentTotals(o: DocOrder, hideRequested: boolean): DocTotals {
   const hideDiscount = effectiveHideDiscount(hideRequested, o);
+  const billed = billedTotal(o);
   const realPaid = Math.max(0, o.paidAmount ?? 0);
-  const realOutstanding = Math.max(0, o.outstandingAmount ?? o.grandTotal - realPaid);
+  const realOutstanding = realOutstandingOf(o, billed, realPaid);
   const printDiscount = orderPrintDiscount(o);
   const tax = o.taxTotal > 0 ? o.taxTotal : null;
   if (!hideDiscount) {
@@ -134,7 +159,7 @@ export function documentTotals(o: DocOrder, hideRequested: boolean): DocTotals {
       grossSubtotal: orderPrintSubtotal(o),
       discount: printDiscount > 0 ? printDiscount : null,
       tax,
-      total: o.grandTotal,
+      total: billed,
       paid: realPaid > 0 ? realPaid : null,
       outstanding: realOutstanding,
       realPaid,
@@ -146,7 +171,7 @@ export function documentTotals(o: DocOrder, hideRequested: boolean): DocTotals {
     grossSubtotal: orderPrintSubtotal(o),
     discount: null,
     tax,
-    total: o.grandTotal + printDiscount,
+    total: billed + printDiscount,
     paid: realPaid > 0 ? realPaid + printDiscount : null,
     outstanding: 0,
     realPaid,
@@ -154,8 +179,12 @@ export function documentTotals(o: DocOrder, hideRequested: boolean): DocTotals {
   };
 }
 
-/** Judul nota menurut sisa tagihan riil (sistem lama getSalesDocumentTitle). */
-export function salesDocumentTitle(t: Pick<DocTotals, "realPaid" | "realOutstanding">): string {
+/**
+ * Judul nota menurut sisa tagihan riil (sistem lama getSalesDocumentTitle).
+ * Order batal diberi cap batal (ADR-0018 D12), tidak pernah "Lunas".
+ */
+export function salesDocumentTitle(t: Pick<DocTotals, "realPaid" | "realOutstanding">, status?: string): string {
+  if (status === "cancelled") return "Nota Dibatalkan";
   if (t.realOutstanding <= 0) return "Nota Penjualan Lunas";
   if (t.realPaid > 0) return "Tagihan - Bayar Sebagian";
   return "Tagihan Penjualan";

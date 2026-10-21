@@ -148,3 +148,28 @@ describe("jatuh tempo & parameter", () => {
     expect(readHideDiscount(withHideDiscountParam(p, false))).toBe(false);
   });
 });
+
+describe("draf, batal, dan retur (audit pra-migrasi)", () => {
+  it("draf menagih total - dibayar (server mengirim sisa 0 untuk draf), tidak pernah Lunas", () => {
+    const draft = order({ status: "draft", paidAmount: 0, outstandingAmount: 0 });
+    const t = documentTotals(draft, true);
+    expect(t.outstanding).toBe(210000);
+    expect(salesDocumentTitle(t, "draft")).toBe("Tagihan Penjualan");
+    expect(hideDiscountAllowed(draft)).toBe(false);
+  });
+
+  it("order batal bercap batal dan tidak boleh disembunyikan diskonnya", () => {
+    const cancelled = order({ status: "cancelled", paidAmount: 0, outstandingAmount: 0 });
+    expect(salesDocumentTitle(documentTotals(cancelled, false), "cancelled")).toBe("Nota Dibatalkan");
+    expect(hideDiscountAllowed(cancelled)).toBe(false);
+  });
+
+  it("setelah retur, total tercetak = total bersih (legacy summary.totalAmount)", () => {
+    // 1.175.000 lunas, retur 125.000 dikembalikan: bersih 1.050.000, dibayar 1.050.000.
+    const o = order({ grandTotal: 1175000, netTotal: 1050000, paidAmount: 1050000, outstandingAmount: 0, discountTotal: 0, items: [plain] });
+    const t = documentTotals(o, false);
+    expect(t.total).toBe(1050000);
+    expect(t.outstanding).toBe(0);
+    expect(salesDocumentTitle(t)).toBe("Nota Penjualan Lunas");
+  });
+});

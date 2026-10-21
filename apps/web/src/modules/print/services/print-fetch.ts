@@ -139,7 +139,7 @@ export async function fetchAllocationBilling(
         if (a.orderType === "sales") {
           const o = await salesService.get(a.orderId);
           out[`sales:${a.orderId}`] = {
-            total: o.grandTotal,
+            total: o.netTotal ?? o.grandTotal,
             paid: o.paidAmount ?? 0,
             outstanding: o.outstandingAmount ?? 0,
           };

@@ -157,7 +157,7 @@ export default function SalesInvoicePrintPage() {
     >
       <div className="nota-head">
         {showStoreStatic ? <Letterhead identity={identity} /> : <div />}
-        <div className="nota-title">{salesDocumentTitle(totals)}</div>
+        <div className="nota-title">{salesDocumentTitle(totals, order.status)}</div>
       </div>
 
       <div className="nota-parties">

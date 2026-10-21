@@ -32,7 +32,7 @@ export function receiptPayments<P extends ReceiptPayment>(history: P[]): P[] {
 }
 
 export interface ReceiptSummary {
-  statusLabel: "LUNAS" | "PIUTANG";
+  statusLabel: "LUNAS" | "PIUTANG" | "BATAL";
   paymentNumber: string;
   receiptDate: string;
   methods: string;
@@ -64,7 +64,7 @@ export function receiptSummary(
         ? "Tempo"
         : "-";
   return {
-    statusLabel: t.realOutstanding <= 0 ? "LUNAS" : "PIUTANG",
+    statusLabel: order.status === "cancelled" ? "BATAL" : t.realOutstanding <= 0 ? "LUNAS" : "PIUTANG",
     paymentNumber: latest?.number ?? "-",
     receiptDate: latest?.paidAt ?? order.orderDate,
     methods,
