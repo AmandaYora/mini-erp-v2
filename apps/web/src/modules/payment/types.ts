@@ -35,6 +35,20 @@ export interface Payment {
   change: number;
   /** ID kaki lawan pada offset kredit (0 = tidak berpasangan). */
   pairId: number;
+  /** Kaki pakai saldo uang muka: retur sumber saldo (kosong/0 untuk pembayaran lain). */
+  creditSourceType?: string;
+  creditSourceId?: number;
+  /** Pembayaran ini pengganti hasil koreksi dari pembayaran lain (0 = bukan koreksi). */
+  correctsPaymentId?: number;
+  /** Nomor pembayaran yang dikoreksi — hanya terisi di detail. */
+  correctsPaymentNumber?: string;
+  /** Pembayaran pengganti yang mengoreksi pembayaran ini (0 = tidak dikoreksi) — hanya di detail. */
+  correctedById?: number;
+  correctedByNumber?: string;
+  /** Jejak pembatalan: alasan, waktu (WIB) dan ID pengguna; kosong untuk pembatalan lama. */
+  cancelReason?: string;
+  cancelledAt?: string | null;
+  cancelledBy?: number;
   allocations: PaymentAllocation[];
 }
 
@@ -60,6 +74,21 @@ export interface PaymentCreatePayload {
   reference?: string;
   /** Kosong = backend alokasi FIFO otomatis (handler.go: Create). */
   allocations?: AllocationInput[];
+}
+
+/** Koreksi pembayaran (POST /payments/:id/correct): kunci persis handler Correct. */
+export interface PaymentCorrectPayload {
+  method: string;
+  amount: number;
+  /** YYYY-MM-DD; tanggal yang sama dengan aslinya mempertahankan jam aslinya. */
+  paidAt?: string;
+  reference?: string;
+  /** Hanya cash, harus >= amount. */
+  amountTendered?: number;
+  /** Kosong = catatan pembayaran asli dipakai. */
+  notes?: string;
+  /** Wajib, 5–255 karakter; tercatat sebagai alasan batal pembayaran asli dan di audit. */
+  reason: string;
 }
 
 /** Pakai saldo uang muka retur ke tagihan (N-41): kunci persis handler UseCredit. */
@@ -230,13 +259,29 @@ export function paymentKindLabel(p: Pick<Payment, "method" | "allocations">): st
 }
 
 /**
+ * Pembayaran yang boleh dikoreksi: aktif, metode yang dipilih pengguna (bukan kaki
+ * offset/pakai saldo), tidak berpasangan, dan teralokasi ke dokumen (aturan backend Correct).
+ */
+export function isCorrectable(
+  p: Pick<Payment, "status" | "method" | "pairId" | "creditSourceType" | "allocations">,
+): boolean {
+  return (
+    p.status === "active" &&
+    (USER_PAYMENT_METHODS as readonly string[]).includes(p.method) &&
+    !p.pairId &&
+    !p.creditSourceType &&
+    p.allocations.length > 0
+  );
+}
+
+/**
  * Pesan penjaga pembatalan dari backend (guardCancel): order COD/prepaid yang
  * sudah selesai tidak boleh jadi belum lunas. Tambahkan petunjuk ke Retur.
  */
 export function cancelGuardHint(message: string | null | undefined): string | null {
   if (!message) return null;
   if (message.includes("sudah selesai") && message.includes("belum lunas")) {
-    return "Order tunai/COD yang sudah selesai tidak bisa dibatalkan pembayarannya. Gunakan Retur (Retur Jual/Retur Beli) untuk mengembalikan nilainya.";
+    return "Order tunai/COD yang sudah selesai tidak bisa dibatalkan pembayarannya. Bila salah input, gunakan Koreksi pembayaran; untuk mengembalikan nilainya gunakan Retur (Retur Jual/Retur Beli).";
   }
   return null;
 }

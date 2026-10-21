@@ -10,10 +10,15 @@
 //   dan amountTendered (hanya method cash, >= amount); view membawa clientRef,
 //   reference, amountTendered, change, pairId. Method: cash|transfer|check|
 //   offset — offset khusus sistem (tidak bisa dipilih user).
-// - POST /api/v1/payments/:id/cancel (tanpa body) → paymentView. Server menolak
+// - POST /api/v1/payments/:id/cancel {reason} → paymentView (cancelReason,
+//   cancelledAt, cancelledBy). Web selalu mengirim alasan. Server menolak
 //   (409) bila pembatalan membuat order yang sudah selesai jadi belum lunas
 //   ("Order X (terms) sudah selesai; membatalkan pembayaran ini membuatnya
-//   belum lunas…") → UI mengarahkan ke Retur.
+//   belum lunas…") → UI mengarahkan ke Koreksi pembayaran / Retur.
+// - POST /api/v1/payments/:id/correct {method, amount, paidAt?, reference?,
+//   amountTendered?, notes?, reason} → paymentView pembayaran PENGGANTI (201;
+//   200 bila permintaan yang sama diulang). Yang asli dibatalkan dengan alasan
+//   itu; detail membawa correctsPaymentId/Number dan correctedById/Number.
 // - POST /api/v1/payments/settle-credit {partyId, returnType, returnId,
 //   orderType, orderId, amount, notes?} → paymentView (kaki bill).
 // - GET /api/v1/payments/party-balances?partyId= → PartyBalance langsung.
@@ -37,6 +42,7 @@ import type {
   OpenPartySide,
   PartyBalance,
   Payment,
+  PaymentCorrectPayload,
   PaymentCreatePayload,
   PaymentProof,
   SettleCreditPayload,
@@ -91,9 +97,13 @@ export const paymentService = {
   create: (body: PaymentCreatePayload) =>
     apiPostFull<Payment>("/api/v1/payments", body),
 
-  // Tanpa body — backend hanya butuh :id (handler.go: Cancel).
-  cancel: (id: number) =>
-    apiPostFull<Payment>(`/api/v1/payments/${id}/cancel`),
+  /** Alasan disimpan pada pembayaran (dan kaki pasangannya) serta di jejak audit. */
+  cancel: (id: number, reason: string) =>
+    apiPostFull<Payment>(`/api/v1/payments/${id}/cancel`, { reason }),
+
+  /** Koreksi salah input: membuat pembayaran pengganti dan membatalkan yang asli. */
+  correct: (id: number, body: PaymentCorrectPayload) =>
+    apiPostFull<Payment>(`/api/v1/payments/${id}/correct`, body),
 
   settleCredit: (body: SettleCreditPayload) =>
     apiPostFull<Payment>("/api/v1/payments/settle-credit", body),
