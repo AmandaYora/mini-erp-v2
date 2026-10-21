@@ -283,8 +283,8 @@ func (v *verifier) counts() {
 		{"V-01t", "transfer stok (+kelompok pasangan lokasi)", "SELECT COUNT(*) FROM {stock_transfers} WHERE {co} = :c", "SELECT COUNT(*) FROM stock_transfers", e["transfer_groups_extra"]},
 		{"V-01u", "item transfer", "SELECT COUNT(*) FROM {stock_transfer_items} i JOIN {stock_transfers} t ON t.id_stock_transfer=i.id_stock_transfer WHERE t.{co} = :c", "SELECT COUNT(*) FROM stock_transfer_items", e["synthetic_transfer_items"]},
 		{"V-01v", "mutasi stok (-digabung +koreksi)", "SELECT COUNT(*) FROM {inventory_movements} WHERE " + byBranch, "SELECT COUNT(*) FROM stock_movements", e["correction_movements"] - e["movements_merged_extra"]},
-		{"V-01w", "baris biaya HPP (+estimasi -tak termigrasi -digabung +saldo awal dibagi per mutasi)", "SELECT COUNT(*) FROM {finance_inventory_cost_movements} WHERE {co} = :c",
-			"SELECT COUNT(*) FROM finance_inventory_cost_movements", e["estimated_cost_rows"] - e["cost_rows_unmigrated"] - e["cost_rows_merged_extra"] + e["opening_cost_split_extra"]},
+		{"V-01w", "baris biaya HPP (+estimasi -tak termigrasi -digabung +saldo awal dibagi per mutasi +baris biaya-saja)", "SELECT COUNT(*) FROM {finance_inventory_cost_movements} WHERE {co} = :c",
+			"SELECT COUNT(*) FROM finance_inventory_cost_movements", e["estimated_cost_rows"] - e["cost_rows_unmigrated"] - e["cost_rows_merged_extra"] + e["opening_cost_split_extra"] + e["baseline_cost_rows"]},
 		{"V-01x", "jurnal tahun berjalan + saldo awal",
 			"SELECT COUNT(*) FROM {finance_journal_entries} WHERE {co} = :c AND status IN ('posted','reversed') AND DATE(DATE_ADD(journal_date, INTERVAL 7 HOUR)) >= :open AND EXISTS (SELECT 1 FROM {finance_journal_lines} zl WHERE zl.id_finance_journal_entry={finance_journal_entries}.id_finance_journal_entry AND (ROUND(zl.debit_amount) <> 0 OR ROUND(zl.credit_amount) <> 0))",
 			"SELECT COUNT(*) FROM finance_journal_entries", e["opening_entries"]},
@@ -633,12 +633,25 @@ func (v *verifier) costLedger() {
 		`SELECT b.code, p.product_code, SUM(CASE WHEN c.movement_type IN ('in','opening') THEN ROUND(c.total_cost_amount) ELSE -ROUND(c.total_cost_amount) END)
 		   FROM {finance_inventory_cost_movements} c JOIN {branches} b ON b.id_branch=c.id_branch JOIN {products} p ON p.id_product=c.id_product
 		  WHERE c.{co} = :c AND (c.id_inventory_movement IS NOT NULL OR c.movement_type = 'opening') GROUP BY 1,2`,
-		`SELECT b.code, p.code, SUM(CASE c.direction WHEN 'in' THEN c.total_cost ELSE -c.total_cost END) FROM finance_inventory_cost_movements c
+		`SELECT b.code, p.code, SUM(c.total_cost) FROM finance_inventory_cost_movements c
+		   JOIN branches b ON b.id=c.branch_id JOIN products p ON p.id=c.product_id WHERE c.is_estimated = 0 AND c.ref_type <> 'opening_cost' GROUP BY 1,2`, nil)
+	// Legacy's authority is its cost STATE (= its Persediaan account); value it
+	// moved without cost rows arrives as cost-only rows, so per (branch,
+	// product) the revamp's non-estimated ledger must equal the state.
+	v.grouped("V-14d", "nilai ledger HPP per cabang x produk = keadaan biaya legacy (finance_inventory_cost_states)",
+		`SELECT b.code, p.product_code, ROUND(s.inventory_value)
+		   FROM {finance_inventory_cost_states} s JOIN {branches} b ON b.id_branch=s.id_branch JOIN {products} p ON p.id_product=s.id_product
+		  WHERE s.{co} = :c`,
+		`SELECT b.code, p.code, SUM(c.total_cost) FROM finance_inventory_cost_movements c
 		   JOIN branches b ON b.id=c.branch_id JOIN products p ON p.id=c.product_id WHERE c.is_estimated = 0 GROUP BY 1,2`, nil)
 	v.targetZero("V-14b", "mutasi di bawah kursor HPP tanpa baris biaya",
 		`SELECT COUNT(*) FROM stock_movements m JOIN products p ON p.id=m.product_id AND p.stock_tracked=1
-		   JOIN (SELECT branch_id, MAX(stock_movement_id) mx FROM finance_inventory_cost_movements GROUP BY branch_id) c ON c.branch_id=m.branch_id
+		   JOIN (SELECT branch_id, MAX(stock_movement_id) mx FROM finance_inventory_cost_movements WHERE stock_movement_id < 4611686018427387904 GROUP BY branch_id) c ON c.branch_id=m.branch_id
 		  WHERE m.id < c.mx AND NOT EXISTS (SELECT 1 FROM finance_inventory_cost_movements x WHERE x.stock_movement_id = m.id)`)
+	// The revamp sums total_cost as-is (InsertCostRow signs an out negative):
+	// an unsigned out would ADD its value to the position.
+	v.targetZero("V-14c", "tanda total biaya sesuai arah (keluar <= 0, masuk >= 0)",
+		`SELECT COUNT(*) FROM finance_inventory_cost_movements WHERE (direction = 'out' AND total_cost > 0) OR (direction = 'in' AND total_cost < 0)`)
 }
 
 // ---------------------------------------------------------------- V-15

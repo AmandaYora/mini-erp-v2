@@ -108,6 +108,7 @@ type state struct {
 
 	post           map[postKey]string
 	postJ          map[postKey]int64
+	journaled      map[[2]string]bool // legacy (source_type, id_source) with a live journal
 	movesByRef     map[string][]row.Row
 	directSJ       map[int64]int64 // legacy order id -> synthetic SJ id
 	dnOfLegacy     map[int64]int64

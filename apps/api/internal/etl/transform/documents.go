@@ -41,6 +41,14 @@ func (s *state) indexPosting() {
 			s.postJ[k] = j
 		}
 	}
+	s.journaled = map[[2]string]bool{}
+	for _, j := range s.raw["finance_journal_entries"] {
+		// Live journals only: a reversed one and its reversal net to nothing,
+		// so posting the document again is right.
+		if j.Str("status") == "posted" && !j.Has("id_reversal_of") && j.Has("id_source") {
+			s.journaled[[2]string{j.Str("source_type"), j.Str("id_source")}] = true
+		}
+	}
 }
 
 // postState classifies a document. Documents dated before the opening date
@@ -73,6 +81,26 @@ func (s *state) postState(entity string, id int64, date time.Time, reqs []postKe
 	case ignored > 0 && other == 0:
 		return stateIgnored, "legacy_ignored", nil
 	}
+	// Pending = queued for posting in the revamp. That is only right when
+	// legacy never journalled it: either its poster never picked the document
+	// up (no posting-source row yet: created after the last legacy posting
+	// run) or it sat in the legacy queue (pending/ready/failed).
+	queued := 0
+	for _, k := range reqs {
+		if s.journaled[[2]string{k.stype, strconv.FormatInt(k.id, 10)}] {
+			s.find(report.Blocker, "POST_PENDING_JOURNALED", entity, id, "dokumen akan diantre ulang padahal legacy sudah menjurnal %s %d (%s): dobel posting", k.stype, k.id, k.event)
+		}
+		if _, ok := s.post[k]; ok {
+			queued++
+		}
+	}
+	why := "belum dikandidatkan legacy"
+	key := "pending_docs_no_legacy_candidate"
+	if queued > 0 {
+		why, key = "masih di antrean legacy", "pending_docs_legacy_queue"
+	}
+	s.out.Explain[key]++
+	s.find(report.Info, "POST_PENDING", entity, id, "masuk antrean posting revamp: %s (tanpa jurnal legacy)", why)
 	return statePending, "", nil
 }
 

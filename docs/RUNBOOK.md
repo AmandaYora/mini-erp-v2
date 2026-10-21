@@ -135,15 +135,26 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    tidak berubah. Bila qty biaya pembukaan != Σ qty mutasi `opening_stock` produk, transform berhenti
    (COST_OPENING_UNMATCHED, blocker): legacy keuangan dan stok tidak sepakat, keputusan pemilik (Q-HPP-2).
    Baris biaya tanpa mutasi bernilai nol (koreksi `manual_correction` legacy) dilewati (COST_NOOP).
-8. **Keputusan pemilik/akuntan** sebelum cutover nyata: tanggal saldo awal
-   (`--opening-date`; gladi memakai 2026-01-01), perlakuan jurnal inklusif pajak dan
-   selisih Rp1 (lihat `adjustments.csv`).
+   Ledger biaya HPP mengikuti konvensi revamp: `total_cost` bertanda (keluar negatif, V-14c). Mutasi legacy
+   `adjustment` (stock opname) menimpa saldo, jadi qty mutasinya = |saldo sesudah − sebelum|, bukan `quantity`.
+   Nilai per cabang x produk = `finance_inventory_cost_states` legacy (= akun Persediaan legacy, V-14d): nilai yang
+   legacy ubah tanpa baris biaya (koreksi pra-ledger 2026-08-13) dan pembagian ulang antar-varian (legacy satu harga
+   modal per produk) masuk sebagai baris biaya-saja qty 0, id ≥ 2^62, `ref_type=opening_cost` (COST_BASELINE,
+   COST_VARIANT_REALIGN). Baris estimasi memakai aturan `costOf` revamp; barang kembali dari SJ yang dibatalkan dinilai
+   sebesar biaya keluar SJ itu (DN_CANCEL_COGS: legacy tidak membalik jurnal HPP-nya, jadi buku Persediaan lebih rendah
+   sebesar ini sampai ada jurnal koreksi). Dokumen yang masuk antrean posting revamp tercatat POST_PENDING (alasan:
+   belum dikandidatkan legacy / masih di antrean legacy); dokumen pending yang punya jurnal legacy hidup = blocker
+   POST_PENDING_JOURNALED.
+8. **Keputusan pemilik/akuntan** sebelum cutover nyata: tanggal saldo awal **diputuskan 2026-07-01**
+   (`--opening-date 2026-07-01`, sama dengan saldo awal legacy `JRN/2026/00001`; jurnal legacy sejak itu dimigrasi
+   apa adanya dan jurnal saldo awal revamp tidak dibuat), cutover langsung. Masih terbuka: perlakuan jurnal inklusif
+   pajak dan selisih Rp1 (lihat `adjustments.csv`), serta jurnal koreksi HPP SJ batal (DN_CANCEL_COGS).
 
 ## 5c. Checklist cutover (ringkas, urut hari-H)
 
 Rincian ada di §5 (jalur balik), §5b (ETL) dan [DEPLOYMENT.md](DEPLOYMENT.md). Centang tiap butir sebelum menyatakan cutover selesai.
 
-- [ ] Keputusan pemilik/akuntan §5b butir 8 terjawab (tanggal saldo awal, jurnal inklusif pajak).
+- [ ] Keputusan pemilik/akuntan §5b butir 8 terjawab (tanggal saldo awal: 2026-07-01; jurnal inklusif pajak; koreksi HPP SJ batal).
 - [ ] Backup DB revamp dan dump legacy final terverifikasi (`gzip -t`, sha256); legacy di-freeze (read-only).
 - [ ] Gladi ETL lulus pada dump terbaru (§5b butir 6): `rehearse pass=true`, hash dua kali jalan sama, `load --resume` `inserted=0`.
 - [ ] `migrate up` (versi 31, `dirty=0`), `seed init`, ETL final, `etl verify` hijau; `GET /readyz` OK; rekonsiliasi saldo & stok (Readiness/rollups) cocok.

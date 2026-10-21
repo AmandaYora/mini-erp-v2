@@ -6,6 +6,7 @@ import (
 	"mini-erp/internal/etl/etltest"
 	"mini-erp/internal/etl/extract"
 	"mini-erp/internal/etl/report"
+	"mini-erp/internal/etl/row"
 	"mini-erp/internal/etl/transform"
 )
 
@@ -142,4 +143,152 @@ func TestTransformOpeningCostUnmatchedBlocks(t *testing.T) {
 	if !blocked {
 		t.Error("qty mismatch must raise blocker COST_OPENING_UNMATCHED for legacy cost row 3")
 	}
+}
+
+// Legacy adjustments overwrite the balance (stock opname): quantity is the new
+// count, the movement is the difference. Taking quantity as the change made
+// hundreds of phantom STOCK_DRIFT corrections on production data.
+func TestTransformAdjustmentIsDifference(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	out := runTransform(t, work)
+	var id int64
+	for _, e := range out.IDMap {
+		if e.Entity == "stock_movements" && e.LegacyID == 16 && e.Sub == 0 {
+			id = e.NewID
+		}
+	}
+	for _, r := range out.Tables["stock_movements"] {
+		if r.Int("id") == id && (r.Str("direction") != "out" || r.Rat("qty_base").Cmp(row.ParseRat("1")) != 0) {
+			t.Errorf("adjustment 87 -> 86 = %s %s, want out 1", r.Str("direction"), r.Str("qty_base"))
+		}
+	}
+	for _, f := range out.Log.Findings {
+		if f.Code == "STOCK_DRIFT" && f.LegacyID == 1 {
+			t.Errorf("phantom drift on the adjusted position: %s", f.Detail)
+		}
+	}
+}
+
+// The revamp ledger sums total_cost as stored (an out is negative) and holds
+// legacy's cost STATE: value legacy moved without cost rows arrives as
+// cost-only rows (qty 0, ids from 1<<62, ref opening_cost).
+func TestTransformCostSignAndBaseline(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	out := runTransform(t, work)
+	value := map[int64]int64{}
+	var baseline []row.Row
+	for _, r := range out.Tables["finance_inventory_cost_movements"] {
+		total := transform.RoundHalfAway(r.Rat("total_cost"))
+		if (r.Str("direction") == "out") != (total < 0) && total != 0 {
+			t.Errorf("cost row %d: %s with total %d", r.Int("stock_movement_id"), r.Str("direction"), total)
+		}
+		if r.Str("is_estimated") == "0" {
+			value[r.Int("product_id")] += total
+		}
+		if r.Str("ref_type") == "opening_cost" {
+			baseline = append(baseline, r)
+		}
+	}
+	if len(baseline) != 1 || baseline[0].Int("stock_movement_id") < 1<<62 || baseline[0].Str("total_cost") != "6000.00" || baseline[0].Rat("qty_base").Sign() != 0 {
+		t.Fatalf("baseline rows = %v, want one cost-only row of 6000 above 1<<62", baseline)
+	}
+	// Per product the non-estimated ledger equals the legacy state (rounded).
+	for code, want := range map[string]int64{"BRG-001": 1000000, "BRG-002": 264001, "BRG-003": 530000} {
+		var pid int64
+		for _, p := range out.Tables["products"] {
+			if p.Str("code") == code {
+				pid = p.Int("id")
+			}
+		}
+		if pid == 0 {
+			t.Fatalf("product %s missing", code)
+		}
+		if value[pid] != want {
+			t.Errorf("product %s ledger value = %d, want legacy state %d", code, value[pid], want)
+		}
+	}
+}
+
+// A document queued for posting in the revamp must not carry a live legacy
+// journal, or it would be booked twice.
+func TestTransformPendingJournaledBlocks(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	out := runTransform(t, work)
+	pending := 0
+	for _, f := range out.Log.Findings {
+		switch f.Code {
+		case "POST_PENDING":
+			pending++
+		case "POST_PENDING_JOURNALED":
+			t.Errorf("fixture: unexpected %s", f.Detail)
+		}
+	}
+	if pending == 0 {
+		t.Fatal("fixture has pending documents (order 6): POST_PENDING expected")
+	}
+	raw, err := extract.Load(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw["finance_journal_entries"] = append(raw["finance_journal_entries"], row.Row{
+		"id_finance_journal_entry": int64(9999), "id_branch": int64(2), "journal_number": "JE-X", "journal_date": "2026-02-10T03:00:00Z",
+		"posting_type": "auto", "source_type": "order", "id_source": int64(6), "event_key": "sales_completed", "description": "x", "status": "posted",
+	})
+	out, err = transform.Run(transform.Input{Cfg: testCfg(work), Raw: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range out.Log.Findings {
+		if f.Code == "POST_PENDING_JOURNALED" && f.Severity == report.Blocker {
+			return
+		}
+	}
+	t.Error("a pending document with a live legacy journal must raise POST_PENDING_JOURNALED")
+}
+
+// A cancelled SJ brings its goods back with no legacy cost row; the estimate
+// reverses exactly what that SJ relieved (not the catalog price), and the
+// value legacy never put back on the books is reported.
+func TestTransformDeliveryCancelCost(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	raw, err := extract.Load(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SJ 1 took product 1 out at 10000 (movements 6 and 7); 2 come back.
+	raw["inventory_movements"] = append(raw["inventory_movements"], row.Row{
+		"id_inventory_movement": int64(900), "id_branch": int64(1), "id_product": int64(1), "id_product_variant": int64(1), "id_stock_location": int64(1),
+		"movement_type": "in", "quantity": "2.000000000000", "balance_before": "94.000000000000", "balance_after": "96.000000000000",
+		"reference_type": "delivery_note", "id_reference": int64(1), "reason_text": "Pembatalan SJ", "id_moved_by": int64(2), "moved_at": "2025-12-12T04:00:00Z",
+	})
+	out, err := transform.Run(transform.Input{Cfg: testCfg(work), Raw: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	for _, e := range out.IDMap {
+		if e.Entity == "stock_movements" && e.LegacyID == 900 {
+			id = e.NewID
+		}
+	}
+	for _, r := range out.Tables["finance_inventory_cost_movements"] {
+		if r.Int("stock_movement_id") == id {
+			if r.Str("total_cost") != "20000.00" || r.Str("is_estimated") != "1" {
+				t.Errorf("cancellation cost = %s estimated %s, want 20000.00 estimated", r.Str("total_cost"), r.Str("is_estimated"))
+			}
+			if out.Explain["dn_cancel_value"] != 20000 {
+				t.Errorf("dn_cancel_value = %d, want 20000", out.Explain["dn_cancel_value"])
+			}
+			return
+		}
+	}
+	t.Fatalf("no cost row for the cancellation movement (new id %d)", id)
 }

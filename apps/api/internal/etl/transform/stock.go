@@ -7,6 +7,7 @@ import (
 
 	"mini-erp/internal/etl/report"
 	"mini-erp/internal/etl/row"
+	"mini-erp/internal/shared/money"
 )
 
 type posKey struct{ branch, product, variant, loc int64 }
@@ -114,11 +115,15 @@ func (s *state) stock() error {
 		case "out":
 			dir, mtype = "out", "out"
 		case "adjustment":
+			// A legacy adjustment OVERWRITES the balance (stock opname, BR-07):
+			// its quantity is the new count, not the change. The movement is
+			// the difference, which is also what legacy costed.
 			mtype = "adjustment"
 			dir = "in"
 			if m.Rat("balance_after").Cmp(m.Rat("balance_before")) < 0 {
 				dir = "out"
 			}
+			qty = new(big.Rat).Sub(m.Rat("balance_after"), m.Rat("balance_before"))
 		default:
 			s.find(report.Blocker, "MOV_TYPE", "inventory_movements", lid, "movement_type %q tidak dikenal", m.Str("movement_type"))
 			continue
@@ -317,6 +322,16 @@ func (s *state) stock() error {
 	return nil
 }
 
+// crow is one revamp cost-ledger row being built (total unsigned, in rupiah).
+type crow struct {
+	mv     *mov
+	qty    *big.Rat
+	total  int64
+	real   bool
+	date   time.Time
+	branch int64
+}
+
 // openingPool is the legacy finance opening of one (branch, product).
 type openingPool struct {
 	qty    *big.Rat
@@ -331,14 +346,6 @@ func (s *state) costLedger(movs []*mov) {
 	byNew := map[int64]*mov{}
 	for _, x := range movs {
 		byNew[x.newID] = x
-	}
-	type crow struct {
-		mv     *mov
-		qty    *big.Rat
-		total  int64
-		real   bool
-		date   time.Time
-		branch int64
 	}
 	rows := map[int64]*crow{}
 	openings := map[[2]int64]*openingPool{}
@@ -454,11 +461,28 @@ func (s *state) costLedger(movs []*mov) {
 		}
 	}
 	// running position state, in movement order, to estimate missing rows
+	// with the revamp's own chain (costOf, finance/application/costing.go):
+	// a receipt at its PO tax base, any other in or out at the running
+	// average, then the last inflow cost, then the catalog price per base unit.
 	type st struct {
-		qty   *big.Rat
-		value int64
+		qty    *big.Rat
+		value  int64
+		lastIn *big.Rat
 	}
 	running := map[[3]int64]*st{}
+	receipt := s.receiptCosts()
+	// Cost already relieved per (document, product, variant): a legacy SJ
+	// cancellation brings goods back with no cost row, and it reverses exactly
+	// what the SJ took out.
+	type docKey struct {
+		ref                  string
+		id, product, variant int64
+	}
+	type relieved struct {
+		qty   *big.Rat
+		total int64
+	}
+	outOf := map[docKey]*relieved{}
 	ordered := append([]*mov(nil), movs...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].newID < ordered[j].newID })
 	for _, x := range ordered {
@@ -480,11 +504,26 @@ func (s *state) costLedger(movs []*mov) {
 				// force estimated rows under every movement of the branch.
 				continue
 			}
-			unit := new(big.Rat)
-			if x.dir == "out" && cur.qty.Sign() > 0 && cur.value > 0 {
+			var unit *big.Rat
+			switch {
+			case x.dir == "in" && x.refType == "goods_receipt":
+				unit = receipt(x)
+			case x.dir == "in" && x.refType == "delivery" && x.refID != nil && outOf[docKey{x.refType, x.refID.(int64), x.pos.product, x.pos.variant}] != nil:
+				o := outOf[docKey{x.refType, x.refID.(int64), x.pos.product, x.pos.variant}]
+				unit = new(big.Rat).Quo(new(big.Rat).SetInt64(o.total), o.qty)
+				v := RoundHalfAway(new(big.Rat).Mul(x.qty, unit))
+				s.out.Explain["dn_cancel_value"] += v
+				s.find(report.Warn, "DN_CANCEL_COGS", "inventory_movements", x.legacy,
+					"pembatalan SJ: barang kembali senilai Rp%d (biaya keluar SJ itu); legacy tidak membalik jurnal HPP-nya: buku Persediaan lebih rendah sebesar ini", v)
+			case x.refType != "opening" && cur.qty.Sign() > 0 && cur.value > 0:
+				// Positive average only: legacy costs per PRODUCT, so one variant's
+				// share of it can run negative (COST_VARIANT_NEGATIVE); a negative
+				// cost would turn an in into an out of value.
 				unit = new(big.Rat).Quo(new(big.Rat).SetInt64(cur.value), cur.qty)
-			} else {
-				unit = row.ParseRat(s.productRow[x.pos.product].Str("purchase_price"))
+			case x.refType != "opening" && cur.lastIn != nil:
+				unit = cur.lastIn
+			default:
+				unit = s.catalogBaseCost(x.pos.product)
 			}
 			total := RoundHalfAway(new(big.Rat).Mul(x.qty, unit))
 			r = &crow{mv: x, qty: new(big.Rat).Set(x.qty), total: total, real: false, date: x.when, branch: x.pos.branch}
@@ -495,10 +534,47 @@ func (s *state) costLedger(movs []*mov) {
 		if x.dir == "in" {
 			cur.qty = new(big.Rat).Add(cur.qty, r.qty)
 			cur.value += r.total
+			if r.qty.Sign() > 0 && r.total > 0 {
+				cur.lastIn = new(big.Rat).Quo(new(big.Rat).SetInt64(r.total), r.qty)
+			}
 		} else {
 			cur.qty = new(big.Rat).Sub(cur.qty, r.qty)
 			cur.value -= r.total
+			if x.refID != nil {
+				dk := docKey{x.refType, x.refID.(int64), x.pos.product, x.pos.variant}
+				if outOf[dk] == nil {
+					outOf[dk] = &relieved{qty: new(big.Rat)}
+				}
+				outOf[dk].qty.Add(outOf[dk].qty, r.qty)
+				outOf[dk].total += r.total
+			}
 		}
+	}
+	baseline := s.costBaseline(rows)
+	for _, b := range baseline {
+		k := [3]int64{b.branch, b.product, b.variant}
+		if running[k] == nil {
+			running[k] = &st{qty: new(big.Rat)}
+		}
+		running[k].value += b.total
+	}
+	// A position can still end with a negative value: legacy's state (its
+	// books) sits below what its own rows say for a few products, and an
+	// estimated out of a document legacy never costed then takes it under
+	// zero. The revamp's readiness blocks on it (negative_inventory); the fix
+	// is an operator restatement (costrebuild), not a silent rewrite.
+	keys := make([][3]int64, 0, len(running))
+	for k, cur := range running {
+		if cur.value < 0 && cur.qty.Sign() >= 0 {
+			keys = append(keys, k)
+		}
+	}
+	sortKeys3(keys)
+	for _, k := range keys {
+		cur := running[k]
+		s.out.Explain["cost_variant_negative"]++
+		s.find(report.Warn, "COST_VARIANT_NEGATIVE", "product_variants", 0, "produk %s varian %d: qty %s bernilai Rp%d di ledger HPP (keadaan biaya legacy + estimasi dokumen yang belum diposting): luruskan dengan costrebuild",
+			s.productRow[k[1]].Str("code"), k[2], cur.qty.FloatString(6), cur.value)
 	}
 	ids := make([]int64, 0, len(rows))
 	for id := range rows {
@@ -521,10 +597,208 @@ func (s *state) costLedger(movs []*mov) {
 		if r.mv.refID != nil {
 			ref = r.mv.refID
 		}
+		// The revamp ledger stores total_cost SIGNED (an out is negative,
+		// InsertCostRow) and every position is SUM(total_cost); the unit stays
+		// positive.
+		total := r.total
+		if r.mv.dir == "out" {
+			total = -total
+		}
 		s.emit("finance_inventory_cost_movements", row.Row{
 			"id": s.nextID("finance_inventory_cost_movements"), "branch_id": r.branch, "product_id": r.mv.pos.product, "variant_id": r.mv.pos.variant,
 			"stock_movement_id": id, "ref_type": r.mv.refType, "ref_id": ref, "direction": r.mv.dir, "qty_base": ratStr(r.qty),
-			"unit_cost": unit, "total_cost": itoa(r.total) + ".00", "is_estimated": b2i(!r.real), "created_at": fmtUTC(date), "moved_at": fmtUTC(date),
+			"unit_cost": unit, "total_cost": itoa(total) + ".00", "is_estimated": b2i(!r.real), "created_at": fmtUTC(date), "moved_at": fmtUTC(date),
 		})
+	}
+	for i, b := range baseline {
+		dir := "in"
+		if b.total < 0 {
+			dir = "out"
+		}
+		s.emit("finance_inventory_cost_movements", row.Row{
+			"id": s.nextID("finance_inventory_cost_movements"), "branch_id": b.branch, "product_id": b.product, "variant_id": b.variant,
+			"stock_movement_id": syntheticCostBase + int64(i), "ref_type": refOpeningCost, "ref_id": nil, "direction": dir, "qty_base": ratStr(new(big.Rat)),
+			"unit_cost": nil, "total_cost": itoa(b.total) + ".00", "is_estimated": 0, "created_at": fmtUTC(b.date), "moved_at": fmtUTC(b.date),
+		})
+	}
+}
+
+// The revamp's cost-only ledger rows (finance/infrastructure/opening_cost.go):
+// qty 0, value only, ids from SyntheticCostBase so the costing cursor never
+// sees them.
+const (
+	syntheticCostBase int64 = 1 << 62
+	refOpeningCost          = "opening_cost"
+)
+
+type baselineRow struct {
+	branch, product, variant, total int64
+	date                            time.Time
+}
+
+// costBaseline translates legacy's per-PRODUCT cost into the revamp's
+// per-variant ledger. Legacy's authority is finance_inventory_cost_states
+// (it equals its Persediaan account); corrections such as the 2026-08-13
+// pre-ledger baseline moved that state and the books without cost rows, and
+// one average serves every variant, so a variant's own rows can drift (even
+// negative) while the product is right. Per (branch, product) the state value
+// is spread over the held variants by qty and cost-only rows (qty 0) carry
+// each variant from its migrated rows to that share: Σ per product = state.
+// Shares follow the qty legacy's own rows hold per variant (estimated rows
+// of documents legacy never costed then move each variant from there).
+func (s *state) costBaseline(rows map[int64]*crow) []baselineRow {
+	have := map[[3]int64]int64{}
+	held := map[[3]int64]*big.Rat{}
+	for _, r := range rows {
+		if !r.real {
+			continue
+		}
+		k := [3]int64{r.branch, r.mv.pos.product, r.mv.pos.variant}
+		if held[k] == nil {
+			held[k] = new(big.Rat)
+		}
+		v := r.total
+		if r.mv.dir == "out" {
+			v = -v
+			held[k].Sub(held[k], r.qty)
+		} else {
+			held[k].Add(held[k], r.qty)
+		}
+		have[k] += v
+	}
+	variants := map[[2]int64][][3]int64{}
+	add := func(k [3]int64) {
+		pk := [2]int64{k[0], k[1]}
+		for _, e := range variants[pk] {
+			if e == k {
+				return
+			}
+		}
+		variants[pk] = append(variants[pk], k)
+	}
+	for k := range have {
+		add(k)
+	}
+	for k, q := range held {
+		if q.Sign() > 0 {
+			add(k)
+		}
+	}
+	var out []baselineRow
+	for _, c := range sortedBy(s.raw["finance_inventory_cost_states"], "id_finance_inventory_cost_state") {
+		lid := c.Int("id_finance_inventory_cost_state")
+		br, ok1 := s.id("branches", c.Int("id_branch"))
+		p, ok2 := s.id("products", c.Int("id_product"))
+		if !ok1 || !ok2 {
+			s.find(report.Blocker, "COST_STATE_REFS", "finance_inventory_cost_states", lid, "cabang/produk keadaan biaya tidak termigrasi")
+			continue
+		}
+		want := s.money.R("finance_inventory_cost_states", lid, "inventory_value", c, "inventory_value")
+		keys := variants[[2]int64{br, p}]
+		sortKeys3(keys)
+		var rowsValue int64
+		var heldKeys [][3]int64
+		var qtys []*big.Rat
+		for _, k := range keys {
+			rowsValue += have[k]
+			if q := held[k]; q != nil && q.Sign() > 0 {
+				heldKeys = append(heldKeys, k)
+				qtys = append(qtys, q)
+			}
+		}
+		if len(heldKeys) == 0 && want != 0 {
+			v, ok := s.defVariant[p]
+			if !ok {
+				s.find(report.Blocker, "COST_BASELINE_VARIANT", "finance_inventory_cost_states", lid, "nilai Rp%d tanpa varian untuk ditempati", want)
+				continue
+			}
+			heldKeys, qtys = [][3]int64{{br, p, v}}, []*big.Rat{big.NewRat(1, 1)}
+			if _, seen := have[heldKeys[0]]; !seen {
+				keys = append(keys, heldKeys[0])
+			}
+		}
+		target := map[[3]int64]int64{}
+		for i, part := range SplitByQty(want, qtys) {
+			target[heldKeys[i]] = part
+		}
+		date, ok := c.Time("updated_at")
+		if !ok {
+			date = s.epoch()
+		}
+		moved := 0
+		for _, k := range keys {
+			if d := target[k] - have[k]; d != 0 {
+				out = append(out, baselineRow{branch: br, product: p, variant: k[2], total: d, date: date})
+				s.out.Explain["baseline_cost_rows"]++
+				moved++
+			}
+		}
+		if want != rowsValue {
+			s.find(report.Info, "COST_BASELINE", "finance_inventory_cost_states", lid,
+				"nilai keadaan biaya legacy Rp%d - Σ baris biaya Rp%d = Rp%d: ditambahkan sebagai baris biaya-saja (qty 0)", want, rowsValue, want-rowsValue)
+		} else if moved > 0 {
+			s.find(report.Info, "COST_VARIANT_REALIGN", "finance_inventory_cost_states", lid,
+				"nilai produk Rp%d dibagi ulang ke %d varian berstok menurut qty (legacy: satu harga modal per produk)", want, len(heldKeys))
+		}
+	}
+	return out
+}
+
+func sortKeys3(keys [][3]int64) {
+	sort.Slice(keys, func(i, j int) bool {
+		for n := 0; n < 3; n++ {
+			if keys[i][n] != keys[j][n] {
+				return keys[i][n] < keys[j][n]
+			}
+		}
+		return false
+	})
+}
+
+// catalogBaseCost is the catalog purchase price per base unit (the revamp's
+// PurchaseBaseCostsByIDs: price / purchase_to_base_factor).
+func (s *state) catalogBaseCost(product int64) *big.Rat {
+	p := s.productRow[product]
+	price := row.ParseRat(p.Str("purchase_price"))
+	f := row.ParseRat(p.Str("purchase_to_base_factor"))
+	if f.Sign() <= 0 {
+		return price
+	}
+	return new(big.Rat).Quo(price, f)
+}
+
+// receiptCosts prices a goods-receipt movement like the revamp's
+// receiptUnitCost: the first PO line of the product/variant, its tax BASE
+// over its base qty (money.LineAmounts on the migrated line). Zero when the
+// receipt or line cannot be found, as in the revamp.
+func (s *state) receiptCosts() func(x *mov) *big.Rat {
+	grPO := map[int64]int64{}
+	for _, g := range s.out.Tables["goods_receipts"] {
+		grPO[g.Int("id")] = g.Int("purchase_order_id")
+	}
+	po := map[int64]row.Row{}
+	for _, o := range s.out.Tables["purchase_orders"] {
+		po[o.Int("id")] = o
+	}
+	lines := map[int64][]row.Row{}
+	for _, l := range s.out.Tables["purchase_order_items"] {
+		lines[l.Int("order_id")] = append(lines[l.Int("order_id")], l)
+	}
+	ratF := func(r row.Row, col string) float64 { f, _ := r.Rat(col).Float64(); return f }
+	return func(x *mov) *big.Rat {
+		id, _ := x.refID.(int64)
+		o, ok := po[grPO[id]]
+		if !ok {
+			return new(big.Rat)
+		}
+		for _, l := range lines[o.Int("id")] {
+			if l.Int("product_id") != x.pos.product || l.Int("variant_id") != x.pos.variant || l.Rat("qty_base").Sign() <= 0 {
+				continue
+			}
+			_, base, _, _ := money.LineAmounts(ratF(l, "qty"), l.Int("unit_price"), ratF(l, "discount_pct"), l.Int("discount_nominal"),
+				o.Str("tax_type"), ratF(o, "tax_rate")).Split()
+			return new(big.Rat).Quo(new(big.Rat).SetInt64(base), l.Rat("qty_base"))
+		}
+		return new(big.Rat)
 	}
 }
