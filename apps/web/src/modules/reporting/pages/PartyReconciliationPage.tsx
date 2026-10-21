@@ -74,9 +74,10 @@ export default function PartyReconciliationPage() {
           </div>
           {data && data.unexplained > 0 && (
             <Notice tone="warning" title="Ada selisih yang harus ditelusuri">
-              Pihak tanpa order berjalan seharusnya cocok persis. Buka pihaknya, cocokkan dokumen dengan jurnal, lalu perbaiki lewat
-              web: koreksi pembayaran untuk pembayaran yang salah, batalkan dokumen yang salah, atau jurnal manual dengan memilih pihak
-              untuk selisih saldo.
+              Pihak tanpa order berjalan seharusnya cocok persis. Periksa dulu dua penyebab wajar: dokumen yang belum dijurnal (mis.
+              surat jalan bertanggal ke depan, cek antrean posting) dan barang pengganti retur tukar yang belum dikirim. Selain itu,
+              buka pihaknya, cocokkan dokumen dengan jurnal, lalu perbaiki lewat web: koreksi pembayaran untuk pembayaran yang salah,
+              batalkan dokumen yang salah, atau jurnal manual dengan memilih pihak untuk selisih saldo.
             </Notice>
           )}
           <SectionCard
