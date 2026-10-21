@@ -12,6 +12,8 @@ satu orang.
 | **UOM (Unit of Measure)** | Satuan. Produk punya *satuan jual* (mis. dus) dan *satuan stok* (mis. pcs), dihubungkan lewat faktor konversi — kontrak milik modul `product`, dipakai `stock`/`purchasing`/`sales`. |
 | **Varian Default** | Setiap produk selalu punya minimal satu baris varian, meski tidak dikonfigurasi bervarian secara eksplisit — jangkar saldo stok & harga. |
 | **HPP (Harga Pokok Penjualan)** | Biaya perolehan barang terjual, dihitung modul `finance` dari harga beli `product` + mutasi `stock`. |
+| **Hitung Ulang HPP (restatement biaya)** | Menghitung ulang harga barang keluar dari rantai biaya ledger dan membukukan selisihnya dalam satu jurnal koreksi; barang masuk dan histori migrasi tidak diubah. Web: Keuangan > Hitung Ulang HPP, konsol: `costrebuild` (RUNBOOK §6b). |
+| **Revaluasi harga modal** | Menyetel nilai persediaan sebuah produk berstok ke stok × harga modal baru; selisihnya satu baris nilai di ledger biaya + satu jurnal Persediaan vs Selisih Stok. Untuk harga modal non-nol yang salah (RUNBOOK §6c). |
 | **Ledger biaya** | Tabel nilai tiap mutasi stok (`finance_inventory_cost_movements`), dalam rupiah bulat. Setiap baris dijurnal sebesar nilainya, atau netral nilai (ADR-0020). |
 | **Netral nilai / kaki cermin** | Mutasi berpasangan yang tidak mengubah nilai perusahaan: transfer, pindah ke/dari lokasi rusak, pembatalan. Kaki kedua (cermin) dihargai dari kaki pertama, bukan dari rata-rata saat itu. |
 | **Datang rusak (`damaged_arrival`)** | Barang rusak yang masuk tanpa lokasi asal (ST-06). Menambah stok, maka dijurnal seperti selisih stok lebih. |

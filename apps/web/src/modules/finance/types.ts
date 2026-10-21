@@ -214,6 +214,12 @@ export function docTypeLabel(t: string): string {
       return "Saldo Awal";
     case "tax_adjustment":
       return "Koreksi Fiskal";
+    case "opening_supplement":
+      return "Lengkapi Saldo Awal";
+    case "cost_restatement":
+      return "Hitung Ulang HPP";
+    case "inventory_revaluation":
+      return "Revaluasi Harga Modal";
     case "manual":
       return "Manual";
     case "reversal":
@@ -837,4 +843,104 @@ export interface TaxAdjustmentFile {
   mime: string;
   sizeBytes: number;
   url: string;
+}
+
+// --- Koreksi harga modal (Hitung Ulang HPP, Revaluasi) ----------------------
+
+/** Satu gerbang hitung ulang HPP (trial_balance | inventory_recon | pending_documents | period_open). */
+export interface RestateGate {
+  key: string;
+  ok: boolean;
+  detail: string;
+}
+
+/** Selisih satu posisi (produk/varian) hasil hitung ulang HPP. */
+export interface RestateProduct {
+  productId: number;
+  variantId: number;
+  productCode: string;
+  productName: string;
+  rows: number;
+  valueBefore: number;
+  valueAfter: number;
+  /** Sesudah − sebelum (rupiah bulat): positif = Persediaan naik. */
+  delta: number;
+  /** Delta per kunci pemetaan akun lawan (cogs, adjustment, writeoff, purchase_return_difference). */
+  offsets: Record<string, number> | null;
+}
+
+export interface RestateSkipped {
+  productId: number;
+  variantId: number;
+  productCode: string;
+  productName: string;
+  reason: string;
+}
+
+/** POST /finance/cost-restatement/preview|commit. */
+export interface RestateReport {
+  commit: boolean;
+  branchId: number;
+  positions: number;
+  rowsChanged: number;
+  products: RestateProduct[] | null;
+  skipped: RestateSkipped[] | null;
+  delta: number;
+  gates: RestateGate[] | null;
+  entryId?: number;
+  entryNumber?: string;
+  reconBefore?: InventoryRecon;
+  reconAfter?: InventoryRecon;
+  applied: boolean;
+  date: string;
+  /** Mutasi stok legacy terakhir; baris keluar ≤ batas ini tidak pernah dihitung ulang. 0 = tanpa histori migrasi. */
+  cutoverMovementId: number;
+}
+
+/** GET /finance/inventory-revaluations/positions?productId= — satu posisi per varian. */
+export interface RevaluationPosition {
+  productId: number;
+  variantId: number;
+  productCode: string;
+  productName: string;
+  variantName: string;
+  baseUom: string;
+  qty: number;
+  value: number;
+  averageCost: number;
+  /** Harga satuan penerimaan barang terakhir di ledger (0 = belum ada). */
+  lastReceiptCost: number;
+  /** Harga beli master per satuan dasar (0 = belum diisi). */
+  catalogCost: number;
+}
+
+export interface RevaluationLine {
+  productId: number;
+  variantId: number;
+  productCode: string;
+  productName: string;
+  qty: number;
+  unitCostBefore: number;
+  unitCostAfter: number;
+  valueBefore: number;
+  valueAfter: number;
+  delta: number;
+}
+
+/** Pratinjau / hasil komit / baris riwayat revaluasi harga modal. */
+export interface RevaluationResult {
+  id?: number;
+  branchId: number;
+  date: string;
+  reason: string;
+  totalDelta: number;
+  lines: RevaluationLine[] | null;
+  applied: boolean;
+  replayed?: boolean;
+  entryId?: number;
+  entryNumber?: string;
+  createdBy?: number;
+  createdAt?: string;
+  reconBefore?: InventoryRecon;
+  reconAfter?: InventoryRecon;
 }

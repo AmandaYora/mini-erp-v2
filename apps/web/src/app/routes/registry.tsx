@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeftRight,
   BookPlus,
+  Calculator,
   BadgePercent,
   BookOpen,
   Bot,
@@ -134,6 +135,8 @@ export const MENU_GROUPS: MenuGroup[] = [
       { label: "Saldo Awal Akun", path: ROUTE_PATHS.financeOpening, icon: BookPlus, perm: "finance.view", section: "Detail" },
       { label: "Akun", path: ROUTE_PATHS.financeAccounts, icon: ListTree, perm: "finance.manage", section: "Detail" },
       { label: "Integritas", path: ROUTE_PATHS.financeIntegrity, icon: Stethoscope, perm: "finance.manage", section: "Detail" },
+      { label: "Hitung Ulang HPP", path: ROUTE_PATHS.financeCostRestatement, icon: Calculator, perm: "finance.manage", section: "Detail" },
+      { label: "Revaluasi Harga Modal", path: ROUTE_PATHS.financeRevaluations, icon: Tags, perm: "finance.manage", section: "Detail" },
     ],
   },
   {

@@ -1,8 +1,8 @@
 # Database Schema — Mini ERP (Revamp)
 
-Status: **kontrak kepemilikan tabel yang sudah terkunci** — 65 tabel nyata: 18 berkas baseline per
+Status: **kontrak kepemilikan tabel yang sudah terkunci** — 67 tabel nyata: 18 berkas baseline per
 modul, `apps/api/migrations/` (`000001_user` … `000018_assistant`), ditambah migrasi bernomor
-sesudah baseline (`000019`–`000023`, `000031`, `000032`; nomor 000024–000030 sengaja kosong) — turun dari 70
+sesudah baseline (`000019`–`000023`, `000031`, `000032`, `000035`; nomor 000024–000030 sengaja kosong) — turun dari 70
 entity sistem lama. Daftar tabel di §3 dibangkitkan dari berkas itu (`node scripts/db-schema-doc.mjs`;
 `--check` dijalankan CI/verify). Dokumen ini mengikat kepemilikan per modul; §6 mencatat disposisi
 tiap tabel warisan; **riwayat migrasi bernomor (kolom/tabel baru sesudah baseline) ada di §8**.
@@ -70,10 +70,10 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql` | `payments`, `payment_allocations` | 2 |
 | `salesreturn` | `000014_salesreturn.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
 | `purchasereturn` | `000015_purchasereturn.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
-| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta` | 14 |
+| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql`, `000035_finance_corrections.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta`, `finance_inventory_revaluations`, `finance_inventory_revaluation_lines` | 16 |
 | `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
 | `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
-| **Total** | 18 berkas modul | | **65** |
+| **Total** | 18 berkas modul | | **67** |
 <!-- END GENERATED: tables -->
 
 ### `audit` (L0)
@@ -259,6 +259,7 @@ hutang (`payable_reduction`) yang bisa direfund atau dijadikan saldo supplier.
 | `finance_cutover` | Per cabang dan jenis dokumen: id dokumen terakhir yang sudah tercakup saldo awal/jurnal (batas antrean posting) |
 | `finance_periods` | Periode akuntansi (buka/tutup); alasan buka kembali periode dicatat di diff audit, bukan kolom (FN-05) |
 | `finance_posting_ignores` | Penanda dokumen yang sengaja diabaikan dari antrean posting (`branch_id`, `doc_type`, `doc_id`, `reason`, `ignored_by`, `ignored_at`; PK gabungan) — migrasi `000031_finance_fn`, FN-01 |
+| `finance_inventory_revaluations` + `finance_inventory_revaluation_lines` | Revaluasi harga modal (koreksi harga modal non-nol yang salah): header per komit (`branch_id`, `revaluation_date`, `reason`, `total_delta`, `journal_entry_id`, `client_ref` unik per cabang, `created_by`) + baris per posisi (`product_id`, `variant_id`, `qty_base`, harga satuan sebelum/sesudah, nilai sebelum/sesudah, `delta`, `cost_movement_id` = id sintetis baris ledgernya). Ledger biaya mendapat baris nilai saja `ref_type=inventory_revaluation`, `ref_id` = header — migrasi `000035_finance_corrections` |
 | `finance_tax_adjustment_meta` | Klasifikasi (`positive`/`negative`/`final_income`/`non_object`) + catatan koreksi fiskal, 1:1 ke `finance_journal_entries` (FK dalam modul) — `000031`, FN-07 |
 | `finance_inventory_cost_movements` | HPP per mutasi stok — rata-rata berjalan = baris mutasi terakhir (tanpa tabel state; ledger adalah kebenarannya). K-05: baris biaya-saja (`ref_type=opening_cost`, qty 0) memakai `stock_movement_id` ≥ 2^62 agar tak bertabrakan dengan mutasi nyata; kursor costing mengabaikan rentang itu. Tanpa perubahan skema |
 | `finance_tax_periods` + `finance_tax_report_snapshots` | Snapshot laporan pajak per periode |
@@ -309,11 +310,11 @@ constraint database.
   produk yang benar-benar dijual dalam 3+ satuan; tabel rules harga bila perlu aturan per
   kategori/produk di luar satu-aturan-per-tipe. Keduanya reversibel dan murah ditambahkan belakangan.
 
-## 6. Disposisi Tabel Legacy (70 → 65)
+## 6. Disposisi Tabel Legacy (70 → 67)
 
-Realisasi di §3 total **65 tabel** (metrik harian tidak dipertahankan — KI-126 diputuskan
+Realisasi di §3 total **67 tabel** (metrik harian tidak dipertahankan — KI-126 diputuskan
 hapus di L8; 7 tabel `assistant` L9 ikut terhitung; dua tabel kecil `finance_posting_ignores` dan
-`finance_tax_adjustment_meta` ditambah `000031` sebagai pengganti ringan, bukan memulihkan tabel legacy), turun dari **70 entity** sistem lama.
+`finance_tax_adjustment_meta` ditambah `000031` sebagai pengganti ringan, bukan memulihkan tabel legacy; `finance_inventory_revaluations` + `_lines` ditambah `000035` untuk revaluasi harga modal, fitur baru), turun dari **70 entity** sistem lama.
 Setiap tabel di bawah lolos uji kebutuhan — fakta yang wajib persisten, bukan struktur
 warisan. Mekanisme pengganti dicatat agar kemampuan user tidak hilang diam-diam:
 
@@ -361,8 +362,9 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000023_payment_credit_source` | N-41 | `payments.credit_source_type`, `credit_source_id` + indeks `ix_payments_credit_source` (retur sumber saldo uang muka pada pasangan kaki pakai-saldo) | legacy tak punya alur ini; kolom nullable, ETL tak menyentuh |
 | `000031_finance_fn` | FN-01, FN-07, FN-10 | tabel baru `finance_posting_ignores` dan `finance_tax_adjustment_meta`; kolom `business_expenses.party_id` (+ `ix_business_expenses_party`): pihak lawan biaya | mengisi `party_id` dari `id_business_party` legacy bila pihak itu termigrasi |
 | `000032_payment_corrections` | Koreksi pembayaran | `payments.corrects_payment_id` (+ `ix_payments_corrects`), `cancel_reason`, `cancelled_at`, `cancelled_by` (semua nullable) | tak terpengaruh; kolom nullable, ETL tak menyentuh |
+| `000035_finance_corrections` | Koreksi HPP lewat web | tabel baru `finance_inventory_revaluations` dan `finance_inventory_revaluation_lines` (revaluasi harga modal: satu jurnal per komit, satu baris ledger nilai saja per posisi) | tak terpengaruh: tabel baru kosong, legacy tak punya alur ini |
 
 Rincian kolom tiap tabel ada di narasi §3 modul pemiliknya. Perubahan tanpa skema yang perlu diketahui pembaca skema:
 bukti kirim bertipe = owner type media `delivery_document` (scan SJ) vs `delivery_proof` (foto lokasi), bukan kolom `purpose` (DL-01);
-`archivedAt` produk = `updated_at` baris berstatus arsip (PR-04); jurnal `opening_supplement`, `cost_restatement`, `sales_return_settlement`,
+`archivedAt` produk = `updated_at` baris berstatus arsip (PR-04); jurnal `opening_supplement`, `cost_restatement`, `inventory_revaluation`, `sales_return_settlement`,
 `purchase_return_settlement` adalah sumber posting baru tanpa tabel baru.
