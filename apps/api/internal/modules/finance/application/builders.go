@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -660,12 +661,18 @@ func (s *Service) buildReplacementDelivery(ctx context.Context, branchID int64, 
 	return lines, fmt.Sprintf("Kirim pengganti %s atas %s", note.Number, so.Number), note.DeliveryDate, nil
 }
 
-// buildStockMovement journals one stock adjustment or write-off at the value
-// its cost-ledger row recorded (exact, never the live average):
+// buildStockMovement journals one stock adjustment, write-off or damaged
+// arrival at the value its cost-ledger row recorded (exact, never the live
+// average):
 //
 //	adjustment in  (surplus)  Dr inventory   / Cr adjustment
+//	damaged arrival (in)      Dr inventory   / Cr adjustment
 //	adjustment out (shortage) Dr adjustment  / Cr inventory
 //	write-off      (out)      Dr writeoff    / Cr inventory
+//
+// A damaged arrival is stock that appeared with no source document, exactly
+// like a surplus; booking it keeps the ledger and Persediaan equal, and its
+// later write-off then relieves value the books actually hold.
 //
 // A zero or estimated-with-no-price value blocks the document (F2b-11).
 func (s *Service) buildStockMovement(ctx context.Context, branchID, movementID int64) ([]*contracts.JournalLine, string, string, error) {
@@ -673,7 +680,7 @@ func (s *Service) buildStockMovement(ctx context.Context, branchID, movementID i
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)
 	}
-	if row == nil || (row.RefType != "adjustment" && row.RefType != "write_off") {
+	if row == nil || !slices.Contains(infrastructure.JournaledMovementRefs, row.RefType) {
 		return nil, "", "", apperror.NotFound("Mutasi stok")
 	}
 	value := money.Round(row.TotalCost)
@@ -692,6 +699,12 @@ func (s *Service) buildStockMovement(ctx context.Context, branchID, movementID i
 			{key: "inventory", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Hapus stok rusak"},
 		}
 		memo = "Hapus stok rusak"
+	case row.RefType == "damaged_arrival":
+		legs = []rawLeg{
+			{key: "inventory", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Barang rusak masuk tanpa dokumen"},
+			{key: "adjustment", credit: value, productID: row.ProductID, variantID: row.VariantID, note: "Barang rusak masuk tanpa dokumen"},
+		}
+		memo = "Barang rusak masuk"
 	case row.Direction == "in":
 		legs = []rawLeg{
 			{key: "inventory", debit: value, productID: row.ProductID, variantID: row.VariantID, note: "Selisih stok lebih"},

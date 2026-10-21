@@ -5,8 +5,9 @@
 // Without --commit it is a DRY RUN: it replays every position's cost chain from
 // the ledger, prints the per-product difference and the gates a commit would
 // meet, and writes nothing. With --commit it rewrites the stale outflow rows
-// and posts ONE balanced correction journal (Persediaan against HPP, source
-// `cost_restatement`) in a single transaction, behind the trial-balance gate,
+// and posts ONE balanced correction journal (Persediaan against the account each
+// restated outflow was booked to — HPP, selisih persediaan, hapus stok, selisih
+// retur beli — source `cost_restatement`) in a single transaction, behind the trial-balance gate,
 // and writes an audit entry (`finance.cost_restatement`). Afterwards the K-05
 // book-vs-ledger reconciliation is printed.
 //
@@ -128,8 +129,8 @@ func printReport(w io.Writer, r *application.RestateReport) {
 		rec  *application.InventoryRecon
 	}{{"sebelum", r.ReconBefore}, {"sesudah", r.ReconAfter}} {
 		if x.rec != nil {
-			fmt.Fprintf(w, "Rekonsiliasi %-8s buku %d, ledger %d, selisih %d, konsisten=%v\n",
-				x.name, x.rec.Book, x.rec.Ledger, x.rec.Diff, x.rec.Consistent)
+			fmt.Fprintf(w, "Rekonsiliasi %-8s buku %d, ledger %d, selisih %d, tak terjelaskan %d, konsisten=%v\n",
+				x.name, x.rec.Book, x.rec.Ledger, x.rec.Diff, x.rec.Unexplained, x.rec.Consistent)
 		}
 	}
 }

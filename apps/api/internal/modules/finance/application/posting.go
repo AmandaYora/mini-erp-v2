@@ -17,10 +17,10 @@ import (
 	"mini-erp/internal/shared/timeutil"
 )
 
-// Source document types the posting endpoint accepts. Adjustments, damaged
-// moves, write-offs, transfers, and openings post no automatic journal in
-// L7 scope — their economics live in the cost ledger, and operators book
-// them via manual journals (documented gap, not an oversight).
+// Source document types the posting endpoint accepts. Stock adjustments,
+// write-offs and damaged arrivals are journaled one movement at a time
+// (SourceStockMovement); transfers and damaged-location moves are
+// value-neutral and post nothing (ADR-0020).
 const (
 	SourceGoodsReceipt   = "goods_receipt"
 	SourceDelivery       = "delivery"
@@ -336,6 +336,12 @@ func (s *Service) Manual(ctx context.Context, actorID, branchID int64, date, mem
 	if len(in) == 0 {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "lines", Message: "wajib diisi"}})
 	}
+	// Persediaan is the stock ledger's control account: it moves only with
+	// stock, so the book value always equals the ledger value (ADR-0020).
+	inventory, err := s.repo.MappingAccount(ctx, "inventory")
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
 	lines := make([]*contracts.JournalLine, 0, len(in))
 	for i, l := range in {
 		a, err := s.repo.AccountByCode(ctx, strings.ToUpper(strings.TrimSpace(l.AccountCode)))
@@ -345,6 +351,11 @@ func (s *Service) Manual(ctx context.Context, actorID, branchID int64, date, mem
 		if a == nil || a.Status != "active" {
 			return nil, apperror.Validation("", []apperror.FieldError{
 				{Field: "lines", Message: fmt.Sprintf("baris %d: akun tidak ditemukan", i+1)}})
+		}
+		if inventory != nil && inventory.ID == a.ID {
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "lines", Message: fmt.Sprintf(
+				"baris %d: akun %s %s hanya bergerak bersama mutasi stok (penerimaan, pengiriman, retur, koreksi stok); "+
+					"jurnal manual ke akun ini membuat nilai buku dan nilai stok tidak cocok", i+1, a.Code, a.Name)}})
 		}
 		lines = append(lines, &contracts.JournalLine{AccountID: a.ID, Debit: l.Debit, Credit: l.Credit})
 	}

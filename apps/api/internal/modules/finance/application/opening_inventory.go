@@ -354,20 +354,26 @@ func (s *Service) completeLocked(ctx context.Context, actorID, branchID int64, i
 }
 
 // InventoryRecon compares the books' Persediaan balance with the cost
-// ledger's value (K-05 / F-05). A drift means a journal was reversed by hand,
-// stock moved without being journalled, or an imported opening disagrees with
-// the imported stock.
+// ledger's value (K-05 / F-05). Every gap between them must be explained by a
+// named cause; whatever is left (Unexplained) means a journal was reversed by
+// hand, stock moved without being journalled, or an imported opening
+// disagrees with the imported stock — and the check fails.
 type InventoryRecon struct {
 	Book   int64 `json:"book"`
 	Ledger int64 `json:"ledger"`
 	Diff   int64 `json:"diff"` // book − ledger
-	// Tolerance is the rounding allowance: journals round each leg to a whole
-	// rupiah while the ledger keeps fractions.
+	// Tolerance is the rounding allowance: journals post whole rupiah per leg;
+	// ledger rows are whole rupiah too, but imported legacy rows and receipts
+	// split over several locations can carry a fraction.
 	Tolerance int64 `json:"tolerance"`
-	// Pending counts documents not yet journalled; while any exist the gap can
-	// be explained by them, so the check degrades from blocker to warning.
-	Pending     int `json:"pending"`
-	MissingCost int `json:"missingCost"`
+	// Pending counts documents not yet journalled; PendingValue is the ledger
+	// value they already moved (the books catch up when they are posted).
+	Pending      int   `json:"pending"`
+	PendingValue int64 `json:"pendingValue"`
+	// IgnoredValue is the ledger value of documents an accountant took out of
+	// the posting queue on purpose: a permanent, deliberate gap.
+	IgnoredValue int64 `json:"ignoredValue"`
+	MissingCost  int   `json:"missingCost"`
 	// TransferNet is the ledger value cross-branch transfers moved into (+) or
 	// out of (-) this branch. Transfers carry no journal by design, so it is
 	// excluded from Ledger before comparing.
@@ -375,7 +381,10 @@ type InventoryRecon struct {
 	// OpeningUnposted is the opening-stock value awaiting the finance opening
 	// journal; excluded from Ledger until that journal exists.
 	OpeningUnposted int64 `json:"openingUnposted"`
-	Consistent      bool  `json:"consistent"`
+	// Unexplained is Diff after the pending and ignored documents: the part
+	// no known cause accounts for. Consistent = |Unexplained| <= Tolerance.
+	Unexplained int64 `json:"unexplained"`
+	Consistent  bool  `json:"consistent"`
 }
 
 // ReconcileInventory computes the book-vs-ledger comparison for a branch.
@@ -416,15 +425,52 @@ func (s *Service) ReconcileInventory(ctx context.Context, branchID int64) (*Inve
 	} else {
 		pending += n
 	}
-	rec := &InventoryRecon{Book: book, Ledger: ledger, Diff: book - ledger,
-		Tolerance: 100 + int64(len(valued)), Pending: pending, MissingCost: len(missing),
-		TransferNet: transferNet, OpeningUnposted: openingUnposted}
-	abs := rec.Diff
-	if abs < 0 {
-		abs = -abs
+	pendingValue, ignoredValue, err := s.queueLedgerValue(ctx, branchID, queue)
+	if err != nil {
+		return nil, err
 	}
-	rec.Consistent = abs <= rec.Tolerance
+	rec := &InventoryRecon{Book: book, Ledger: ledger, Diff: book - ledger,
+		Tolerance: 100 + int64(len(valued)), Pending: pending, PendingValue: pendingValue, IgnoredValue: ignoredValue,
+		MissingCost: len(missing), TransferNet: transferNet, OpeningUnposted: openingUnposted}
+	rec.Unexplained = rec.Diff + pendingValue + ignoredValue
+	rec.Consistent = absInt64(rec.Unexplained) <= rec.Tolerance
 	return rec, nil
+}
+
+// queueLedgerValue sums what the unjournalled documents of the queue already
+// moved in the cost ledger (signed: + added stock value, − relieved it),
+// split into still-pending and deliberately ignored documents. Only documents
+// that move stock carry ledger value; the rest add nothing.
+func (s *Service) queueLedgerValue(ctx context.Context, branchID int64, queue []QueueItem) (pending, ignored int64, err error) {
+	for _, it := range queue {
+		var v float64
+		switch it.DocType {
+		case SourceGoodsReceipt, SourceDelivery, SourceSalesReturn, SourcePurchaseReturn:
+			moves, err := s.repo.MoveValues(ctx, branchID, it.DocType, it.DocID)
+			if err != nil {
+				return 0, 0, apperror.Internal(err)
+			}
+			for _, m := range moves {
+				v += m.Value
+			}
+		case SourceStockMovement:
+			row, err := s.repo.CostRowByMovement(ctx, branchID, it.DocID)
+			if err != nil {
+				return 0, 0, apperror.Internal(err)
+			}
+			if row != nil {
+				v = row.TotalCost
+			}
+		default:
+			continue
+		}
+		if it.Ignored {
+			ignored += int64(math.Round(v))
+		} else {
+			pending += int64(math.Round(v))
+		}
+	}
+	return pending, ignored, nil
 }
 
 // inventoryBookBalance is the net (debit − credit) of the mapped Persediaan

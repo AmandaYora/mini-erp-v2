@@ -235,6 +235,20 @@ func (s *Service) ListRecentCostMovements(ctx context.Context, branchID int64, m
 	return out, nil
 }
 
+// TransferSourceBranch returns the sending branch of a transfer document
+// (0 when unknown). Costing prices a received transfer at what the sending
+// branch relieved, so it syncs that branch first.
+func (s *Service) TransferSourceBranch(ctx context.Context, transferID int64) (int64, error) {
+	t, err := s.repo.GetTransfer(ctx, transferID)
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+	if t == nil {
+		return 0, nil
+	}
+	return t.FromBranchID, nil
+}
+
 // ListCostMovements streams movement rows for HPP costing.
 func (s *Service) ListCostMovements(ctx context.Context, branchID, afterID int64, limit int) ([]*contracts.CostMovement, error) {
 	if limit <= 0 || limit > 1000 {

@@ -701,7 +701,9 @@ func (s *Service) moveDamaged(ctx context.Context, actorID, branchID int64, in D
 }
 
 // damagedArrival books goods that came in already damaged: one inflow at the
-// damaged location, no outflow anywhere.
+// damaged location, no outflow anywhere. Its own ref type keeps it apart from
+// the out+in pair of a damaged move: it adds value to the books (finance
+// journals it like a stock surplus), while a move is value-neutral.
 func (s *Service) damagedArrival(ctx context.Context, actorID, branchID, damagedID int64, in DamagedInput) error {
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
@@ -715,7 +717,7 @@ func (s *Service) damagedArrival(ctx context.Context, actorID, branchID, damaged
 		return apperror.Internal(err)
 	}
 	if err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, damagedID,
-		in.Qty, "in", "in", "damaged", 0, "Rusak (tanpa lokasi asal): "+strings.TrimSpace(in.Reason), actorID); err != nil {
+		in.Qty, "in", "in", contracts.RefDamagedArrival, 0, "Rusak (tanpa lokasi asal): "+strings.TrimSpace(in.Reason), actorID); err != nil {
 		return apperror.Internal(err)
 	}
 	return tx.Commit()

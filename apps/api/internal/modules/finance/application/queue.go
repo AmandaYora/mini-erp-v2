@@ -278,8 +278,11 @@ func (s *Service) UnpostedSources(ctx context.Context, branchID int64) ([]QueueI
 				date = date[:10]
 			}
 			label := "Koreksi stok #" + strconv.FormatInt(m.MovementID, 10)
-			if m.RefType == "write_off" {
+			switch m.RefType {
+			case "write_off":
 				label = "Hapus stok #" + strconv.FormatInt(m.MovementID, 10)
+			case "damaged_arrival":
+				label = "Barang rusak masuk #" + strconv.FormatInt(m.MovementID, 10)
 			}
 			amount := int64(math.Round(math.Abs(m.TotalCost)))
 			out = append(out, withIgnore(QueueItem{DocType: SourceStockMovement, DocID: m.MovementID, Number: label, Date: date,

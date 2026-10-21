@@ -177,6 +177,9 @@ func (f *fakeStock) ListLocations(_ context.Context, _ int64, _ string) ([]*stoc
 func (f *fakeStock) ListCostMovements(_ context.Context, _, _ int64, _ int) ([]*stockcontracts.CostMovement, error) {
 	return nil, nil
 }
+func (f *fakeStock) TransferSourceBranch(_ context.Context, _ int64) (int64, error) {
+	return 0, nil
+}
 
 type fakeSales struct {
 	listCalls   int

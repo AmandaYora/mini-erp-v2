@@ -41,6 +41,14 @@ func (s *Service) CreateExpense(ctx context.Context, actorID, branchID int64, in
 	if exp.Type != "beban" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "expenseAccountId", Message: "harus akun beban"}})
 	}
+	// HPP is what the stock ledger relieved; an operating expense booked there
+	// would make the P&L cost of goods disagree with the margin reports.
+	if cogs, err := s.repo.MappingAccount(ctx, "cogs"); err != nil {
+		return nil, apperror.Internal(err)
+	} else if cogs != nil && cogs.ID == exp.ID {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "expenseAccountId",
+			Message: "akun HPP diisi otomatis dari mutasi stok; catat biaya ini di akun beban operasional"}})
+	}
 	pay, err := s.repo.AccountByID(ctx, in.PayAccountID)
 	if err != nil {
 		return nil, apperror.Internal(err)

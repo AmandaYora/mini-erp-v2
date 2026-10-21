@@ -17,7 +17,7 @@ import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { financeService } from "@/modules/finance/services/finance.service";
-import { integritySummary } from "@/modules/finance/lib/reports";
+import { integritySummary, inventoryGapHint } from "@/modules/finance/lib/reports";
 import type { RollupDiff } from "@/modules/finance/types";
 
 // Integritas pembukuan (T7, perm finance.manage): rollup harian vs baris jurnal.
@@ -90,16 +90,10 @@ export default function IntegrityPage() {
                 <SummaryCard label="Saldo akun Persediaan (buku)" value={formatIDR(data.inventory.book)} />
                 <SummaryCard label="Nilai ledger biaya" value={formatIDR(data.inventory.ledger)} />
                 <SummaryCard
-                  label="Selisih (buku - ledger)"
-                  value={formatIDR(data.inventory.diff)}
-                  tone={data.inventory.consistent ? "success" : data.inventory.pending > 0 ? "warning" : "danger"}
-                  hint={
-                    data.inventory.consistent
-                      ? "Cocok (dalam toleransi pembulatan)."
-                      : data.inventory.pending > 0
-                        ? `${formatNumber(data.inventory.pending)} dokumen belum dijurnal mungkin penyebabnya.`
-                        : "Telusuri jurnal Persediaan, saldo awal, atau mutasi stok yang belum dijurnal."
-                  }
+                  label="Selisih tak terjelaskan"
+                  value={formatIDR(data.inventory.unexplained)}
+                  tone={data.inventory.consistent ? "success" : "danger"}
+                  hint={inventoryGapHint(data.inventory)}
                 />
               </div>
               {data.inventory.missingCost > 0 && (

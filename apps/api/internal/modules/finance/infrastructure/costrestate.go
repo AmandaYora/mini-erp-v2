@@ -18,6 +18,7 @@ type RestateRow struct {
 	MovementID int64
 	Direction  string
 	RefType    string
+	RefID      int64
 	Qty        float64
 	Unit       float64
 	Total      float64
@@ -29,7 +30,7 @@ type RestateRow struct {
 // applied to — the order they actually took effect in.
 func (r *Repository) CostRowsOrdered(ctx context.Context, branchID int64) ([]RestateRow, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, product_id, variant_id, stock_movement_id, direction, ref_type,
+		`SELECT id, product_id, variant_id, stock_movement_id, direction, ref_type, COALESCE(ref_id, 0),
 			qty_base, unit_cost, total_cost
 		 FROM finance_inventory_cost_movements WHERE branch_id = ?
 		 ORDER BY product_id, variant_id, stock_movement_id`, branchID)
@@ -42,7 +43,7 @@ func (r *Repository) CostRowsOrdered(ctx context.Context, branchID int64) ([]Res
 		var x RestateRow
 		var qty string
 		var unit, total sql.NullString
-		if err := rows.Scan(&x.ID, &x.ProductID, &x.VariantID, &x.MovementID, &x.Direction, &x.RefType, &qty, &unit, &total); err != nil {
+		if err := rows.Scan(&x.ID, &x.ProductID, &x.VariantID, &x.MovementID, &x.Direction, &x.RefType, &x.RefID, &qty, &unit, &total); err != nil {
 			return nil, err
 		}
 		x.Qty, x.Unit, x.Total = dbutil.ParseDecimal(qty), dbutil.ParseDecimal(unit.String), dbutil.ParseDecimal(total.String)

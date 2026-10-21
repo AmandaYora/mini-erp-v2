@@ -12,6 +12,10 @@ satu orang.
 | **UOM (Unit of Measure)** | Satuan. Produk punya *satuan jual* (mis. dus) dan *satuan stok* (mis. pcs), dihubungkan lewat faktor konversi — kontrak milik modul `product`, dipakai `stock`/`purchasing`/`sales`. |
 | **Varian Default** | Setiap produk selalu punya minimal satu baris varian, meski tidak dikonfigurasi bervarian secara eksplisit — jangkar saldo stok & harga. |
 | **HPP (Harga Pokok Penjualan)** | Biaya perolehan barang terjual, dihitung modul `finance` dari harga beli `product` + mutasi `stock`. |
+| **Ledger biaya** | Tabel nilai tiap mutasi stok (`finance_inventory_cost_movements`), dalam rupiah bulat. Setiap baris dijurnal sebesar nilainya, atau netral nilai (ADR-0020). |
+| **Netral nilai / kaki cermin** | Mutasi berpasangan yang tidak mengubah nilai perusahaan: transfer, pindah ke/dari lokasi rusak, pembatalan. Kaki kedua (cermin) dihargai dari kaki pertama, bukan dari rata-rata saat itu. |
+| **Datang rusak (`damaged_arrival`)** | Barang rusak yang masuk tanpa lokasi asal (ST-06). Menambah stok, maka dijurnal seperti selisih stok lebih. |
+| **Selisih tak terjelaskan** | Selisih Persediaan buku − ledger biaya sesudah dikurangi nilai dokumen yang belum dijurnal dan yang diabaikan. Harus ≈ 0; bila tidak, `inventory_recon` gagal. |
 | **Party** | Istilah gabungan untuk customer & supplier di modul `party` (satu tabel, dibedakan `party_type`). |
 | **Member Type / Member Pricing** | Kelompok customer dengan aturan harga khusus (persentase/nominal), dihitung modul `party` saat order dibuat. |
 | **PO (Purchase Order)** | Order pembelian ke supplier — modul `purchasing`. |

@@ -64,6 +64,9 @@ const (
 	RefTransfer       = "transfer"
 	RefAdjustment     = "adjustment"
 	RefDamaged        = "damaged"
+	// RefDamagedArrival is goods that arrived damaged with no source position
+	// (ST-06): a lone inflow, journaled like a stock surplus.
+	RefDamagedArrival = "damaged_arrival"
 	RefWriteOff       = "write_off"
 	RefOpening        = "opening"
 
@@ -151,6 +154,9 @@ type StockClient interface {
 	// ListCostMovements streams movement rows after an id (ordered, capped)
 	// for HPP costing. The finance module resumes from its own cursor.
 	ListCostMovements(ctx context.Context, branchID, afterID int64, limit int) ([]*CostMovement, error)
+	// TransferSourceBranch returns the sending branch of a transfer document
+	// (0 when unknown), so costing can price the received leg at the sent one.
+	TransferSourceBranch(ctx context.Context, transferID int64) (int64, error)
 	// CriticalStock lists tracked products whose total available stock is at
 	// or below minimum, scarcest first (assistant bot tool). Capped.
 	CriticalStock(ctx context.Context, branchID int64, limit int) ([]*CriticalItem, error)

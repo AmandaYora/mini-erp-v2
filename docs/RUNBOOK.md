@@ -241,18 +241,20 @@ docker exec minierp-app ./costrebuild --branch-id 1 --commit [--date 2026-10-31]
 ```
 
 Yang dilakukan: (1) menarik ledger terbaru; (2) memutar ulang tiap posisi (produk x varian) berurut id mutasi; harga masuk
-(penerimaan, saldo awal, baris biaya-saja) adalah bukti dan tidak diubah, setiap baris keluar dihitung ulang pada rata-rata
-bergerak pada saat itu; mutasi transfer antar-cabang tidak disentuh (cabang lawan membawa biaya yang sama, tanpa jurnal);
-posisi yang berakhir negatif dilewati dan dilaporkan; (3) untuk commit: menulis ulang baris ledger yang berubah dan memposting
-SATU jurnal koreksi seimbang (`cost_restatement`: Dr Persediaan / Cr HPP bila nilai persediaan naik, sebaliknya bila turun,
-satu pasang baris per produk) dalam satu transaksi, lalu mencatat audit `finance.cost_restatement`.
+(penerimaan, saldo awal, baris biaya-saja, kaki cermin) adalah bukti dan tidak diubah; hanya baris keluar yang dijurnal dari
+ledger (pengiriman, selisih stok kurang, hapus stok, retur beli) yang dihitung ulang pada rata-rata bergerak saat itu, dalam
+rupiah bulat (keluar yang mengosongkan posisi mengambil tepat sisa nilainya); pasangan netral (transfer, pindah lokasi rusak)
+dan dokumen yang dibatalkan tidak disentuh (ADR-0020); posisi yang berakhir negatif dilewati dan dilaporkan; (3) untuk
+commit: menulis ulang baris ledger yang berubah dan memposting SATU jurnal koreksi seimbang (`cost_restatement`: Persediaan
+lawan akun yang dipakai jurnal aslinya: HPP, Selisih Persediaan, Hapus Stok, atau Selisih Retur Beli; Dr Persediaan bila
+nilai persediaan naik, sebaliknya bila turun) dalam satu transaksi, lalu mencatat audit `finance.cost_restatement`.
 
 Gerbang (dilaporkan juga saat dry-run; commit ditolak bila ada yang gagal):
 
 | Gerbang | Arti |
 |---|---|
 | `trial_balance` | total debit = total kredit dan tidak ada jurnal timpang di cabang; diperiksa lagi **di dalam transaksi** setelah jurnal koreksi (gagal = rollback total) |
-| `inventory_recon` | rekonsiliasi K-05 sebelum commit konsisten (selisih dalam toleransi): koreksi menggeser buku dan ledger sebesar sama, jadi selisih bawaan tidak boleh disembunyikan |
+| `inventory_recon` | rekonsiliasi K-05 sebelum commit konsisten (selisih tak terjelaskan dalam toleransi): koreksi menggeser buku dan ledger sebesar sama, jadi selisih bawaan tidak boleh disembunyikan |
 | `pending_documents` | tidak ada dokumen/mutasi yang belum dijurnal (nilainya dibaca dari ledger yang akan dikoreksi; jurnalkan atau abaikan dulu di antrian posting) |
 | `period_open` | periode tanggal jurnal koreksi belum ditutup (`--date`, bawaan hari ini WIB) |
 

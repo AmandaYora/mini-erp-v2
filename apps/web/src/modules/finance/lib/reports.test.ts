@@ -5,8 +5,10 @@ import {
   cashFlowTotals,
   cashRowReconciles,
   integritySummary,
+  inventoryGapHint,
   isOverdue,
 } from "@/modules/finance/lib/reports";
+import type { InventoryRecon } from "@/modules/finance/types";
 
 describe("finance report helpers", () => {
   it("maps age to bucket", () => {
@@ -48,5 +50,17 @@ describe("finance report helpers", () => {
     });
     expect(s).toContain("1 selisih rollup");
     expect(s).toContain("2 jurnal tidak seimbang");
+  });
+
+  it("explains the inventory gap by pending documents before judging it", () => {
+    const base: InventoryRecon = {
+      book: 900_000, ledger: 1_000_000, diff: -100_000, tolerance: 101, pending: 1, pendingValue: 100_000,
+      ignoredValue: 0, unexplained: 0, missingCost: 0, consistent: true,
+    };
+    expect(inventoryGapHint(base)).toMatch(/^Cocok/);
+    expect(inventoryGapHint(base)).toContain("1 dokumen belum dijurnal");
+    const broken = { ...base, pendingValue: 0, unexplained: -100_000, consistent: false };
+    expect(inventoryGapHint(broken)).toMatch(/^Telusuri/);
+    expect(inventoryGapHint(broken)).not.toContain("belum dijurnal");
   });
 });
