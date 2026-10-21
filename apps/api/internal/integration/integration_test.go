@@ -258,6 +258,21 @@ func TestMain(m *testing.M) {
 	// hides exhaustion (Error 1040) on the shared server.
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(10)
+	// Serialise with the ETL tests (they rebuild and truncate the same database):
+	// hold the cross-process advisory lock for the whole run, taken BEFORE the
+	// schema check below. Taking it only after the rebuild let `go test ./...`
+	// run this package's DROP/CREATE concurrently with an ETL package's rebuild
+	// on a fresh database (CI: "table already exists" / "doesn't exist").
+	lockConn, lerr := db.Conn(context.Background())
+	if lerr != nil {
+		fmt.Println("integration: conn kunci:", lerr)
+		os.Exit(1)
+	}
+	var got int
+	if err := lockConn.QueryRowContext(context.Background(), "SELECT GET_LOCK('mini_erp_test_db', 3000)").Scan(&got); err != nil || got != 1 {
+		fmt.Println("integration: kunci database test tidak didapat:", err, got)
+		os.Exit(1)
+	}
 	const migrationsDir = "../../migrations"
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
@@ -326,16 +341,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Println("integration: wire:", err)
 		os.Exit(1)
-	}
-	// Serialise with the ETL tests (they truncate the same database): hold the
-	// cross-process advisory lock for the whole run.
-	lockConn, lerr := db.Conn(context.Background())
-	if lerr == nil {
-		var got int
-		if err := lockConn.QueryRowContext(context.Background(), "SELECT GET_LOCK('mini_erp_test_db', 3000)").Scan(&got); err != nil || got != 1 {
-			fmt.Println("integration: kunci database test tidak didapat:", err, got)
-			os.Exit(1)
-		}
 	}
 	testMods = &mods{db: db, audit: w.Audit, user: w.User, branch: w.Branch,
 		company: w.Company, auth: w.Auth, assistant: w.Assistant, media: w.Media, product: w.Product, party: w.Party,
