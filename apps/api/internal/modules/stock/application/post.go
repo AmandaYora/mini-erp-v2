@@ -246,6 +246,13 @@ func (s *Service) postPosition(ctx context.Context, tx *sql.Tx, ref legRef, e en
 	if exists {
 		return true, nil
 	}
+	if e.direction == "in" {
+		// The location was validated outside the tx; an archive that won
+		// the race since then must not end up holding this stock.
+		if err := assertLocationActiveTx(ctx, tx, s.repo, l.location); err != nil {
+			return false, err
+		}
+	}
 
 	delta := l.qty
 	var reservedDelta float64

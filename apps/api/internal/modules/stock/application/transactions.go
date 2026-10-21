@@ -475,56 +475,65 @@ func (s *Service) Adjust(ctx context.Context, actorID, branchID int64, in Adjust
 		}
 		approverOK = true
 	}
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, in.Location); err != nil {
-		return apperror.Internal(err)
-	}
-	bal, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, in.Location)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	if in.Mode == "set" {
-		delta = in.QtyAfter - bal.OnHand
-	}
-	if delta == 0 {
-		return apperror.Validation("", []apperror.FieldError{{Field: "qty", Message: "tidak ada perubahan"}})
-	}
-	abs := delta
-	if abs < 0 {
-		abs = -abs
-	}
-	if (abs > threshold || s.strictAdjust(ctx)) && !approverOK {
-		return &apperror.AppError{Code: apperror.CodeForbidden, Message: "Koreksi melebihi ambang, perlu persetujuan"}
-	}
-	if delta < 0 && bal.Available() < -delta {
-		return apperror.Conflict("Stok tersedia tidak mencukupi untuk koreksi")
-	}
-	direction, mtype := "in", "adjustment"
-	if delta < 0 {
-		direction = "out"
-	}
-	if err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, in.Location,
-		delta, direction, mtype, "adjustment", 0, in.Reason, actorID); err != nil {
-		return apperror.Internal(err)
-	}
-	note := in.Reason
-	if approverOK {
-		note += " (approver: " + in.Approver + ")"
-	}
-	// The trail co-commits with the adjustment (ADR-0011); a failed write
-	// rolls the stock change back.
-	if err := s.audit.LogTx(ctx, tx, auditcontracts.Entry{
-		Action: "stock_adjustments.create", Entity: "stock_adjustment", BranchID: branchID, ActorID: actorID, Note: note,
-		Before: map[string]any{"productId": in.ProductID, "variantId": in.VariantID, "locationId": in.Location, "onHand": bal.OnHand},
-		After:  map[string]any{"onHand": bal.OnHand + delta, "delta": delta, "approved": approverOK},
-	}); err != nil {
-		return apperror.Internal(err)
-	}
-	return tx.Commit()
+	// The company settings are read before the transaction too, so no pooled
+	// connection is pinned while they load.
+	strict := s.strictAdjust(ctx)
+	// One retried transaction (1213/1205), like Post: a deadlock with a
+	// concurrent writer of the position is retried, never a 500.
+	err = dberr.RetryTx(ctx, s.repo.DB(), func(tx *sql.Tx) error {
+		if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, in.Location); err != nil {
+			return err
+		}
+		if _, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, in.Location); err != nil {
+			return err
+		}
+		// Expired holds return their reserved qty first (as Post and Hold do),
+		// so a reduction is not refused over a hold that already lapsed.
+		if err := s.repo.ExpireReservationsTx(ctx, tx, branchID, in.ProductID, in.VariantID, in.Location); err != nil {
+			return err
+		}
+		bal, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, in.Location)
+		if err != nil {
+			return err
+		}
+		delta := delta // per attempt: "set" recomputes it from the live on-hand
+		if in.Mode == "set" {
+			delta = in.QtyAfter - bal.OnHand
+		}
+		if delta == 0 {
+			return apperror.Validation("", []apperror.FieldError{{Field: "qty", Message: "tidak ada perubahan"}})
+		}
+		abs := delta
+		if abs < 0 {
+			abs = -abs
+		}
+		if (abs > threshold || strict) && !approverOK {
+			return &apperror.AppError{Code: apperror.CodeForbidden, Message: "Koreksi melebihi ambang, perlu persetujuan"}
+		}
+		if delta < 0 && bal.Available() < -delta {
+			return apperror.Conflict("Stok tersedia tidak mencukupi untuk koreksi")
+		}
+		direction, mtype := "in", "adjustment"
+		if delta < 0 {
+			direction = "out"
+		}
+		if _, err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, in.Location,
+			delta, direction, mtype, "adjustment", 0, in.Reason, actorID); err != nil {
+			return err
+		}
+		note := in.Reason
+		if approverOK {
+			note += " (approver: " + in.Approver + ")"
+		}
+		// The trail co-commits with the adjustment (ADR-0011); a failed write
+		// rolls the stock change back.
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: "stock_adjustments.create", Entity: "stock_adjustment", BranchID: branchID, ActorID: actorID, Note: note,
+			Before: map[string]any{"productId": in.ProductID, "variantId": in.VariantID, "locationId": in.Location, "onHand": bal.OnHand},
+			After:  map[string]any{"onHand": bal.OnHand + delta, "delta": delta, "approved": approverOK},
+		})
+	})
+	return asAppErrorOrNil(err)
 }
 
 // strictAdjust: every adjustment needs an approver unless the company turned
@@ -671,33 +680,37 @@ func (s *Service) moveDamaged(ctx context.Context, actorID, branchID int64, in D
 	if strings.TrimSpace(in.Reason) != "" {
 		note += ": " + strings.TrimSpace(in.Reason)
 	}
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, from); err != nil {
-		return apperror.Internal(err)
-	}
-	if err := s.repo.ExpireReservationsTx(ctx, tx, branchID, in.ProductID, in.VariantID, from); err != nil {
-		return apperror.Internal(err)
-	}
-	bal, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, from)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	if bal.Available() < in.Qty {
-		return apperror.Conflict("Stok tersedia tidak mencukupi")
-	}
-	if err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, from,
-		-in.Qty, "out", "out", "damaged", 0, note, actorID); err != nil {
-		return apperror.Internal(err)
-	}
-	if err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, to,
-		in.Qty, "in", "in", "damaged", 0, note, actorID); err != nil {
-		return apperror.Internal(err)
-	}
-	return tx.Commit()
+	// The two legs share one ref_id — the out-leg's own movement id, written in
+	// this same transaction — so finance pairs the in-leg with exactly its
+	// out-leg (by ref_type + ref_id, like a transfer) even when two damaged
+	// moves of the same product interleave.
+	err = dberr.RetryTx(ctx, s.repo.DB(), func(tx *sql.Tx) error {
+		if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, from); err != nil {
+			return err
+		}
+		if err := s.repo.ExpireReservationsTx(ctx, tx, branchID, in.ProductID, in.VariantID, from); err != nil {
+			return err
+		}
+		bal, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, from)
+		if err != nil {
+			return err
+		}
+		if bal.Available() < in.Qty {
+			return apperror.Conflict("Stok tersedia tidak mencukupi")
+		}
+		outID, err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, from,
+			-in.Qty, "out", "out", contracts.RefDamaged, 0, note, actorID)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SetMovementRefTx(ctx, tx, outID, outID); err != nil {
+			return err
+		}
+		_, err = postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, to,
+			in.Qty, "in", "in", contracts.RefDamaged, outID, note, actorID)
+		return err
+	})
+	return asAppErrorOrNil(err)
 }
 
 // damagedArrival books goods that came in already damaged: one inflow at the
@@ -705,22 +718,18 @@ func (s *Service) moveDamaged(ctx context.Context, actorID, branchID int64, in D
 // the out+in pair of a damaged move: it adds value to the books (finance
 // journals it like a stock surplus), while a move is value-neutral.
 func (s *Service) damagedArrival(ctx context.Context, actorID, branchID, damagedID int64, in DamagedInput) error {
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damagedID); err != nil {
-		return apperror.Internal(err)
-	}
-	if _, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damagedID); err != nil {
-		return apperror.Internal(err)
-	}
-	if err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, damagedID,
-		in.Qty, "in", "in", contracts.RefDamagedArrival, 0, "Rusak (tanpa lokasi asal): "+strings.TrimSpace(in.Reason), actorID); err != nil {
-		return apperror.Internal(err)
-	}
-	return tx.Commit()
+	err := dberr.RetryTx(ctx, s.repo.DB(), func(tx *sql.Tx) error {
+		if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damagedID); err != nil {
+			return err
+		}
+		if _, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damagedID); err != nil {
+			return err
+		}
+		_, err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, damagedID,
+			in.Qty, "in", "in", contracts.RefDamagedArrival, 0, "Rusak (tanpa lokasi asal): "+strings.TrimSpace(in.Reason), actorID)
+		return err
+	})
+	return asAppErrorOrNil(err)
 }
 
 // WriteOff destroys damaged stock (out of the damaged location, no return).
@@ -738,33 +747,28 @@ func (s *Service) WriteOff(ctx context.Context, actorID, branchID int64, in Dama
 	if err != nil {
 		return err
 	}
-	tx, err := s.repo.Begin(ctx)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damaged.ID); err != nil {
-		return apperror.Internal(err)
-	}
-	bal, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damaged.ID)
-	if err != nil {
-		return apperror.Internal(err)
-	}
-	if bal.OnHand < in.Qty {
-		return apperror.Conflict("Stok rusak tidak mencukupi")
-	}
-	if err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, damaged.ID,
-		-in.Qty, "out", "out", "write_off", 0, "Hapus: "+strings.TrimSpace(in.Reason), actorID); err != nil {
-		return apperror.Internal(err)
-	}
-	if err := s.audit.LogTx(ctx, tx, auditcontracts.Entry{
-		Action: "stock_damaged.write_off", Entity: "stock_damaged", BranchID: branchID, ActorID: actorID, Note: in.Reason,
-		Before: map[string]any{"productId": in.ProductID, "variantId": in.VariantID, "onHand": bal.OnHand},
-		After:  map[string]any{"onHand": bal.OnHand - in.Qty, "written_off": in.Qty},
-	}); err != nil {
-		return apperror.Internal(err)
-	}
-	return tx.Commit()
+	err = dberr.RetryTx(ctx, s.repo.DB(), func(tx *sql.Tx) error {
+		if err := s.repo.EnsureBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damaged.ID); err != nil {
+			return err
+		}
+		bal, err := s.repo.GetBalanceTx(ctx, tx, branchID, in.ProductID, in.VariantID, damaged.ID)
+		if err != nil {
+			return err
+		}
+		if bal.OnHand < in.Qty {
+			return apperror.Conflict("Stok rusak tidak mencukupi")
+		}
+		if _, err := postLocked(ctx, tx, s.repo, branchID, in.ProductID, in.VariantID, damaged.ID,
+			-in.Qty, "out", "out", "write_off", 0, "Hapus: "+strings.TrimSpace(in.Reason), actorID); err != nil {
+			return err
+		}
+		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+			Action: "stock_damaged.write_off", Entity: "stock_damaged", BranchID: branchID, ActorID: actorID, Note: in.Reason,
+			Before: map[string]any{"productId": in.ProductID, "variantId": in.VariantID, "onHand": bal.OnHand},
+			After:  map[string]any{"onHand": bal.OnHand - in.Qty, "written_off": in.Qty},
+		})
+	})
+	return asAppErrorOrNil(err)
 }
 
 // DamagedList lists nonzero positions at the branch damaged location.

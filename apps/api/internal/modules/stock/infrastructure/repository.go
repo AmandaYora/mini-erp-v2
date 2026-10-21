@@ -100,12 +100,51 @@ func (r *Repository) ListLocations(ctx context.Context, branchID int64, status s
 	return out, rows.Err()
 }
 
+// rowQuerier is what *sql.DB and *sql.Tx share for single-row reads.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // HasActiveChildren reports whether the location parents any active location.
 func (r *Repository) HasActiveChildren(ctx context.Context, id int64) (bool, error) {
+	return hasActiveChildren(ctx, r.db, id)
+}
+
+// HasActiveChildrenTx is HasActiveChildren inside the caller's tx.
+func (r *Repository) HasActiveChildrenTx(ctx context.Context, tx *sql.Tx, id int64) (bool, error) {
+	return hasActiveChildren(ctx, tx, id)
+}
+
+func hasActiveChildren(ctx context.Context, q rowQuerier, id int64) (bool, error) {
 	var n int
-	err := r.db.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM stock_locations WHERE parent_id = ? AND status = 'active'", id).Scan(&n)
 	return n > 0, err
+}
+
+// LockLocationTx reads a location locking its row (FOR UPDATE); nil when
+// missing. Archiving holds this lock while it checks the location is empty.
+func (r *Repository) LockLocationTx(ctx context.Context, tx *sql.Tx, id int64) (*contracts.Location, error) {
+	l := &contracts.Location{}
+	err := scanLocation(tx.QueryRowContext(ctx,
+		"SELECT "+locationColumns+" FROM stock_locations WHERE id = ? FOR UPDATE", id), l)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return l, err
+}
+
+// LocationStatusTx reads a location's status under a shared lock, so stock
+// written into it cannot interleave with an archive (which takes the row
+// exclusively): either the archive waits for this tx and then sees the
+// stock, or this read waits for the archive and sees 'archived'.
+func (r *Repository) LocationStatusTx(ctx context.Context, tx *sql.Tx, id int64) (string, error) {
+	var status string
+	err := tx.QueryRowContext(ctx, "SELECT status FROM stock_locations WHERE id = ? FOR SHARE", id).Scan(&status)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return status, err
 }
 
 // IsLeaf reports whether the location has no active children. Only leaves
@@ -229,6 +268,14 @@ func (r *Repository) SetLocationStatus(ctx context.Context, id int64, status str
 	return err
 }
 
+// SetLocationStatusTx is SetLocationStatus inside the caller's tx.
+func (r *Repository) SetLocationStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string, actorID int64) error {
+	_, err := tx.ExecContext(ctx,
+		"UPDATE stock_locations SET status = ?, updated_at = UTC_TIMESTAMP(6), updated_by = ? WHERE id = ?",
+		status, actorID, id)
+	return err
+}
+
 // EnsureSystemLocation returns the branch's system location for kind,
 // creating it idempotently ("pastikan ada", never "buat ulang").
 // kind is "default" (code GDG-<branch?>) or "damaged".
@@ -265,8 +312,17 @@ func (r *Repository) RenameLocation(ctx context.Context, id int64, name string) 
 
 // LocationHasBalances reports whether any nonzero position references it.
 func (r *Repository) LocationHasBalances(ctx context.Context, id int64) (bool, error) {
+	return locationHasBalances(ctx, r.db, id)
+}
+
+// LocationHasBalancesTx is LocationHasBalances inside the caller's tx.
+func (r *Repository) LocationHasBalancesTx(ctx context.Context, tx *sql.Tx, id int64) (bool, error) {
+	return locationHasBalances(ctx, tx, id)
+}
+
+func locationHasBalances(ctx context.Context, q rowQuerier, id int64) (bool, error) {
 	var n int
-	err := r.db.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM stock_balances WHERE location_id = ? AND (on_hand <> 0 OR reserved <> 0)", id).Scan(&n)
 	return n > 0, err
 }
@@ -324,11 +380,17 @@ type MovementRow struct {
 // (ref_type, ref_id, position, direction) surfaces as MySQL 1062; Post treats
 // that as a replay.
 func (r *Repository) InsertMovementTx(ctx context.Context, tx *sql.Tx, m MovementRow) error {
+	_, err := r.InsertMovementIDTx(ctx, tx, m)
+	return err
+}
+
+// InsertMovementIDTx is InsertMovementTx returning the new movement id.
+func (r *Repository) InsertMovementIDTx(ctx context.Context, tx *sql.Tx, m MovementRow) (int64, error) {
 	moved := m.MovedAt
 	if moved.IsZero() {
 		moved = time.Now()
 	}
-	_, err := tx.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO stock_movements
 		 (branch_id, product_id, variant_id, location_id, direction, movement_type,
 		  qty_base, balance_before, balance_after, unit_cost, ref_type, ref_id, notes, created_by, moved_at)
@@ -336,6 +398,18 @@ func (r *Repository) InsertMovementTx(ctx context.Context, tx *sql.Tx, m Movemen
 		m.BranchID, m.ProductID, m.VariantID, m.LocationID, m.Direction, m.MovementType,
 		m.Qty, m.Before, m.After, nullPositive(m.UnitCost), m.RefType, dbutil.NullIfZero(m.RefID), dbutil.NullIfEmpty(m.Notes), m.ActorID,
 		moved.UTC().Format("2006-01-02 15:04:05.000000"))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// SetMovementRefTx gives a document-less movement its pair id afterwards (a
+// damaged move's out-leg takes its own id, see moveDamaged). Only a row still
+// without a ref_id is touched.
+func (r *Repository) SetMovementRefTx(ctx context.Context, tx *sql.Tx, id, refID int64) error {
+	_, err := tx.ExecContext(ctx,
+		"UPDATE stock_movements SET ref_id = ? WHERE id = ? AND ref_id IS NULL", refID, id)
 	return err
 }
 
@@ -490,70 +564,81 @@ func (r *Repository) GetBalanceTx(ctx context.Context, tx *sql.Tx, branchID, pro
 }
 
 // ExpireReservationsTx sweeps expired active holds for a position, returning
-// the reserved quantity to balances. It takes NO gap locks: the SELECT runs
-// unlocked and each UPDATE is conditional (WHERE status='active'), so only
-// the winner of a concurrent sweep decrements. Never SELECT ... FOR UPDATE
-// here — the resulting gap locks would block this same flow's later INSERT
-// into stock_reservations on a different connection (self-deadlock).
+// the reserved quantity to balances. The candidate list is read unlocked (a
+// range locking read here could block this same flow's later INSERT into
+// stock_reservations); each candidate is then re-read and flipped by
+// ExpireHoldTx under its own row lock, so a hold revived or consumed since the
+// list was read is left alone and only what is really expired is returned.
 func (r *Repository) ExpireReservationsTx(ctx context.Context, tx *sql.Tx, branchID, productID, variantID, locationID int64) error {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, qty_remaining, location_id FROM stock_reservations
+		`SELECT id FROM stock_reservations
 		 WHERE branch_id = ? AND product_id = ? AND variant_id = ?
 		   AND status = 'active' AND expires_at <= UTC_TIMESTAMP(6)`,
 		branchID, productID, variantID)
 	if err != nil {
 		return err
 	}
-	type expired struct {
-		id       int64
-		qty      float64
-		location sql.NullInt64
-	}
-	var list []expired
+	var ids []int64
 	for rows.Next() {
-		var e expired
-		var qty string
-		if err := rows.Scan(&e.id, &qty, &e.location); err != nil {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		e.qty = dbutil.ParseDecimal(qty)
-		list = append(list, e)
+		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
 		return err
 	}
 	_ = rows.Close()
-	for _, e := range list {
-		res, err := tx.ExecContext(ctx,
-			"UPDATE stock_reservations SET status = 'expired' WHERE id = ? AND status = 'active'",
-			e.id)
+	for _, id := range ids {
+		qty, location, won, err := r.ExpireHoldTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		won, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if won == 0 || !e.location.Valid {
+		if !won || !location.Valid {
 			continue
 		}
-		if err := r.ensureBalanceTxLoc(ctx, tx, branchID, productID, variantID, e.location.Int64); err != nil {
+		if err := r.EnsureBalanceTx(ctx, tx, branchID, productID, variantID, location.Int64); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE stock_balances SET reserved = reserved - ?
-			 WHERE branch_id = ? AND product_id = ? AND variant_id = ? AND location_id = ?`,
-			e.qty, branchID, productID, variantID, e.location.Int64); err != nil {
+		if err := r.AddBalanceTx(ctx, tx, branchID, productID, variantID, location.Int64, 0, -qty); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *Repository) ensureBalanceTxLoc(ctx context.Context, tx *sql.Tx, branchID, productID, variantID, locationID int64) error {
-	return r.EnsureBalanceTx(ctx, tx, branchID, productID, variantID, locationID)
+// ExpireHoldTx flips one hold to 'expired' when it is still active AND past
+// its expiry, returning the quantity it held (to subtract from reserved) and
+// its location. The row is locked by primary key first (a record lock, no
+// gap), so the quantity is the hold's current one and a hold a concurrent
+// Hold revived (new expires_at) is never killed. won is false when there was
+// nothing to expire.
+func (r *Repository) ExpireHoldTx(ctx context.Context, tx *sql.Tx, id int64) (qty float64, location sql.NullInt64, won bool, err error) {
+	var remaining string
+	err = tx.QueryRowContext(ctx,
+		`SELECT qty_remaining, location_id FROM stock_reservations
+		 WHERE id = ? AND status = 'active' AND expires_at <= UTC_TIMESTAMP(6) FOR UPDATE`, id).
+		Scan(&remaining, &location)
+	if err == sql.ErrNoRows {
+		return 0, location, false, nil
+	}
+	if err != nil {
+		return 0, location, false, err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE stock_reservations SET status = 'expired'
+		 WHERE id = ? AND status = 'active' AND expires_at <= UTC_TIMESTAMP(6)`, id)
+	if err != nil {
+		return 0, location, false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return 0, location, false, err
+	}
+	return dbutil.ParseDecimal(remaining), location, true, nil
 }
 
 // BalancesByLocation lists nonzero positions at one location.

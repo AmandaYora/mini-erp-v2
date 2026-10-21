@@ -54,7 +54,7 @@ sistem lama dengan batas yang eksplisit. Struktur folder tiap modul mengikuti
 | `branch` | Direktori cabang + penomoran dokumen per cabang | `BranchClient.GetByID`, `BranchClient.NextDocumentNumber(kind)` | 04 |
 | `product` | Katalog produk, kategori, varian, UOM & faktor konversi | `ProductClient.GetByID`, `ProductClient.ResolveUOM` | 05 |
 | `party` | Customer, supplier, alamat kirim, member type & harga member | `PartyClient.GetByID`, `PricingClient.Quote` | 06, 07 |
-| `stock` | Lokasi stok, saldo & mutasi, transfer, penyesuaian, saldo awal | `StockClient.GetBalance`, `StockClient.Post/Reverse`, `StockClient.Hold/Release/Consume`, `StockClient.Allocate` | 16 |
+| `stock` | Lokasi stok, saldo & mutasi, transfer, penyesuaian, saldo awal | `StockClient.GetBalance`, `StockClient.Post/Reverse`, `StockClient.Hold/Release`, `StockClient.Allocate` | 16 |
 | `purchasing` | Order pembelian ke supplier | `PurchaseOrderClient.GetByID` | 08 |
 | `sales` | Order penjualan ke customer (kanal reguler & POS) | `SalesOrderClient.GetByID` | 09, 15 (kanal) |
 | `goodsreceipt` | Penerimaan barang atas PO | `GoodsReceiptClient.GetByID` | 10 |

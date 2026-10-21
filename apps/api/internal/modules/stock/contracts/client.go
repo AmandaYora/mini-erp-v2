@@ -116,8 +116,6 @@ type StockClient interface {
 	// Release frees a reservation by key (idempotent: unknown keys succeed).
 	// branchID > 0 scopes it to that branch; 0 = internal, unscoped.
 	Release(ctx context.Context, actorID, branchID int64, key string) error
-	// Consume converts reserved qty into a sale outflow (partial allowed).
-	Consume(ctx context.Context, key string, qty float64, refType string, refID int64, actorID int64) error
 	// Post writes a whole document's movements in one transaction, ordered
 	// by position (deadlock-safe), retried on 1213/1205, idempotent per
 	// document. A replay is a successful no-op (PostResult.Replayed).
