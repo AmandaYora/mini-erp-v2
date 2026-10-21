@@ -9,6 +9,7 @@ const accounts = vi.fn();
 const previewOpening = vi.fn();
 const postOpening = vi.fn();
 const completeOpening = vi.fn();
+const mappings = vi.fn();
 vi.mock("@/modules/finance/services/finance.service", () => ({
   financeService: {
     openingStatus: (...a: unknown[]) => openingStatus(...a),
@@ -17,6 +18,7 @@ vi.mock("@/modules/finance/services/finance.service", () => ({
     previewOpening: (...a: unknown[]) => previewOpening(...a),
     postOpening: (...a: unknown[]) => postOpening(...a),
     completeOpening: (...a: unknown[]) => completeOpening(...a),
+    mappings: (...a: unknown[]) => mappings(...a),
   },
 }));
 
@@ -31,7 +33,8 @@ const inventory = {
 };
 
 beforeEach(() => {
-  for (const m of [openingStatus, openingInventory, accounts, previewOpening, postOpening, completeOpening]) m.mockReset();
+  for (const m of [openingStatus, openingInventory, accounts, previewOpening, postOpening, completeOpening, mappings]) m.mockReset();
+  mappings.mockResolvedValue({});
   openingStatus.mockResolvedValue(null);
   openingInventory.mockResolvedValue(inventory);
   accounts.mockResolvedValue([]);

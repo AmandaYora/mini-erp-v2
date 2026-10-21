@@ -328,25 +328,15 @@ func (h *Handler) Reverse(w http.ResponseWriter, r *http.Request) {
 // Manual handles POST /api/v1/finance/journals/manual.
 func (h *Handler) Manual(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Date  string `json:"date"`
-		Memo  string `json:"memo" validate:"required"`
-		Lines []struct {
-			AccountCode string `json:"accountCode" validate:"required"`
-			Debit       int64  `json:"debit"`
-			Credit      int64  `json:"credit"`
-		} `json:"lines" validate:"required"`
+		Date  string     `json:"date"`
+		Memo  string     `json:"memo" validate:"required"`
+		Lines []legInput `json:"lines" validate:"required"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
 		return
 	}
-	lines := make([]application.ManualLine, 0, len(in.Lines))
-	for _, l := range in.Lines {
-		lines = append(lines, application.ManualLine{
-			AccountCode: l.AccountCode, Debit: l.Debit, Credit: l.Credit,
-		})
-	}
-	e, err := h.svc.Manual(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.Date, in.Memo, lines)
+	e, err := h.svc.Manual(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.Date, in.Memo, toManualLines(in.Lines))
 	if err != nil {
 		response.FailErr(w, err)
 		return

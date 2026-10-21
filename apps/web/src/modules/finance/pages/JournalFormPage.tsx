@@ -13,21 +13,34 @@ import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { financeService } from "@/modules/finance/services/finance.service";
 import { useJournalDraft } from "@/modules/finance/hooks/use-journal-draft";
-import { draftDifference, draftTotals, isDraftBalanced, parseJournalDraft } from "@/modules/finance/lib/journal-lines";
+import {
+  draftDifference,
+  draftTotals,
+  isDraftBalanced,
+  parseJournalDraft,
+  partyAccountsFromMappings,
+} from "@/modules/finance/lib/journal-lines";
 import { JournalLinesEditor } from "@/modules/finance/components/JournalLinesEditor";
-import type { Account } from "@/modules/finance/types";
+import type { Account, AccountMappings } from "@/modules/finance/types";
 
 /**
  * Jurnal manual (T3, halaman penuh /finance/journals/new). Akun dipilih menurut kode; jurnal harus
  * seimbang — footer menampilkan selisih debit − kredit (merah bila ≠ 0) dan menonaktifkan Simpan.
+ * Baris ke akun kendali per pihak (menurut pemetaan akun) wajib memilih pelanggan/pemasok.
  */
 export default function JournalFormPage() {
   usePageCrumb("Jurnal manual");
   const navigate = useNavigate();
-  const { data: accounts, loading, error, reload } = useAsyncData(
-    () => financeService.accounts("active").then((a) => a ?? ([] as Account[])),
+  const { data, loading, error, reload } = useAsyncData(
+    () =>
+      Promise.all([
+        financeService.accounts("active").then((a) => a ?? ([] as Account[])),
+        // Tanpa pemetaan pemilih pihak tak muncul; backend tetap menolak baris tanpa pihak.
+        financeService.mappings().catch(() => ({}) as AccountMappings),
+      ]).then(([accounts, maps]) => ({ accounts, partyAccounts: partyAccountsFromMappings(maps) })),
     [],
   );
+  const accounts = data?.accounts;
 
   const draft = useJournalDraft();
   const [date, setDate] = useState(todayWIB());
@@ -42,7 +55,7 @@ export default function JournalFormPage() {
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const parsed = parseJournalDraft({ date, memo, lines: draft.lines });
+    const parsed = parseJournalDraft({ date, memo, lines: draft.lines, partyAccounts: data?.partyAccounts });
     if (!parsed.ok) {
       setErrors(parsed.errors);
       return;
@@ -54,7 +67,7 @@ export default function JournalFormPage() {
       const res = await financeService.manual({
         date: parsed.values.date,
         memo: parsed.values.memo,
-        lines: parsed.values.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit })),
+        lines: parsed.values.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit, partyId: l.partyId })),
       });
       toast.fromServer(res.message, "Jurnal manual dicatat", res.data.number);
       navigate(`${ROUTE_PATHS.financeJournals}/${res.data.id}`);
@@ -106,7 +119,12 @@ export default function JournalFormPage() {
                 Menyiapkan daftar akun…
               </p>
             ) : (
-              <JournalLinesEditor draft={draft} accounts={accounts ?? []} errors={errors} />
+              <JournalLinesEditor
+                draft={draft}
+                accounts={accounts ?? []}
+                errors={errors}
+                partyAccounts={data?.partyAccounts}
+              />
             )}
           </SectionCard>
 

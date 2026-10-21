@@ -12,9 +12,10 @@ import (
 
 func manual(t *testing.T, branchID int64, date string, amount int64, cashIn bool) {
 	t.Helper()
-	lines := []financeapp.ManualLine{{AccountCode: "1000", Debit: amount}, {AccountCode: "2000", Credit: amount}}
+	// Counter-leg on equity: a Hutang leg would need a supplier (F5).
+	lines := []financeapp.ManualLine{{AccountCode: "1000", Debit: amount}, {AccountCode: "3000", Credit: amount}}
 	if !cashIn {
-		lines = []financeapp.ManualLine{{AccountCode: "1000", Credit: amount}, {AccountCode: "2000", Debit: amount}}
+		lines = []financeapp.ManualLine{{AccountCode: "1000", Credit: amount}, {AccountCode: "3000", Debit: amount}}
 	}
 	if _, err := testMods.finance.Service().Manual(ctx(), 0, branchID, date, "uji laporan", lines); err != nil {
 		t.Fatalf("manual %s: %v", date, err)

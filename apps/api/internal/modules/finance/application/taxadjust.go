@@ -91,7 +91,7 @@ func (s *Service) createTaxAdjustment(ctx context.Context, actorID, branchID int
 	if err != nil {
 		return nil, err
 	}
-	lines, err := s.resolveOpeningLines(ctx, in)
+	lines, err := s.resolveOpeningLines(ctx, in, partyOptional)
 	if err != nil {
 		return nil, err
 	}

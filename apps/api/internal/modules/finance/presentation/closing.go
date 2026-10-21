@@ -17,18 +17,21 @@ import (
 // state and typed journals, no new tables. Bodies mirror the Manual handler
 // shape so clients reuse one leg editor.
 
-// legInput is one account leg by code (opening + tax adjustments share it).
+// legInput is one account leg by code (manual, opening and tax adjustments
+// share it). partyId names the customer/supplier of a Piutang/Hutang/Uang Muka
+// leg; the service decides where it is required (F5).
 type legInput struct {
 	AccountCode string `json:"accountCode" validate:"required"`
 	Debit       int64  `json:"debit"`
 	Credit      int64  `json:"credit"`
+	PartyID     int64  `json:"partyId"`
 }
 
 func toManualLines(raw []legInput) []application.ManualLine {
 	lines := make([]application.ManualLine, 0, len(raw))
 	for _, l := range raw {
 		lines = append(lines, application.ManualLine{
-			AccountCode: l.AccountCode, Debit: l.Debit, Credit: l.Credit,
+			AccountCode: l.AccountCode, Debit: l.Debit, Credit: l.Credit, PartyID: l.PartyID,
 		})
 	}
 	return lines

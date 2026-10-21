@@ -322,9 +322,13 @@ type ManualLine struct {
 	AccountCode string
 	Debit       int64
 	Credit      int64
+	// PartyID is the customer/supplier of a leg on a per-party control
+	// account (partyControlKeys); 0 on every other leg (see lineParty).
+	PartyID int64
 }
 
 // Manual books a free-form balanced entry (adjustments, openings, corrections).
+// Legs on Piutang/Hutang/Uang Muka must name their party (F5).
 func (s *Service) Manual(ctx context.Context, actorID, branchID int64, date, memo string, in []ManualLine) (*contracts.JournalEntry, error) {
 	if strings.TrimSpace(memo) == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "memo", Message: "wajib diisi"}})
@@ -342,6 +346,10 @@ func (s *Service) Manual(ctx context.Context, actorID, branchID int64, date, mem
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
+	controls, err := s.partyControls(ctx)
+	if err != nil {
+		return nil, err
+	}
 	lines := make([]*contracts.JournalLine, 0, len(in))
 	for i, l := range in {
 		a, err := s.repo.AccountByCode(ctx, strings.ToUpper(strings.TrimSpace(l.AccountCode)))
@@ -357,7 +365,11 @@ func (s *Service) Manual(ctx context.Context, actorID, branchID int64, date, mem
 				"baris %d: akun %s %s hanya bergerak bersama mutasi stok (penerimaan, pengiriman, retur, koreksi stok); "+
 					"jurnal manual ke akun ini membuat nilai buku dan nilai stok tidak cocok", i+1, a.Code, a.Name)}})
 		}
-		lines = append(lines, &contracts.JournalLine{AccountID: a.ID, Debit: l.Debit, Credit: l.Credit})
+		party, err := s.lineParty(ctx, controls, partyRequired, i, a, l.PartyID)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, &contracts.JournalLine{AccountID: a.ID, Debit: l.Debit, Credit: l.Credit, PartyID: party})
 	}
 	entry, err := s.insertEntry(ctx, actorID, branchID, date, strings.TrimSpace(memo), "", 0, lines, "journals.manual")
 	if err != nil {

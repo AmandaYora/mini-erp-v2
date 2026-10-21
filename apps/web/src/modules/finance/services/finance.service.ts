@@ -8,7 +8,8 @@
 // - GET /api/v1/finance/journals?from&to&accountId&page&limit → paginasi
 //   entryView TANPA lines (perm finance.view).
 // - POST /api/v1/finance/journals/manual {date?, memo, lines:[{accountCode,
-//   debit, credit}]} → entryView+lines (perm finance.manage).
+//   debit, credit, partyId?}]} → entryView+lines (perm finance.manage).
+//   partyId wajib di baris akun kendali per pihak (Piutang/Hutang/Uang Muka).
 // - GET /api/v1/finance/journals/:id → entryView+lines.
 // - POST /api/v1/finance/journals/:id/reverse {reason} → entryView+lines.
 // - GET /api/v1/finance/accounts?status → accountView[].
@@ -96,6 +97,8 @@ export interface ManualLinePayload {
   accountCode: string;
   debit: number;
   credit: number;
+  /** Hanya di baris akun kendali per pihak (Piutang/Hutang/Uang Muka). */
+  partyId?: number;
 }
 
 export interface ExpenseCreatePayload {

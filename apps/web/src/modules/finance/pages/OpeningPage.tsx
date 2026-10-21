@@ -22,12 +22,19 @@ import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { financeService } from "@/modules/finance/services/finance.service";
 import { useJournalDraft } from "@/modules/finance/hooks/use-journal-draft";
-import { draftDifference, draftTotals, isDraftBalanced, isEntryBalanced, parseJournalDraft } from "@/modules/finance/lib/journal-lines";
+import {
+  draftDifference,
+  draftTotals,
+  isDraftBalanced,
+  isEntryBalanced,
+  parseJournalDraft,
+  partyAccountsFromMappings,
+} from "@/modules/finance/lib/journal-lines";
 import type { ManualJournalValues } from "@/modules/finance/schemas/finance.schema";
 import { JournalLinesEditor } from "@/modules/finance/components/JournalLinesEditor";
 import { BalanceBadge, JournalLinesTable } from "@/modules/finance/components/JournalLinesTable";
 import { MissingCostCard, OpeningInventorySummary } from "@/modules/finance/components/OpeningInventoryCard";
-import type { Account, OpeningInventory, OpeningPreview } from "@/modules/finance/types";
+import type { Account, AccountMappings, OpeningInventory, OpeningPreview } from "@/modules/finance/types";
 
 const STEPS = [
   { key: "draft", label: "Susun baris" },
@@ -49,10 +56,13 @@ export default function OpeningPage() {
         financeService.accounts("active").catch(() => [] as Account[]),
         // Persediaan dihitung server dari stok awal x harga modal (K-05).
         financeService.openingInventory().catch(() => null as OpeningInventory | null),
-      ]).then(([st, acc, inv]) => ({
+        // Akun kendali per pihak (Piutang/Hutang/Uang Muka) wajib memilih pelanggan/pemasok.
+        financeService.mappings().catch(() => ({}) as AccountMappings),
+      ]).then(([st, acc, inv, maps]) => ({
         status: st,
         accounts: acc ?? [],
         inventory: inv,
+        partyAccounts: partyAccountsFromMappings(maps),
       })),
     [],
   );
@@ -83,7 +93,7 @@ export default function OpeningPage() {
           ok: true,
           values: { date: date.trim() || undefined, memo: memo.trim() || "Saldo awal", lines: [] } as unknown as ManualJournalValues,
         }
-      : parseJournalDraft({ date, memo, lines: draft.lines });
+      : parseJournalDraft({ date, memo, lines: draft.lines, partyAccounts: data?.partyAccounts });
     if (!parsed.ok) {
       setErrors(parsed.errors);
       return;
@@ -262,7 +272,7 @@ export default function OpeningPage() {
             description="Tiap baris hanya satu sisi: debit atau kredit. Akun Persediaan jangan diisi — ditambahkan otomatis dari stok awal, lengkap dengan Modal Awal penyeimbangnya; baris yang Anda isi harus seimbang sendiri."
           >
             {errors.lines && <p className="mb-3 text-sm font-medium text-destructive">{errors.lines}</p>}
-            <JournalLinesEditor draft={draft} accounts={accounts} errors={errors} />
+            <JournalLinesEditor draft={draft} accounts={accounts} errors={errors} partyAccounts={data?.partyAccounts} />
           </SectionCard>
           <StickyFooter
             summary={
