@@ -1,4 +1,4 @@
-# ADR-0022: Koreksi harga modal lewat web — hitung ulang HPP dan revaluasi
+# ADR-0023: Mekanisme koreksi salah input lewat web
 
 ## Status
 Accepted (2026-10-21). Melengkapi ADR-0020 (invarian persediaan) dan ADR-0021 (kunci biaya lintas
