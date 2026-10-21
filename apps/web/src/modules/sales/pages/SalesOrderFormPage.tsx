@@ -41,7 +41,7 @@ import {
 } from "@/modules/sales/services/sales.service";
 import type { PaymentTerms, SalesOrderPayload } from "@/modules/sales/types";
 import { pricingSourceLabel } from "@/modules/sales/types";
-import { belowMinPrice, estimateLine } from "@/modules/sales/lib/estimate";
+import { belowMinPrice, estimateLine, priceForUnit } from "@/modules/sales/lib/estimate";
 import {
   DEFAULT_VAT_RATE,
   estimateTax,
@@ -74,9 +74,16 @@ interface LineRow {
   qty: number;
   discountPct: number;
   discountNominal: number;
+  /** Harga katalog per SATUAN JUAL produk; harga untuk satuan baris lewat rowCatalogPrice. */
   catalogPrice: number;
-  /** Harga jual minimum produk per satuan (0/kosong = tanpa minimum); bantuan tampilan saja. */
+  /** Harga jual minimum per SATUAN JUAL (0/kosong = tanpa minimum); bantuan tampilan saja. */
   minPrice?: number;
+  /**
+   * Faktor ke satuan dasar per satuan yang ditawarkan, dan faktor satuan jual.
+   * Opsional: draf lama yang dipulihkan dari peramban tidak membawanya (skala 1).
+   */
+  uomFactors?: Record<string, number>;
+  salesFactor?: number;
   /** Input harga manual (string agar kosong = harga server). */
   manualPrice: string;
   discountReason: string;
@@ -134,12 +141,41 @@ function newClientRef(): string {
   }
 }
 
+/** Faktor satuan produk (urutan sama dengan server Product.UOMFactor: dasar, beli, jual). */
+function uomFactorsOf(p: Product): Record<string, number> {
+  const out: Record<string, number> = {};
+  const add = (u: string, f: number) => {
+    if (u.trim() !== "" && out[u] === undefined) out[u] = f;
+  };
+  add(p.baseUom, 1);
+  add(p.purchaseUom, p.purchaseFactor);
+  add(p.salesUom, p.salesFactor);
+  return out;
+}
+
+/** Faktor satuan baris & satuan jual; tanpa data faktor = skala 1 (harga apa adanya). */
+function rowUnitFactors(r: LineRow): [number, number] {
+  const sales = r.salesFactor ?? 0;
+  return [r.uomFactors?.[r.uom] ?? sales, sales];
+}
+
+/** Harga katalog untuk satuan baris (cermin money.PriceForUnit server). */
+function rowCatalogPrice(r: LineRow): number {
+  return priceForUnit(r.catalogPrice, ...rowUnitFactors(r));
+}
+
+/** Harga minimum untuk satuan baris (0 = tanpa minimum). */
+function rowMinPrice(r: LineRow): number {
+  const min = r.minPrice ?? 0;
+  return min > 0 ? priceForUnit(min, ...rowUnitFactors(r)) : 0;
+}
+
 /** Estimasi satu baris editor (harga manual bila valid, selain itu katalog). */
 function rowEstimate(r: LineRow): number {
   const mp = parseManualPrice(r.manualPrice);
   return estimateLine({
     qty: r.qty,
-    catalogPrice: r.catalogPrice,
+    catalogPrice: rowCatalogPrice(r),
     manualPrice: mp === null || Number.isNaN(mp) ? null : mp,
     discountPct: r.discountPct,
     discountNominal: r.discountNominal,
@@ -353,8 +389,12 @@ export default function SalesOrderFormPage() {
               qty: it.qty,
               discountPct: it.discountPct,
               discountNominal: it.discountNominal,
-              catalogPrice: it.unitPrice,
+              // Harga katalog per satuan jual (detail produk); tanpa detail, harga
+              // tersimpan baris dipakai apa adanya (faktor satuannya sendiri).
+              catalogPrice: d ? d.sellingPrice : it.unitPrice,
               minPrice: d?.minSellingPrice ?? 0,
+              uomFactors: d ? uomFactorsOf(d) : { [it.uom]: it.uomFactor },
+              salesFactor: d ? d.salesFactor : it.uomFactor,
               // Harga manual dipertahankan saat edit; harga member/katalog
               // dikosongkan agar server menghitung ulang.
               manualPrice: it.pricingSource === "manual" ? String(it.unitPrice) : "",
@@ -485,6 +525,8 @@ export default function SalesOrderFormPage() {
           discountNominal: 0,
           catalogPrice: d.sellingPrice,
           minPrice: d.minSellingPrice,
+          uomFactors: uomFactorsOf(d),
+          salesFactor: d.salesFactor,
           manualPrice: "",
           discountReason: "",
           note: "",
@@ -1161,15 +1203,17 @@ export default function SalesOrderFormPage() {
                     if (readOnly) {
                       return r.manualPrice !== "" ? <Money value={Number(r.manualPrice)} /> : pricingSourceLabel(r.pricingSource);
                     }
+                    const catalog = rowCatalogPrice(r);
+                    const minUnit = rowMinPrice(r);
                     const below =
-                      (r.minPrice ?? 0) > 0 &&
+                      minUnit > 0 &&
                       belowMinPrice({
                         qty: r.qty,
-                        catalogPrice: r.catalogPrice,
+                        catalogPrice: catalog,
                         manualPrice: parseManualPrice(r.manualPrice),
                         discountPct: r.discountPct,
                         discountNominal: r.discountNominal,
-                        minPrice: r.minPrice,
+                        minPrice: minUnit,
                         memberPrice: r.pricingSource === "member_rule" && r.manualPrice === "",
                       });
                     return (
@@ -1179,7 +1223,7 @@ export default function SalesOrderFormPage() {
                           min={0}
                           step={1}
                           value={r.manualPrice}
-                          placeholder={String(r.catalogPrice)}
+                          placeholder={String(catalog)}
                           onChange={(e) => updateLine(r.key, { manualPrice: e.target.value })}
                           error={itemErrors.byRow[i]}
                           aria-label={`Harga manual ${r.productLabel}`}
@@ -1190,12 +1234,12 @@ export default function SalesOrderFormPage() {
                           {r.manualPrice === ""
                             ? r.pricingSource === "member_rule"
                               ? "Harga member (aturan)"
-                              : `Katalog ${formatIDR(r.catalogPrice)}`
-                            : `Manual · katalog ${formatIDR(r.catalogPrice)}`}
+                              : `Katalog ${formatIDR(catalog)}`
+                            : `Manual · katalog ${formatIDR(catalog)}`}
                         </p>
-                        {(r.minPrice ?? 0) > 0 && (
+                        {minUnit > 0 && (
                           <p className={below ? "mt-0.5 text-xs font-semibold text-destructive" : "mt-0.5 text-xs text-muted-foreground"}>
-                            Minimum {formatIDR(r.minPrice ?? 0)}/satuan
+                            Minimum {formatIDR(minUnit)}/{r.uom}
                             {below ? " — harga bersih di bawah minimum, server akan menolak" : ""}
                           </p>
                         )}

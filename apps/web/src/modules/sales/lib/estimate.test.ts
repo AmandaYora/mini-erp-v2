@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateLine, estimateTotal } from "@/modules/sales/lib/estimate";
+import { estimateLine, estimateTotal, priceForUnit } from "@/modules/sales/lib/estimate";
 
 describe("estimateLine", () => {
   it("computes net without discount", () => {
@@ -42,5 +42,14 @@ describe("estimateTotal", () => {
   });
   it("is zero for empty cart", () => {
     expect(estimateTotal([])).toBe(0);
+  });
+});
+
+describe("priceForUnit (cermin money.PriceForUnit server)", () => {
+  it("satuan lain dihargai menurut rasio qty dasar", () => {
+    expect(priceForUnit(25000, 36, 1)).toBe(900000); // 1 DUS isi 36 BH
+    expect(priceForUnit(25000, 1, 1)).toBe(25000);
+    expect(priceForUnit(120000, 1, 12)).toBe(10000); // satuan dasar dari pak isi 12
+    expect(priceForUnit(25000, 36, 0)).toBe(25000);
   });
 });

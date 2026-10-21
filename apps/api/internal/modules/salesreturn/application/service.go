@@ -1275,8 +1275,10 @@ func (s *Service) priceReplacements(ctx context.Context, branchID int64, so *sal
 			}
 		}
 		// The replacement is a new sale: catalog price (or an explicit price
-		// no lower than the minimum), taxed like the source order.
-		unitPrice := p.SellingPrice
+		// no lower than the minimum), taxed like the source order. Catalog and
+		// minimum prices are per sales unit; another unit is priced by its
+		// base-qty ratio (the same rule as sales order lines).
+		unitPrice := money.PriceForUnit(p.SellingPrice, factor, p.SalesFactor)
 		if line.UnitPrice != nil {
 			if *line.UnitPrice < 0 {
 				return nil, apperror.Validation("", []apperror.FieldError{{Field: "replacementItems", Message: tag + "harga tidak boleh negatif"}})
@@ -1284,7 +1286,7 @@ func (s *Service) priceReplacements(ctx context.Context, branchID int64, so *sal
 			unitPrice = *line.UnitPrice
 		}
 		net, base, tax, total := money.LineAmounts(line.Qty, unitPrice, 0, 0, so.TaxType, so.TaxRate).Split()
-		if p.MinSellingPrice > 0 && net < money.Round(float64(p.MinSellingPrice)*line.Qty) {
+		if p.MinSellingPrice > 0 && net < money.MinLineNet(p.MinSellingPrice, line.Qty*factor, p.SalesFactor) {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "replacementItems", Message: tag + "harga di bawah harga minimum"}})
 		}
 		out = append(out, &contracts.ReplacementItem{

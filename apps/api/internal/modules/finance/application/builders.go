@@ -190,7 +190,10 @@ func (s *Service) buildGoodsReceipt(ctx context.Context, branchID, receiptID int
 		if !ok {
 			return nil, "", "", apperror.Conflict("Baris penerimaan tak cocok PO")
 		}
-		_, base, tax, _ := money.LineAmounts(pl.Qty, pl.UnitPrice, pl.DiscountPct, pl.DiscountNominal, po.TaxType, po.TaxRate).Split()
+		// The line's own stored tax split (its taxable flag and rate, PO-03),
+		// never a recomputation at the header rate: an exempt line carries no
+		// PPN Masukan and a line rate wins over the order rate.
+		base, tax := pl.TaxBase, pl.TaxAmount
 		// The receipt that completes a line takes the rounding remainder, so the
 		// receipts of one line add up to its value exactly.
 		prior := before[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
@@ -279,7 +282,9 @@ func (s *Service) buildDelivery(ctx context.Context, branchID, noteID int64) ([]
 		if !ok {
 			return nil, "", "", apperror.Conflict("Baris surat jalan tak cocok SO")
 		}
-		_, base, lineTax, _ := money.LineAmounts(sl.Qty, sl.UnitPrice, sl.DiscountPct, sl.DiscountNominal, so.TaxType, so.TaxRate).Split()
+		// The line's own stored tax split: a line marked tax-exempt books no PPN
+		// Keluaran and its receivable equals what the order bills.
+		base, lineTax := sl.TaxBase, sl.TaxAmount
 		// The shipment that completes a line takes the rounding remainder, so the
 		// shipments of one line add up to its value exactly (3 x 1/3 of 100.000
 		// books 33.333 + 33.333 + 33.334, not 99.999).

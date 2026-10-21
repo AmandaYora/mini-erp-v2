@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"mini-erp/internal/modules/finance/infrastructure"
+	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	stockcontracts "mini-erp/internal/modules/stock/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/doclock"
@@ -168,7 +169,8 @@ type movementCost struct {
 //
 // Everything else runs the cost chain:
 //
-//  4. a goods receipt: the PO line's tax base per base unit (exact);
+//  4. a goods receipt: exactly the value its journal debits to Persediaan
+//     (receiptValue: stored line tax bases, pro-rated over partial receipts);
 //  5. an explicit cost hint on the movement (opening balances with a cost): exact;
 //  6. the position's running average while it holds stock — an out that
 //     empties the position takes exactly its remaining value, so a position
@@ -185,8 +187,7 @@ func (s *Service) costOf(ctx context.Context, m *stockcontracts.CostMovement, po
 		return c, err
 	}
 	if m.Direction == "in" && m.RefType == stockcontracts.RefGoodsReceipt {
-		unit, estimated, err := s.receiptUnitCost(ctx, m)
-		return movementCost{value: wholeRupiah(m.QtyBase * unit), estimated: estimated}, err
+		return s.receiptValue(ctx, m)
 	}
 	if m.Direction == "in" && m.UnitCost > 0 {
 		return movementCost{value: wholeRupiah(m.QtyBase * m.UnitCost)}, nil
@@ -312,38 +313,70 @@ func (s *Service) syncTransferSources(ctx context.Context, branchID int64) error
 
 type transferSyncKey struct{}
 
-// receiptUnitCost pro-ratas the PO line net over received base qty — the
-// same economics the GR journal posts, so ledger and books never diverge.
-func (s *Service) receiptUnitCost(ctx context.Context, m *stockcontracts.CostMovement) (float64, bool, error) {
+// receiptValue values a goods-receipt inflow at exactly what the receipt's
+// journal debits to Persediaan for that product (buildGoodsReceipt): each PO
+// line's stored tax base (its own taxable flag and rate), pro-rated over the
+// line's receipts with the completing receipt taking the rounding remainder,
+// summed per product/variant across UOM lines. Several movements of one
+// receipt (one per location) share that value by base qty, cumulatively, so
+// they add up to it to the rupiah — the ledger and the books never diverge
+// (ADR-0020), whatever the UOM mix or the number of partial receipts.
+func (s *Service) receiptValue(ctx context.Context, m *stockcontracts.CostMovement) (movementCost, error) {
 	gr, err := s.goodsreceipt.GetByID(ctx, m.RefID)
 	if err != nil {
-		return 0, false, apperror.Internal(err)
+		return movementCost{}, apperror.Internal(err)
 	}
 	if gr == nil {
-		return 0, true, nil
+		return movementCost{estimated: true}, nil
 	}
 	po, err := s.purchasing.GetByID(ctx, gr.PurchaseOrderID)
 	if err != nil {
-		return 0, false, apperror.Internal(err)
+		return movementCost{}, apperror.Internal(err)
 	}
 	if po == nil {
-		return 0, true, nil
+		return movementCost{estimated: true}, nil
 	}
+	before, err := s.goodsreceipt.PostedQtyBefore(ctx, po.ID, gr.ID)
+	if err != nil {
+		return movementCost{}, apperror.Internal(err)
+	}
+	lines := map[string]*purchasingcontracts.Item{}
 	for _, l := range po.Items {
-		// First matching line wins: per-base economics should agree across
-		// UOMs; inconsistent UOM pricing converges on the first line.
-		//
-		// Tax BASE, not net: PPN Masukan is recoverable, so it is never part
-		// of what a unit costs. For a tax-inclusive PO the net still carries
-		// the tax, which would inflate moving-average cost and, through it,
-		// COGS and margin. This is the same basis buildGoodsReceipt debits to
-		// Persediaan, so the cost ledger and the books cannot diverge.
-		if l.ProductID == m.ProductID && l.VariantID == m.VariantID && l.QtyBase > 0 {
-			_, base, _, _ := money.LineAmounts(l.Qty, l.UnitPrice, l.DiscountPct, l.DiscountNominal, po.TaxType, po.TaxRate).Split()
-			return float64(base) / l.QtyBase, false, nil
+		key := lineKeyOf(l.ProductID, l.VariantID, l.UOM)
+		if _, seen := lines[key]; !seen {
+			lines[key] = l
 		}
 	}
-	return 0, true, nil
+	var total int64
+	var totalQty float64
+	for _, it := range gr.Items {
+		if it.ProductID != m.ProductID || it.VariantID != m.VariantID {
+			continue
+		}
+		key := lineKeyOf(it.ProductID, it.VariantID, it.UOM)
+		pl, ok := lines[key]
+		if !ok {
+			return movementCost{estimated: true}, nil
+		}
+		total += prorateWindow(pl.TaxBase, before[key], it.Qty, pl.Qty)
+		totalQty += it.QtyBase
+	}
+	if totalQty <= positionEpsilon {
+		return movementCost{estimated: true}, nil
+	}
+	doneQty, doneValue, _, err := s.repo.RefCostSum(ctx, m.BranchID, stockcontracts.RefGoodsReceipt, gr.ID, m.ProductID, m.VariantID, "in")
+	if err != nil {
+		return movementCost{}, apperror.Internal(err)
+	}
+	upTo := float64(total)
+	if cum := doneQty + m.QtyBase; cum < totalQty-positionEpsilon {
+		upTo = wholeRupiah(float64(total) * cum / totalQty)
+	}
+	v := upTo - doneValue
+	if v < 0 {
+		v = 0
+	}
+	return movementCost{value: v}, nil
 }
 
 func applyToPositions(positions map[string]*infrastructure.CostPosition, m *stockcontracts.CostMovement, value float64) {

@@ -42,3 +42,14 @@ export function belowMinPrice(row: MinPriceCheck): boolean {
   const net = gross - Math.round((gross * row.discountPct) / 100) - row.discountNominal;
   return net < Math.round(min * row.qty);
 }
+
+/**
+ * Harga katalog, member, dan minimum disimpan per SATUAN JUAL. Baris dalam
+ * satuan lain dihargai menurut rasio qty dasarnya — cermin money.PriceForUnit
+ * server (1 DUS isi 36 = 36 x harga per BH, bukan harga satu BH).
+ */
+export function priceForUnit(salesUnitPrice: number, factor: number, salesFactor: number): number {
+  if (salesFactor <= 0 || factor <= 0 || factor === salesFactor) return salesUnitPrice;
+  return Math.round((salesUnitPrice * factor) / salesFactor);
+}
+

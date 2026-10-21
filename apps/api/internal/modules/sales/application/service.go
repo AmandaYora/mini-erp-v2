@@ -286,8 +286,12 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 		seen[key] = true
 		// Price source: a member rule wins; else a manual price; else the
 		// catalog. The minimum-price floor guards manual/catalog lines but never
-		// member prices (those are rule-governed).
-		unit, source := p.SellingPrice, contracts.PricingCatalog
+		// member prices (those are rule-governed). Catalog, member and minimum
+		// prices are per SALES unit: a line in another unit (e.g. a carton of
+		// the purchase unit) is priced by the unit's base-qty ratio, so one
+		// carton of 36 never sells at the price of one piece.
+		perUnit := func(salesPrice int64) int64 { return money.PriceForUnit(salesPrice, factor, p.SalesFactor) }
+		unit, source := perUnit(p.SellingPrice), contracts.PricingCatalog
 		if q, ok := quoted[line.ProductID]; ok && q.Error != "" && q.Error != "produk tidak ditemukan" {
 			// The member rule could not price this product (empty basis
 			// price, invalid unit conversion...): surface it on the line.
@@ -295,7 +299,7 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 			continue
 		}
 		if q, ok := quoted[line.ProductID]; ok && q.Applied {
-			unit, source = q.MemberPrice, contracts.PricingMemberRule
+			unit, source = perUnit(q.MemberPrice), contracts.PricingMemberRule
 		} else if line.UnitPrice != nil {
 			if *line.UnitPrice < 0 {
 				fail(tag + "harga tidak boleh negatif")
@@ -313,9 +317,8 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 			fail(tag + "total baris negatif")
 			continue
 		}
-		if source != contracts.PricingMemberRule && p.MinSellingPrice > 0 &&
-			net < money.Round(float64(p.MinSellingPrice)*line.Qty) {
-			fail(tag + "harga " + p.Name + " di bawah harga minimum Rp" + strconv.FormatInt(p.MinSellingPrice, 10) + " per satuan dasar")
+		if source != contracts.PricingMemberRule && net < money.MinLineNet(p.MinSellingPrice, line.Qty*factor, p.SalesFactor) {
+			fail(tag + "harga " + p.Name + " di bawah harga minimum Rp" + strconv.FormatInt(p.MinSellingPrice, 10) + " per " + p.SalesUOM)
 			continue
 		}
 		if len(strings.TrimSpace(line.DiscountReason)) > 255 || len(strings.TrimSpace(line.Note)) > 255 {
@@ -337,7 +340,7 @@ func (s *Service) priceLines(ctx context.Context, in OrderInput) ([]pricedLine, 
 				DiscountNominal: line.DiscountNominal, LineTotal: total,
 				StockTracked: p.Tracked && p.Type != "jasa", ItemType: p.Type,
 				VariantName: variantName, VariantCode: variantCode, BaseUOM: p.BaseUOM,
-				PricingSource: source, BasePrice: p.SellingPrice,
+				PricingSource: source, BasePrice: perUnit(p.SellingPrice),
 				DiscountReason: strings.TrimSpace(line.DiscountReason), Note: strings.TrimSpace(line.Note),
 				Taxable: taxable, TaxBase: base, TaxAmount: tax,
 			},
