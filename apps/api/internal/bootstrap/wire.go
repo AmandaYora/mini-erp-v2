@@ -157,6 +157,7 @@ func Wire(db *sql.DB, o Options) (*Modules, error) {
 	m.Payment.SetReverser(m.Finance.Reverser())
 	m.SalesReturn.SetReverser(m.Finance.Reverser())
 	m.PurchaseReturn.SetReverser(m.Finance.Reverser())
+	m.Purchasing.SetCorrectionGate(m.Finance.PurchaseCorrectionGate())
 	// Replacement goods need a known cost (moving average, then catalog price).
 	m.SalesReturn.SetCosts(m.Finance.Finance())
 	// L8 readers: dashboard (finance figures + operational widgets) and

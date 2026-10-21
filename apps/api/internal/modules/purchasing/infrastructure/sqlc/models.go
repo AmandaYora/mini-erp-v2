@@ -35,6 +35,56 @@ type PurchaseOrder struct {
 	PaymentTermDays       sql.NullInt16
 	TaxInvoiceNumber      sql.NullString
 	TaxInvoiceDate        sql.NullTime
+	CancelReason          sql.NullString
+	CancelledAt           sql.NullTime
+	CancelledBy           sql.NullInt64
+	ShortCloseReason      sql.NullString
+	ShortClosedAt         sql.NullTime
+	ShortClosedBy         sql.NullInt64
+}
+
+type PurchaseOrderCorrection struct {
+	ID             int64
+	BranchID       int64
+	OrderID        int64
+	Kind           string
+	CorrectionDate time.Time
+	Reason         string
+	OldGrandTotal  int64
+	NewGrandTotal  int64
+	ValueDelta     int64
+	TaxDelta       int64
+	CreatedAt      time.Time
+	CreatedBy      sql.NullInt64
+}
+
+type PurchaseOrderCorrectionLine struct {
+	ID                 int64
+	CorrectionID       int64
+	OrderItemID        int64
+	ProductID          int64
+	VariantID          int64
+	ProductName        string
+	Uom                string
+	StockTracked       bool
+	ReceivedQty        float64
+	ReceivedQtyBase    float64
+	OldQty             float64
+	NewQty             float64
+	OldUnitPrice       int64
+	NewUnitPrice       int64
+	OldDiscountPct     float64
+	NewDiscountPct     float64
+	OldDiscountNominal int64
+	NewDiscountNominal int64
+	OldTaxBase         int64
+	NewTaxBase         int64
+	OldTaxAmount       int64
+	NewTaxAmount       int64
+	OldLineTotal       int64
+	NewLineTotal       int64
+	ValueDelta         int64
+	TaxDelta           int64
 }
 
 type PurchaseOrderItem struct {

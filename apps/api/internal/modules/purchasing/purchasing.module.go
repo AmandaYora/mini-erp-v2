@@ -7,6 +7,7 @@ import (
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
+	financecontracts "mini-erp/internal/modules/finance/contracts"
 	goodsreceiptcontracts "mini-erp/internal/modules/goodsreceipt/contracts"
 	partycontracts "mini-erp/internal/modules/party/contracts"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
@@ -41,6 +42,12 @@ func NewModule(
 // SetDependents wires the modules built on top of an order (see the service).
 func (m *Module) SetDependents(receipts goodsreceiptcontracts.GoodsReceiptClient, payments paymentcontracts.PaymentClient, returns purchasereturncontracts.PurchaseReturnClient) {
 	m.svc.SetDependents(receipts, payments, returns)
+}
+
+// SetCorrectionGate wires finance's period check and stock/HPP split used by
+// the price correction after receipt.
+func (m *Module) SetCorrectionGate(g financecontracts.PurchaseCorrectionGate) {
+	m.svc.SetCorrectionGate(g)
 }
 
 // PurchaseOrders exposes the public contract to other modules.

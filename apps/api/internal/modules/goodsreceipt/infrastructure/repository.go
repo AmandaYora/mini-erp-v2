@@ -118,6 +118,11 @@ func (r *Repository) ActiveReceiptCount(ctx context.Context, poID int64) (int64,
 	return r.q.ActiveReceiptCount(ctx, poID)
 }
 
+// PendingReceiptCount counts the order's pending receipts.
+func (r *Repository) PendingReceiptCount(ctx context.Context, poID int64) (int64, error) {
+	return r.q.PendingReceiptCount(ctx, poID)
+}
+
 // QtyByPO sums base qty per "product/variant" for the PO's receipts in the
 // given statuses — one GROUP BY, never one query per line.
 func (r *Repository) QtyByPO(ctx context.Context, poID int64, statuses ...string) (map[string]float64, error) {

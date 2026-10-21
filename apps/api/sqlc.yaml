@@ -193,6 +193,7 @@ sql:
     schema:
       - migrations/000009_purchasing.up.sql
       - migrations/000022_purchasing_tax_invoice.up.sql
+      - migrations/000034_purchasing_corrections.up.sql
     queries: internal/modules/purchasing/infrastructure/queries
     gen:
       go:

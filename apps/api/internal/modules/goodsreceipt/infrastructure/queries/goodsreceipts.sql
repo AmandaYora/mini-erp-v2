@@ -69,6 +69,12 @@ SELECT COUNT(*) AS total
 FROM goods_receipts
 WHERE purchase_order_id = ? AND status IN ('pending', 'posted');
 
+-- name: PendingReceiptCount :one
+-- Receipts still pending on an order: a correction of the order waits for them.
+SELECT COUNT(*) AS total
+FROM goods_receipts
+WHERE purchase_order_id = ? AND status = 'pending';
+
 -- name: ListPostedAfter :many
 SELECT id, number, branch_id, purchase_order_id, received_at, notes,
   supplier_delivery_number, status, client_ref, created_by

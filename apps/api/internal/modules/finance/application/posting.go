@@ -125,6 +125,10 @@ func (s *Service) postDocument(ctx context.Context, actorID, branchID int64, doc
 		}
 		return full, nil
 	}
+	if docType == SourcePurchasePriceCorrection {
+		// Journal and value-only cost rows commit together (ADR-0022).
+		return s.postPriceCorrection(ctx, actorID, branchID, docID, catchUp)
+	}
 	if needsCosting(docType) {
 		if err := s.drainCosting(ctx, branchID); err != nil {
 			return nil, err
@@ -300,17 +304,39 @@ func (s *Service) reverse(ctx context.Context, actorID, branchID, entryID int64,
 	if b == nil {
 		return nil, apperror.NotFound("Cabang")
 	}
-	revID, err := s.repo.ReverseEntry(ctx, &contracts.JournalEntry{
-		BranchID: branchID, Date: date,
-		Numbering:  &contracts.Numbering{Prefix: "JV", BranchCode: b.Code, Year: date[:4]},
-		Memo:       "Balik " + orig.Number + ": " + strings.TrimSpace(reason),
-		SourceType: SourceReversal, SourceID: orig.ID, Scope: orig.Scope, Lines: mirror,
-	}, orig.ID, requeue, actorID, func(ctx context.Context, tx *sql.Tx, id int64, number string) error {
-		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
-			Action: "journals.reverse", Entity: "journal", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number,
-			Metadata: map[string]any{"reversedEntryId": orig.ID, "reversedNumber": orig.Number, "reason": strings.TrimSpace(reason)},
+	// A price correction's Persediaan legs have value-only cost rows: the
+	// reversal takes them back in the same transaction (ADR-0022), so a
+	// re-post can never count them twice.
+	var valueRows []valueRow
+	if orig.SourceType == SourcePurchasePriceCorrection {
+		if valueRows, err = s.inventoryRows(ctx, orig.Lines, true); err != nil {
+			return nil, err
+		}
+	}
+	var revID int64
+	write := func() error {
+		var werr error
+		revID, werr = s.repo.ReverseEntry(ctx, &contracts.JournalEntry{
+			BranchID: branchID, Date: date,
+			Numbering:  &contracts.Numbering{Prefix: "JV", BranchCode: b.Code, Year: date[:4]},
+			Memo:       "Balik " + orig.Number + ": " + strings.TrimSpace(reason),
+			SourceType: SourceReversal, SourceID: orig.ID, Scope: orig.Scope, Lines: mirror,
+		}, orig.ID, requeue, actorID, func(ctx context.Context, tx *sql.Tx, id int64, number string) error {
+			if err := s.writeValueRows(ctx, tx, branchID, orig.SourceID, valueRows); err != nil {
+				return err
+			}
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "journals.reverse", Entity: "journal", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number,
+				Metadata: map[string]any{"reversedEntryId": orig.ID, "reversedNumber": orig.Number, "reason": strings.TrimSpace(reason)},
+			})
 		})
-	})
+		return werr
+	}
+	if len(valueRows) > 0 {
+		err = s.costLock(ctx, branchID, costLockWaitSync, write)
+	} else {
+		err = write()
+	}
 	if err != nil {
 		if errors.Is(err, infrastructure.ErrAlreadyReversed) {
 			return nil, apperror.Conflict("Jurnal sudah dibalik")

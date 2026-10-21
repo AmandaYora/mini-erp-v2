@@ -54,13 +54,13 @@ func TestCancelPurchaseOrderBlockedByReceipt(t *testing.T) {
 	fx := newShop(t, ctx())
 	poID := confirmedPO(t, fx, 10)
 	rec := insertPendingReceipt(t, fx, poID, 10, "GR-CANCEL-1")
-	if _, err := testMods.purchasing.Service().CancelOrder(ctx(), 0, fx.branchID, poID); !isConflict(err) {
+	if _, err := testMods.purchasing.Service().CancelOrder(ctx(), 0, fx.branchID, poID, "salah input"); !isConflict(err) {
 		t.Fatalf("cancel PO with a pending receipt = %v, want conflict", err)
 	}
 	if _, err := testMods.goodsreceipt.Service().Discard(ctx(), 0, fx.branchID, rec); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
-	po, err := testMods.purchasing.Service().CancelOrder(ctx(), 0, fx.branchID, poID)
+	po, err := testMods.purchasing.Service().CancelOrder(ctx(), 0, fx.branchID, poID, "salah input")
 	if err != nil || po.Status != "cancelled" {
 		t.Fatalf("cancel after discard = %+v, %v", po, err)
 	}

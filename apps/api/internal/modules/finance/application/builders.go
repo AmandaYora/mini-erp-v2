@@ -55,6 +55,8 @@ func (s *Service) buildLines(ctx context.Context, branchID int64, docType string
 		return s.buildPurchaseReturnSettlement(ctx, branchID, docID)
 	case SourceStockMovement:
 		return s.buildStockMovement(ctx, branchID, docID)
+	case SourcePurchasePriceCorrection:
+		return s.buildPurchasePriceCorrection(ctx, branchID, docID)
 	default:
 		return nil, "", "", apperror.Validation("", []apperror.FieldError{{Field: "docType", Message: "tipe dokumen tidak dikenal"}})
 	}
@@ -185,21 +187,27 @@ func (s *Service) buildGoodsReceipt(ctx context.Context, branchID, receiptID int
 	if err != nil {
 		return nil, "", "", apperror.Internal(err)
 	}
+	corrections, err := s.purchasing.CorrectionsByOrder(ctx, po.ID)
+	if err != nil {
+		return nil, "", "", apperror.Internal(err)
+	}
 	for _, it := range gr.Items {
 		pl, ok := byKey[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
 		if !ok {
 			return nil, "", "", apperror.Conflict("Baris penerimaan tak cocok PO")
 		}
+		prior := before[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
 		// The line's own stored tax split (its taxable flag and rate, PO-03),
 		// never a recomputation at the header rate: an exempt line carries no
-		// PPN Masukan and a line rate wins over the order rate.
-		base, tax := pl.TaxBase, pl.TaxAmount
+		// PPN Masukan and a line rate wins over the order rate. A receipt a
+		// later correction covered keeps the economics it was booked at
+		// (ADR-0022): the correction journal carries the difference.
+		econ := purchasingcontracts.LineAt(corrections, pl, prior, it.Qty)
 		// The receipt that completes a line takes the rounding remainder, so the
 		// receipts of one line add up to its value exactly.
-		prior := before[lineKeyOf(it.ProductID, it.VariantID, it.UOM)]
-		value := prorateWindow(base, prior, it.Qty, pl.Qty)
+		value := prorateWindow(econ.TaxBase, prior, it.Qty, econ.Qty)
 		inventory += value
-		taxIn += prorateWindow(tax, prior, it.Qty, pl.Qty)
+		taxIn += prorateWindow(econ.TaxAmount, prior, it.Qty, econ.Qty)
 		// A purchased SERVICE is an expense, not inventory (no stock moved).
 		debitKey := "inventory"
 		if !trackedLine[lineKeyOf(it.ProductID, it.VariantID, it.UOM)] {

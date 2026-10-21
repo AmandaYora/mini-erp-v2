@@ -33,6 +33,12 @@
     },
     {
       "rule": "E",
+      "file": "apps/api/internal/modules/finance/application/price_correction.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary (ADR-0022): a purchase price correction's journal and its value-only cost-ledger rows co-commit with the audit row inside the repository's CreateEntry/ReverseEntry hook, which receives *sql.Tx (ADR-0011). Removed with posting.go when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
+    },
+    {
+      "rule": "E",
       "file": "apps/api/internal/modules/finance/application/posting.go",
       "match": "application must not import database/sql (ADR-0011)",
       "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."
@@ -180,6 +186,12 @@
       "file": "apps/api/internal/modules/purchasing/purchasing.module.go",
       "match": "SetDependents",
       "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."
+    },
+    {
+      "rule": "W",
+      "file": "apps/api/internal/modules/purchasing/purchasing.module.go",
+      "match": "SetCorrectionGate",
+      "reason": "Genuine construction cycle: finance is built after purchasing because it reads purchasing contracts; the price correction (ADR-0022) needs finance's period check and stock/HPP split. Closed by Wire and asserted by Modules.Verify."
     },
     {
       "rule": "W",

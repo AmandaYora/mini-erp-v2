@@ -195,7 +195,8 @@ type movementCost struct {
 // Everything else runs the cost chain:
 //
 //  4. a goods receipt: exactly the value its journal debits to Persediaan
-//     (receiptValue: stored line tax bases, pro-rated over partial receipts);
+//     (receiptValue: stored line tax bases, pro-rated over partial receipts,
+//     at the economics a later price correction or short close left it);
 //  5. an explicit cost hint on the movement (opening balances with a cost): exact;
 //  6. the position's running average while it holds stock — an out that
 //     empties the position takes exactly its remaining value, so a position
@@ -369,6 +370,10 @@ func (s *Service) receiptValue(ctx context.Context, m *stockcontracts.CostMoveme
 	if err != nil {
 		return movementCost{}, apperror.Internal(err)
 	}
+	corrections, err := s.purchasing.CorrectionsByOrder(ctx, po.ID)
+	if err != nil {
+		return movementCost{}, apperror.Internal(err)
+	}
 	lines := map[string]*purchasingcontracts.Item{}
 	for _, l := range po.Items {
 		key := lineKeyOf(l.ProductID, l.VariantID, l.UOM)
@@ -387,7 +392,9 @@ func (s *Service) receiptValue(ctx context.Context, m *stockcontracts.CostMoveme
 		if !ok {
 			return movementCost{estimated: true}, nil
 		}
-		total += prorateWindow(pl.TaxBase, before[key], it.Qty, pl.Qty)
+		// Same economics as the receipt journal, a correction's era included.
+		econ := purchasingcontracts.LineAt(corrections, pl, before[key], it.Qty)
+		total += prorateWindow(econ.TaxBase, before[key], it.Qty, econ.Qty)
 		totalQty += it.QtyBase
 	}
 	if totalQty <= positionEpsilon {

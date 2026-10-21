@@ -123,6 +123,15 @@ func (s *Service) ActiveReceiptCount(ctx context.Context, poID int64) (int64, er
 	return n, nil
 }
 
+// PendingReceiptCount counts the order's pending receipts.
+func (s *Service) PendingReceiptCount(ctx context.Context, poID int64) (int64, error) {
+	n, err := s.repo.PendingReceiptCount(ctx, poID)
+	if err != nil {
+		return 0, apperror.Internal(err)
+	}
+	return n, nil
+}
+
 // ReceivedQty sums POSTED received base qty for one PO line position.
 func (s *Service) ReceivedQty(ctx context.Context, poID, productID, variantID int64) (float64, error) {
 	qty, err := s.repo.ReceivedQty(ctx, poID, productID, variantID)
