@@ -52,7 +52,22 @@ func toOrder(r sqlc.GetOrderRow) *contracts.PurchaseOrder {
 		AssignedUserID:        r.AssignedUserID.Int64,
 		CreatedBy:             r.CreatedBy.Int64,
 		PaymentTermDays:       int(r.PaymentTermDays.Int16),
+		CancelReason:          r.CancelReason.String,
+		CancelledAt:           wibStamp(r.CancelledAt),
+		CancelledBy:           r.CancelledBy.Int64,
+		ShortCloseReason:      r.ShortCloseReason.String,
+		ShortClosedAt:         wibStamp(r.ShortClosedAt),
+		ShortClosedBy:         r.ShortClosedBy.Int64,
 	}
+}
+
+// wibStamp renders a stored UTC instant as the Jakarta wall clock (the API's
+// one datetime form); NULL stays empty.
+func wibStamp(t sql.NullTime) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.Time.UTC().In(timeutil.Jakarta).Format(wireDateTime)
 }
 
 func toItem(r sqlc.ListItemsByOrderRow) *contracts.Item {

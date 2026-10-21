@@ -538,6 +538,20 @@ func (q *Queries) ListReceipts(ctx context.Context, arg ListReceiptsParams) ([]L
 	return items, nil
 }
 
+const pendingReceiptCount = `-- name: PendingReceiptCount :one
+SELECT COUNT(*) AS total
+FROM goods_receipts
+WHERE purchase_order_id = ? AND status = 'pending'
+`
+
+// Receipts still pending on an order: a correction of the order waits for them.
+func (q *Queries) PendingReceiptCount(ctx context.Context, purchaseOrderID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, pendingReceiptCount, purchaseOrderID)
+	var total int64
+	err := row.Scan(&total)
+	return total, err
+}
+
 const postedQtyBefore = `-- name: PostedQtyBefore :many
 SELECT i.product_id, i.variant_id, i.uom, CAST(COALESCE(SUM(i.qty), 0) AS DECIMAL(36,12)) AS total
 FROM goods_receipt_items i

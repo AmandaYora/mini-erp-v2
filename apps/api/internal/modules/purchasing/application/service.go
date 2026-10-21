@@ -3,13 +3,12 @@ package application
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
+	financecontracts "mini-erp/internal/modules/finance/contracts"
 	goodsreceiptcontracts "mini-erp/internal/modules/goodsreceipt/contracts"
 	partycontracts "mini-erp/internal/modules/party/contracts"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
@@ -39,6 +38,9 @@ type Service struct {
 	// users names who created / is in charge of an order and validates the
 	// person in charge (PO-01/PO-03).
 	users usercontracts.UserClient
+	// gate is finance's period check and stock/HPP split for price
+	// corrections (late-bound, SetCorrectionGate).
+	gate financecontracts.PurchaseCorrectionGate
 }
 
 type dependents struct {
@@ -115,6 +117,12 @@ func (s *Service) decorateUsers(ctx context.Context, orders []*contracts.Purchas
 		if o.AssignedUserID > 0 {
 			ids = append(ids, o.AssignedUserID)
 		}
+		if o.CancelledBy > 0 {
+			ids = append(ids, o.CancelledBy)
+		}
+		if o.ShortClosedBy > 0 {
+			ids = append(ids, o.ShortClosedBy)
+		}
 	}
 	if len(ids) == 0 {
 		return
@@ -126,6 +134,8 @@ func (s *Service) decorateUsers(ctx context.Context, orders []*contracts.Purchas
 	for _, o := range orders {
 		o.CreatedByName = names[o.CreatedBy]
 		o.AssignedUserName = names[o.AssignedUserID]
+		o.CancelledByName = names[o.CancelledBy]
+		o.ShortClosedByName = names[o.ShortClosedBy]
 	}
 }
 
@@ -237,6 +247,9 @@ type OrderInput struct {
 	// PaymentTermDays is the optional credit period (0..3650).
 	PaymentTermDays int
 	Items           []LineInput
+	// Reason is the optional note of why a confirmed order was changed
+	// (audited with the before/after).
+	Reason string
 }
 
 type pricedLine struct {
@@ -515,28 +528,6 @@ func resolveDueDate(due, invoiceDate string, days int) string {
 	return ""
 }
 
-func poSignature(rows []string) string {
-	sort.Strings(rows)
-	return strings.Join(rows, "|")
-}
-
-// lightOnly: no economic field changes (party, terms, tax, lines).
-func (s *Service) lightOnly(existing *contracts.PurchaseOrder, in OrderInput) bool {
-	if in.PartyID != existing.PartyID || in.PaymentTerms != existing.PaymentTerms ||
-		in.TaxType != existing.TaxType || in.TaxRate != existing.TaxRate {
-		return false
-	}
-	have := make([]string, 0, len(existing.Items))
-	for _, it := range existing.Items {
-		have = append(have, fmt.Sprintf("%d:%d:%s:%g", it.ProductID, it.VariantID, it.UOM, it.Qty))
-	}
-	want := make([]string, 0, len(in.Items))
-	for _, it := range in.Items {
-		want = append(want, fmt.Sprintf("%d:%d:%s:%g", it.ProductID, it.VariantID, it.UOM, it.Qty))
-	}
-	return poSignature(have) == poSignature(want)
-}
-
 func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id int64, in OrderInput) (*contracts.PurchaseOrder, error) {
 	existing, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
@@ -545,40 +536,31 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if existing.Status != contracts.StatusDraft && existing.Status != contracts.StatusConfirmed {
 		return nil, apperror.Conflict("Order yang sudah selesai atau dibatalkan tidak bisa diubah")
 	}
+	if len(strings.TrimSpace(in.Reason)) > maxReasonLen {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "maksimal 500 karakter"}})
+	}
 	if existing.Status == contracts.StatusConfirmed {
-		if derr := s.assertNoDependents(ctx, id); derr != nil {
-			var ae *apperror.AppError
-			if !errors.As(derr, &ae) || ae.Code != apperror.CodeConflict {
-				return nil, derr
+		deps, err := s.dependentsOf(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if deps.any() {
+			// Only the header stays editable under receipts, payments or
+			// returns. Anything else in the payload is refused by name — never
+			// saved half and silently dropped.
+			full, err := s.GetByID(ctx, id)
+			if err != nil {
+				return nil, err
 			}
-			full, gerr := s.GetByID(ctx, id)
-			if gerr != nil || full == nil {
-				return nil, derr
+			if full == nil {
+				return nil, apperror.NotFound("Purchase order")
 			}
-			if !s.lightOnly(full, in) {
-				return nil, derr
+			if changed := economicChanges(full, in); len(changed) > 0 {
+				return nil, apperror.Conflict(deps.label() + "; perubahan " + strings.Join(changed, ", ") +
+					" ditolak. Yang masih bisa diubah hanya jatuh tempo, catatan, faktur pemasok, faktur pajak, dan penanggung jawab. " +
+					"Harga/diskon salah: pakai \"Koreksi harga\". Qty: pakai retur pembelian atau \"Tutup sisa order\".")
 			}
-			invNo, invDate, ierr := resolveSupplierInvoice(in.SupplierInvoiceNumber, in.SupplierInvoiceDate)
-			if ierr != nil {
-				return nil, ierr
-			}
-			taxNo, taxDate, terr := resolveTaxInvoice(in.TaxInvoiceNumber, in.TaxInvoiceDate)
-			if terr != nil {
-				return nil, terr
-			}
-			if aerr := s.checkAssignee(ctx, branchID, in.AssignedUserID); aerr != nil {
-				return nil, aerr
-			}
-			existing.DueDate = resolveDueDate(in.DueDate, invDate, in.PaymentTermDays)
-			existing.Notes = in.Notes
-			existing.SupplierInvoiceNumber, existing.SupplierInvoiceDate = invNo, invDate
-			existing.TaxInvoiceNumber, existing.TaxInvoiceDate, existing.AssignedUserID = taxNo, taxDate, in.AssignedUserID
-			existing.PaymentTermDays = in.PaymentTermDays
-			if err := s.repo.UpdateHeaderLight(ctx, existing, actorID); err != nil {
-				return nil, dberr.Map(err)
-			}
-			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "purchase_orders.update", Entity: "purchase_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number + " (header)"})
-			return s.GetByID(ctx, id)
+			return s.applyHeader(ctx, actorID, branchID, full, headerOf(in))
 		}
 	}
 	if fields, _ := s.validateHeader(ctx, in); len(fields) > 0 {
@@ -600,6 +582,12 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if err := s.checkAssignee(ctx, branchID, in.AssignedUserID); err != nil {
 		return nil, err
 	}
+	before := orderSnapshot(existing)
+	if existing.Status != contracts.StatusDraft {
+		if old, err := s.repo.ItemsByOrder(ctx, id); err == nil {
+			before["items"] = itemsSnapshot(old)
+		}
+	}
 	existing.TaxInvoiceNumber, existing.TaxInvoiceDate, existing.AssignedUserID = taxNo, taxDate, in.AssignedUserID
 	existing.PartyID = in.PartyID
 	existing.OrderDate = timeutil.DateOrToday(in.OrderDate)
@@ -619,7 +607,15 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if err := s.repo.UpdateOrder(ctx, existing, actorID); err != nil {
 		return nil, dberr.Map(err)
 	}
-	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "purchase_orders.update", Entity: "purchase_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number})
+	entry := auditcontracts.Entry{Action: "purchase_orders.update", Entity: "purchase_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number}
+	if existing.Status != contracts.StatusDraft {
+		// A confirmed order changes under the supplier's eyes: keep what it was.
+		after := orderSnapshot(existing)
+		after["items"] = itemsSnapshot(existing.Items)
+		entry.Before, entry.After = before, after
+		entry.Metadata = map[string]any{"scope": "full", "reason": strings.TrimSpace(in.Reason)}
+	}
+	_ = s.audit.Log(ctx, entry)
 	return s.GetByID(ctx, id)
 }
 
@@ -714,34 +710,49 @@ func (s *Service) ConfirmOrder(ctx context.Context, actorID, branchID, id int64)
 	return s.GetByID(ctx, id)
 }
 
-// CancelOrder voids a draft or confirmed PO — only while nothing hangs off it.
-// Serialized per order; the status is re-read inside the lock, the dependents
-// are consulted (live receipts, active payments, live returns) and the move
-// is a CAS. A repeat on a cancelled order is a successful no-op.
-func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) (*contracts.PurchaseOrder, error) {
+// CancelOrder voids a draft or confirmed PO — only while nothing hangs off it —
+// recording why (required), when and by whom. Serialized per order; the
+// status is re-read inside the lock, the dependents are consulted (live
+// receipts, active payments, live returns) and the move is a CAS. A repeat on
+// a cancelled order is a successful no-op.
+func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.PurchaseOrder, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "wajib diisi"}})
+	}
+	if len(reason) > maxReasonLen {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "maksimal 500 karakter"}})
+	}
 	if _, err := s.mustOwnBranch(ctx, id, branchID); err != nil {
 		return nil, err
 	}
-	var number string
-	var replayed bool
 	err := doclock.Lock("po:"+itoa64(id), func() error {
 		return s.withPaymentLock(ctx, branchID, id, func() error {
 			existing, err := s.mustOwnBranch(ctx, id, branchID)
 			if err != nil {
 				return err
 			}
-			number = existing.Number
 			switch existing.Status {
 			case contracts.StatusCancelled:
-				replayed = true
-				return nil
+				return nil // replay
 			case contracts.StatusCompleted:
-				return apperror.Conflict("Order sudah final")
+				return apperror.Conflict("Order sudah selesai (diterima penuh atau sisanya ditutup) dan tidak bisa dibatalkan. " +
+					"Barang yang dikembalikan ke pemasok dicatat lewat retur pembelian.")
 			}
-			if err := s.assertNoDependents(ctx, id); err != nil {
+			deps, err := s.dependentsOf(ctx, id)
+			if err != nil {
 				return err
 			}
-			won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
+			if err := deps.cancelBlock(); err != nil {
+				return err
+			}
+			won, err := s.repo.CancelOrder(ctx, id, reason, actorID, func(ctx context.Context, tx infrastructure.Execer) error {
+				return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+					Action: "purchase_orders.cancel", Entity: "purchase_order", EntityID: id, BranchID: branchID, ActorID: actorID,
+					Note: existing.Number, Before: map[string]any{"status": existing.Status},
+					After: map[string]any{"status": contracts.StatusCancelled}, Metadata: map[string]any{"reason": reason},
+				})
+			})
 			if err != nil {
 				return apperror.Internal(err)
 			}
@@ -753,7 +764,6 @@ func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) 
 				if cur == nil || cur.Status != contracts.StatusCancelled {
 					return apperror.Conflict("Status order berubah, muat ulang")
 				}
-				replayed = true
 			}
 			return nil
 		})
@@ -761,34 +771,7 @@ func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) 
 	if err != nil {
 		return nil, err
 	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "purchase_orders.cancel", Entity: "purchase_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: number})
-	}
 	return s.GetByID(ctx, id)
-}
-
-// assertNoDependents refuses to cancel an order that already has live
-// receipts, active payments or live returns, naming what blocks it.
-func (s *Service) assertNoDependents(ctx context.Context, poID int64) error {
-	if s.dep.receipts == nil || s.dep.payments == nil || s.dep.returns == nil {
-		return apperror.Internal(errDependentsNotWired)
-	}
-	if n, err := s.dep.receipts.ActiveReceiptCount(ctx, poID); err != nil {
-		return apperror.Internal(err)
-	} else if n > 0 {
-		return apperror.Conflict("Order sudah memiliki penerimaan barang (pending atau terposting); batalkan penerimaannya dulu")
-	}
-	if used, err := s.dep.payments.HasActiveAllocations(ctx, paymentcontracts.OrderPurchase, poID); err != nil {
-		return apperror.Internal(err)
-	} else if used {
-		return apperror.Conflict("Order sudah memiliki pembayaran aktif; batalkan pembayarannya dulu")
-	}
-	if n, err := s.dep.returns.ActiveReturnCount(ctx, poID); err != nil {
-		return apperror.Internal(err)
-	} else if n > 0 {
-		return apperror.Conflict("Order sudah memiliki retur (draf atau terkonfirmasi); batalkan returnya dulu")
-	}
-	return nil
 }
 
 // ListByParty lists a party's documents for balance computation.

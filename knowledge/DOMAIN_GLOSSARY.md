@@ -21,6 +21,8 @@ satu orang.
 | **Party** | Istilah gabungan untuk customer & supplier di modul `party` (satu tabel, dibedakan `party_type`). |
 | **Member Type / Member Pricing** | Kelompok customer dengan aturan harga khusus (persentase/nominal), dihitung modul `party` saat order dibuat. |
 | **PO (Purchase Order)** | Order pembelian ke supplier — modul `purchasing`. |
+| **Tutup sisa order (short close)** | Menutup PO terkonfirmasi yang sebagian sudah diterima karena sisanya tidak akan datang: qty tiap baris dipotong menjadi qty yang sudah diterima, status `completed`, alasan disimpan. Tanpa jurnal — hutang sudah dicatat per penerimaan (ADR-0023). |
+| **Koreksi harga beli** | Membetulkan harga/diskon PO yang salah setelah barang diterima. PO mengambil harga baru; selisih bagian yang sudah diterima dijurnal: barang yang masih di gudang ke Persediaan (dengan baris nilai ledger biaya yang sama besar), barang yang sudah keluar ke HPP, plus PPN Masukan dan Hutang (ADR-0023). |
 | **SO (Sales Order)** | Order penjualan ke customer — modul `sales`. Termasuk kanal POS (`channel = 'pos'`). |
 | **Goods Receipt (Penerimaan Barang)** | Konfirmasi barang PO sudah diterima gudang — modul `goodsreceipt`. |
 | **Delivery Note / SJ (Surat Jalan)** | Dokumen pengiriman barang SO ke customer — modul `delivery`. |

@@ -187,6 +187,7 @@ export const POSTING_DOC_TYPES = [
   "purchase_return",
   "sales_return_settlement",
   "purchase_return_settlement",
+  "purchase_price_correction",
   "stock_movement",
 ] as const;
 
@@ -206,6 +207,8 @@ export function docTypeLabel(t: string): string {
       return "Saldo Customer (Retur Jual)";
     case "purchase_return_settlement":
       return "Saldo Supplier (Retur Beli)";
+    case "purchase_price_correction":
+      return "Koreksi Harga Beli";
     case "stock_movement":
       return "Koreksi/Hapus Stok";
     case "business_expense":
@@ -813,6 +816,7 @@ export const JOURNAL_SOURCE_TYPES = [
   "purchase_return",
   "sales_return_settlement",
   "purchase_return_settlement",
+  "purchase_price_correction",
   "stock_movement",
   "business_expense",
   "opening",

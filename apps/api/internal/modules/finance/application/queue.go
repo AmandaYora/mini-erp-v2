@@ -196,6 +196,20 @@ func (s *Service) queueSources(branchID int64) []queueSource {
 			}
 			return pg, err
 		}},
+		// A purchase price correction after receipt (ADR-0023): the value
+		// difference of the received goods. Corrections of nothing received
+		// carry no value and never reach this list.
+		{SourcePurchasePriceCorrection, func(ctx context.Context, after int64, limit int) (queuePage, error) {
+			cs, err := s.purchasing.ListPriceCorrectionsAfter(ctx, branchID, after, limit)
+			pg := queuePage{read: len(cs)}
+			for _, c := range cs {
+				pg.docs = append(pg.docs, queueDoc{id: c.ID, number: "Koreksi harga " + c.OrderNumber, date: day(c.Date),
+					amount: c.ValueDelta + c.TaxDelta, amountKind: "document", summary: "Koreksi harga beli",
+					orderKind: orderKindPurchase, orderID: c.OrderID})
+				pg.last = c.ID
+			}
+			return pg, err
+		}},
 	}
 }
 

@@ -100,6 +100,34 @@ type SourceReverser interface {
 	ReverseForSource(ctx context.Context, actorID, branchID int64, docType string, docID int64, reason string) (reversed bool, err error)
 }
 
+// PurchaseCorrectionGate serves purchasing's price correction after receipt
+// (late-bound like SourceReverser): whether the correction date can still be
+// journaled, and how a change in the value of received goods splits between
+// the part still on hand and the part already issued.
+type PurchaseCorrectionGate interface {
+	// RequireOpenPeriod refuses a date whose month is closed or lies before
+	// the start of the books (the same rule every journal follows).
+	RequireOpenPeriod(ctx context.Context, branchID int64, date string) error
+	// SplitReceivedValue fills OnHandQty/Stock/Issued of each position from
+	// the branch's cost ledger as it stands. The finance journal of the
+	// correction applies the same split when it is posted.
+	SplitReceivedValue(ctx context.Context, branchID int64, items []ReceivedValueDelta) ([]ReceivedValueDelta, error)
+}
+
+// ReceivedValueDelta is the value change (whole rupiah, signed) of the goods of
+// one position received on an order. Stock is the share of the units still on
+// hand (Persediaan, with a matching cost-ledger row); Issued the share of the
+// units already sold or used (HPP). Stock + Issued = Delta.
+type ReceivedValueDelta struct {
+	ProductID       int64   `json:"productId"`
+	VariantID       int64   `json:"variantId"`
+	ReceivedQtyBase float64 `json:"receivedQtyBase"`
+	Delta           int64   `json:"delta"`
+	OnHandQty       float64 `json:"onHandQty"`
+	Stock           int64   `json:"stock"`
+	Issued          int64   `json:"issued"`
+}
+
 type FinanceClient interface {
 	// OpeningPosted reports whether the branch already posted its cutover
 	// balance (stock opening must then go through adjustments).

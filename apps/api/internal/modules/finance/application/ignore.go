@@ -22,7 +22,8 @@ import (
 func postableDocType(docType string) bool {
 	switch docType {
 	case SourceDelivery, SourceGoodsReceipt, SourcePayment, SourceSalesReturn, SourcePurchaseReturn,
-		SourceSalesReturnSettlement, SourcePurchaseReturnSettlement, SourceStockMovement:
+		SourceSalesReturnSettlement, SourcePurchaseReturnSettlement, SourceStockMovement,
+		SourcePurchasePriceCorrection:
 		return true
 	}
 	return false

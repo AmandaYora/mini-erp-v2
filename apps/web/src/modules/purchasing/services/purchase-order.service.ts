@@ -10,11 +10,14 @@
 // - GET /api/v1/products/:id → productView lengkap (variants, baseUom,
 //   purchaseUom, salesUom, purchasePrice) untuk dropdown varian & satuan.
 
-import { apiGet, apiPage, apiPostFull, apiPutFull, httpClient } from "@/shared/services/http-client";
+import { apiGet, apiPage, apiPost, apiPostFull, apiPutFull, httpClient } from "@/shared/services/http-client";
 import { compactParams, positiveId, sortParams } from "@/shared/lib/list-query";
 import type { SortDir } from "@/shared/lib/list-query";
 import type {
+  PriceCorrectionPayload,
   ProductSearchOption,
+  PurchaseCorrectionPreview,
+  PurchaseHeaderPayload,
   PurchaseOrder,
   PurchaseOrderPayload,
   PurchasingProductDetail,
@@ -67,12 +70,31 @@ export const purchaseOrderService = {
   update: (id: number, body: PurchaseOrderPayload) =>
     apiPutFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}`, body),
 
-  // Tanpa body — backend hanya butuh :id (handler.go: Confirm/Cancel).
+  // Tanpa body — backend hanya butuh :id (handler.go: Confirm).
   confirm: (id: number) =>
     apiPostFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}/confirm`),
 
-  cancel: (id: number) =>
-    apiPostFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}/cancel`),
+  /** Batal dengan alasan (wajib). */
+  cancel: (id: number, reason: string) =>
+    apiPostFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}/cancel`, { reason }),
+
+  /** Ubah info dokumen saja (jatuh tempo, faktur, catatan, penanggung jawab). */
+  updateHeader: (id: number, body: PurchaseHeaderPayload) =>
+    apiPutFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}/header`, body),
+
+  /** Pratinjau "Tutup sisa order". */
+  previewShortClose: (id: number) =>
+    apiGet<PurchaseCorrectionPreview>(`/api/v1/purchase-orders/${id}/close-short/preview`),
+
+  shortClose: (id: number, reason: string) =>
+    apiPostFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}/close-short`, { reason }),
+
+  /** Pratinjau koreksi harga beli (pembagian Persediaan/HPP dihitung server). */
+  previewPriceCorrection: (id: number, body: PriceCorrectionPayload) =>
+    apiPost<PurchaseCorrectionPreview>(`/api/v1/purchase-orders/${id}/price-corrections/preview`, body),
+
+  correctPrices: (id: number, body: PriceCorrectionPayload) =>
+    apiPostFull<PurchaseOrder>(`/api/v1/purchase-orders/${id}/price-corrections`, body),
 
   /** Unduh daftar order (J1) — blob xlsx/pdf dengan filter yang sama seperti list. */
   downloadExport: async (

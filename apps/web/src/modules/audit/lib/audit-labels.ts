@@ -95,6 +95,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "purchase_orders.update": "Ubah order beli",
   "purchase_orders.confirm": "Konfirmasi order beli",
   "purchase_orders.cancel": "Batalkan order beli",
+  "purchase_orders.short_close": "Tutup sisa order beli",
+  "purchase_orders.price_correct": "Koreksi harga beli",
   "goods_receipts.create": "Buat penerimaan barang",
   "goods_receipts.complete": "Selesaikan penerimaan barang",
   "goods_receipts.discard": "Buang draf penerimaan barang",

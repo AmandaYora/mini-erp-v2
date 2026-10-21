@@ -26,7 +26,8 @@ const getOrder = `-- name: GetOrder :one
 SELECT id, number, branch_id, party_id, order_date, due_date,
        payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
        grand_total, status, notes, supplier_invoice_number, supplier_invoice_date, payment_term_days,
-       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by
+       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by,
+       cancel_reason, cancelled_at, cancelled_by, short_close_reason, short_closed_at, short_closed_by
 FROM purchase_orders
 WHERE id = ?
 `
@@ -54,6 +55,12 @@ type GetOrderRow struct {
 	TaxInvoiceDate        sql.NullTime
 	AssignedUserID        sql.NullInt64
 	CreatedBy             sql.NullInt64
+	CancelReason          sql.NullString
+	CancelledAt           sql.NullTime
+	CancelledBy           sql.NullInt64
+	ShortCloseReason      sql.NullString
+	ShortClosedAt         sql.NullTime
+	ShortClosedBy         sql.NullInt64
 }
 
 // Purchase order header + lines (F8-18). The dynamic list/count/export queries
@@ -84,6 +91,12 @@ func (q *Queries) GetOrder(ctx context.Context, id int64) (GetOrderRow, error) {
 		&i.TaxInvoiceDate,
 		&i.AssignedUserID,
 		&i.CreatedBy,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
+		&i.ShortCloseReason,
+		&i.ShortClosedAt,
+		&i.ShortClosedBy,
 	)
 	return i, err
 }
@@ -92,7 +105,8 @@ const getOrderByNumber = `-- name: GetOrderByNumber :one
 SELECT id, number, branch_id, party_id, order_date, due_date,
        payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
        grand_total, status, notes, supplier_invoice_number, supplier_invoice_date, payment_term_days,
-       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by
+       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by,
+       cancel_reason, cancelled_at, cancelled_by, short_close_reason, short_closed_at, short_closed_by
 FROM purchase_orders
 WHERE branch_id = ? AND number = ?
 `
@@ -125,6 +139,12 @@ type GetOrderByNumberRow struct {
 	TaxInvoiceDate        sql.NullTime
 	AssignedUserID        sql.NullInt64
 	CreatedBy             sql.NullInt64
+	CancelReason          sql.NullString
+	CancelledAt           sql.NullTime
+	CancelledBy           sql.NullInt64
+	ShortCloseReason      sql.NullString
+	ShortClosedAt         sql.NullTime
+	ShortClosedBy         sql.NullInt64
 }
 
 func (q *Queries) GetOrderByNumber(ctx context.Context, arg GetOrderByNumberParams) (GetOrderByNumberRow, error) {
@@ -153,6 +173,12 @@ func (q *Queries) GetOrderByNumber(ctx context.Context, arg GetOrderByNumberPara
 		&i.TaxInvoiceDate,
 		&i.AssignedUserID,
 		&i.CreatedBy,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
+		&i.ShortCloseReason,
+		&i.ShortClosedAt,
+		&i.ShortClosedBy,
 	)
 	return i, err
 }

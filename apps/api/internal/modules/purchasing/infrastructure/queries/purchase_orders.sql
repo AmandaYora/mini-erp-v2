@@ -5,7 +5,8 @@
 SELECT id, number, branch_id, party_id, order_date, due_date,
        payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
        grand_total, status, notes, supplier_invoice_number, supplier_invoice_date, payment_term_days,
-       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by
+       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by,
+       cancel_reason, cancelled_at, cancelled_by, short_close_reason, short_closed_at, short_closed_by
 FROM purchase_orders
 WHERE id = ?;
 
@@ -13,7 +14,8 @@ WHERE id = ?;
 SELECT id, number, branch_id, party_id, order_date, due_date,
        payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
        grand_total, status, notes, supplier_invoice_number, supplier_invoice_date, payment_term_days,
-       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by
+       tax_invoice_number, tax_invoice_date, assigned_user_id, created_by,
+       cancel_reason, cancelled_at, cancelled_by, short_close_reason, short_closed_at, short_closed_by
 FROM purchase_orders
 WHERE branch_id = ? AND number = ?;
 

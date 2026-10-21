@@ -54,7 +54,8 @@ func (f ListFilter) orderBy() string {
 const rawOrderColumns = `id, number, branch_id, party_id, order_date, due_date,
 	payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
 	grand_total, status, notes, supplier_invoice_number, supplier_invoice_date, payment_term_days,
-	tax_invoice_number, tax_invoice_date, assigned_user_id, created_by`
+	tax_invoice_number, tax_invoice_date, assigned_user_id, created_by,
+	cancel_reason, cancelled_at, cancelled_by, short_close_reason, short_closed_at, short_closed_by`
 
 // List returns one page via a deferred join: the page of ids is picked on the
 // narrow index, only those rows are read wide.
@@ -109,7 +110,8 @@ func scanOrders(rows *sql.Rows) ([]*contracts.PurchaseOrder, error) {
 		if err := rows.Scan(&h.ID, &h.Number, &h.BranchID, &h.PartyID, &h.OrderDate, &h.DueDate,
 			&h.PaymentTerms, &h.TaxType, &h.TaxRate, &h.Subtotal, &h.DiscountTotal, &h.TaxTotal,
 			&h.GrandTotal, &h.Status, &h.Notes, &h.SupplierInvoiceNumber, &h.SupplierInvoiceDate,
-			&h.PaymentTermDays, &h.TaxInvoiceNumber, &h.TaxInvoiceDate, &h.AssignedUserID, &h.CreatedBy); err != nil {
+			&h.PaymentTermDays, &h.TaxInvoiceNumber, &h.TaxInvoiceDate, &h.AssignedUserID, &h.CreatedBy,
+			&h.CancelReason, &h.CancelledAt, &h.CancelledBy, &h.ShortCloseReason, &h.ShortClosedAt, &h.ShortClosedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, toOrder(h))

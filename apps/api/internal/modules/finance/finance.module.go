@@ -73,6 +73,10 @@ func (m *Module) Finance() contracts.FinanceClient {
 // Reverser exposes the cancelled-document reversal (payments/returns call it).
 func (m *Module) Reverser() contracts.SourceReverser { return m.svc }
 
+// PurchaseCorrectionGate exposes the period check and stock/HPP split the
+// purchasing price correction reads (ADR-0023).
+func (m *Module) PurchaseCorrectionGate() contracts.PurchaseCorrectionGate { return m.svc }
+
 // Service exposes use cases to the dev seed (composition root privilege).
 func (m *Module) Service() *application.Service {
 	return m.svc

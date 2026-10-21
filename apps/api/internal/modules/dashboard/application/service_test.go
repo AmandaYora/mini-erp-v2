@@ -330,6 +330,18 @@ func (f *fakePurchasing) SetStatus(_ context.Context, _, _ int64, _ string, _ in
 	return nil
 }
 
+func (f *fakePurchasing) GetCorrection(_ context.Context, _ int64) (*purchasingcontracts.Correction, error) {
+	return nil, nil
+}
+
+func (f *fakePurchasing) ListPriceCorrectionsAfter(_ context.Context, _, _ int64, _ int) ([]*purchasingcontracts.Correction, error) {
+	return nil, nil
+}
+
+func (f *fakePurchasing) CorrectionsByOrder(_ context.Context, _ int64) ([]*purchasingcontracts.Correction, error) {
+	return nil, nil
+}
+
 func (f *fakePurchasing) StatusCounts(_ context.Context, _ int64) (map[string]int64, error) {
 	f.statusCalls++
 	return f.statuses, nil

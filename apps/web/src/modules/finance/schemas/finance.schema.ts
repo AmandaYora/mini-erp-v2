@@ -2,8 +2,9 @@ import { z } from "zod";
 
 // Batasan tervalidasi dari backend (apps/api/internal/modules/finance):
 // - posting docType hanya goods_receipt|delivery|payment|sales_return|stock_movement|
-//   purchase_return | sales_return_settlement | purchase_return_settlement
-//   (builders.go: buildLines; K-04a: saldo customer/supplier dari retur).
+//   purchase_return | sales_return_settlement | purchase_return_settlement |
+//   purchase_price_correction (builders.go: buildLines; K-04a: saldo
+//   customer/supplier dari retur; ADR-0023: koreksi harga beli).
 // - manual: memo wajib; lines ≥1; tiap baris TEPAT satu sisi >0 dan total
 //   debit == kredit > 0 (posting.go: insertEntry + Manual; akun dicari by
 //   CODE, huruf besar otomatis). Baris ke akun kendali per pihak (Piutang,
@@ -28,6 +29,7 @@ export const postingFormSchema = z.object({
       "purchase_return",
       "sales_return_settlement",
       "purchase_return_settlement",
+      "purchase_price_correction",
       "stock_movement",
     ],
     {

@@ -56,7 +56,32 @@ func orderView(o *contracts.PurchaseOrder) map[string]any {
 		"taxInvoiceNumber": o.TaxInvoiceNumber, "taxInvoiceDate": o.TaxInvoiceDate,
 		"assignedUserId": o.AssignedUserID, "assignedUserName": o.AssignedUserName,
 		"createdBy": o.CreatedBy, "createdByName": o.CreatedByName,
+		"cancelReason": o.CancelReason, "cancelledAt": o.CancelledAt, "cancelledByName": o.CancelledByName,
+		"shortCloseReason": o.ShortCloseReason, "shortClosedAt": o.ShortClosedAt, "shortClosedByName": o.ShortClosedByName,
 		"items": items,
+	}
+}
+
+func correctionView(c *contracts.Correction) map[string]any {
+	lines := make([]any, 0, len(c.Lines))
+	for _, l := range c.Lines {
+		lines = append(lines, map[string]any{
+			"itemId": l.OrderItemID, "productId": l.ProductID, "variantId": l.VariantID,
+			"productName": l.ProductName, "uom": l.UOM, "stockTracked": l.StockTracked,
+			"receivedQty": l.ReceivedQty, "oldQty": l.OldQty, "newQty": l.NewQty,
+			"oldUnitPrice": l.OldUnitPrice, "newUnitPrice": l.NewUnitPrice,
+			"oldDiscountPct": l.OldDiscountPct, "newDiscountPct": l.NewDiscountPct,
+			"oldDiscountNominal": l.OldDiscountNominal, "newDiscountNominal": l.NewDiscountNominal,
+			"oldLineTotal": l.OldLineTotal, "newLineTotal": l.NewLineTotal,
+			"valueDelta": l.ValueDelta, "taxDelta": l.TaxDelta,
+		})
+	}
+	return map[string]any{
+		"id": c.ID, "kind": c.Kind, "date": c.Date, "reason": c.Reason,
+		"oldGrandTotal": c.OldGrandTotal, "newGrandTotal": c.NewGrandTotal,
+		"valueDelta": c.ValueDelta, "taxDelta": c.TaxDelta,
+		"createdAt": c.CreatedAt, "createdByName": c.CreatedByName,
+		"lines": lines,
 	}
 }
 
@@ -90,6 +115,8 @@ type orderPayload struct {
 	AssignedUserID        int64         `json:"assignedUserId"`
 	PaymentTermDays       int           `json:"paymentTermDays"`
 	Items                 []linePayload `json:"items" validate:"required"`
+	// Reason: optional note why a confirmed order changed (audited).
+	Reason string `json:"reason"`
 }
 
 func toInput(in orderPayload) application.OrderInput {
@@ -119,6 +146,7 @@ func toInput(in orderPayload) application.OrderInput {
 		TaxInvoiceDate:        in.TaxInvoiceDate,
 		AssignedUserID:        in.AssignedUserID,
 		PaymentTermDays:       in.PaymentTermDays,
+		Reason:                in.Reason,
 	}
 }
 
@@ -181,6 +209,19 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	if rs, rerr := h.svc.ReturnSummaries(r.Context(), []*contracts.PurchaseOrder{o}); rerr == nil {
 		v["returnSummary"] = rs[o.ID]
 	}
+	// The detail page picks the full form or the header-only dialog with it.
+	if o.Status == contracts.StatusConfirmed {
+		if deps, derr := h.svc.HasDependents(r.Context(), o.ID); derr == nil {
+			v["hasDependents"] = deps
+		}
+	}
+	corrections := []any{}
+	if cs, cerr := h.svc.OrderCorrections(r.Context(), o.ID); cerr == nil {
+		for _, c := range cs {
+			corrections = append(corrections, correctionView(c))
+		}
+	}
+	v["corrections"] = corrections
 	response.OK(w, "Data purchase order", v)
 }
 
@@ -241,12 +282,158 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		response.Fail(w, apperror.NotFound("Purchase order"))
 		return
 	}
-	o, appErr := h.svc.CancelOrder(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	var in reasonPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	o, appErr := h.svc.CancelOrder(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
 	}
 	response.OK(w, "Purchase order dibatalkan", orderView(o))
+}
+
+type reasonPayload struct {
+	Reason string `json:"reason"`
+}
+
+type headerPayload struct {
+	DueDate               string `json:"dueDate"`
+	PaymentTermDays       int    `json:"paymentTermDays"`
+	Notes                 string `json:"notes"`
+	SupplierInvoiceNumber string `json:"supplierInvoiceNumber"`
+	SupplierInvoiceDate   string `json:"supplierInvoiceDate"`
+	TaxInvoiceNumber      string `json:"taxInvoiceNumber"`
+	TaxInvoiceDate        string `json:"taxInvoiceDate"`
+	AssignedUserID        int64  `json:"assignedUserId"`
+	Reason                string `json:"reason"`
+}
+
+// UpdateHeader handles PUT /api/v1/purchase-orders/{id}/header.
+func (h *Handler) UpdateHeader(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Purchase order"))
+		return
+	}
+	var in headerPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	o, appErr := h.svc.UpdateHeader(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, application.HeaderInput{
+		DueDate: in.DueDate, PaymentTermDays: in.PaymentTermDays, Notes: in.Notes,
+		SupplierInvoiceNumber: in.SupplierInvoiceNumber, SupplierInvoiceDate: in.SupplierInvoiceDate,
+		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate,
+		AssignedUserID: in.AssignedUserID, Reason: in.Reason,
+	})
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Data order disimpan", orderView(o))
+}
+
+// PreviewShortClose handles GET /api/v1/purchase-orders/{id}/close-short/preview.
+func (h *Handler) PreviewShortClose(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Purchase order"))
+		return
+	}
+	pv, appErr := h.svc.PreviewShortClose(r.Context(), authcontracts.BranchID(r), id)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Pratinjau tutup sisa order", pv)
+}
+
+// ShortClose handles POST /api/v1/purchase-orders/{id}/close-short.
+func (h *Handler) ShortClose(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Purchase order"))
+		return
+	}
+	var in reasonPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	o, pv, appErr := h.svc.ShortClose(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.Reason)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	v := orderView(o)
+	v["correction"] = pv
+	response.OK(w, "Sisa order ditutup", v)
+}
+
+type priceLinePayload struct {
+	LineID          int64    `json:"lineId" validate:"required"`
+	UnitPrice       int64    `json:"unitPrice"`
+	DiscountPct     *float64 `json:"discountPct"`
+	DiscountNominal *int64   `json:"discountNominal"`
+}
+
+type priceCorrectionPayload struct {
+	Lines  []priceLinePayload `json:"lines" validate:"required"`
+	Reason string             `json:"reason"`
+}
+
+func (in priceCorrectionPayload) lines() []application.PriceLineInput {
+	out := make([]application.PriceLineInput, 0, len(in.Lines))
+	for _, l := range in.Lines {
+		out = append(out, application.PriceLineInput{LineID: l.LineID, UnitPrice: l.UnitPrice,
+			DiscountPct: l.DiscountPct, DiscountNominal: l.DiscountNominal})
+	}
+	return out
+}
+
+// PreviewPriceCorrection handles POST /api/v1/purchase-orders/{id}/price-corrections/preview.
+func (h *Handler) PreviewPriceCorrection(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Purchase order"))
+		return
+	}
+	var in priceCorrectionPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	pv, appErr := h.svc.PreviewPriceCorrection(r.Context(), authcontracts.BranchID(r), id, in.lines())
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Pratinjau koreksi harga", pv)
+}
+
+// CorrectPrices handles POST /api/v1/purchase-orders/{id}/price-corrections.
+func (h *Handler) CorrectPrices(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Purchase order"))
+		return
+	}
+	var in priceCorrectionPayload
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	o, pv, appErr := h.svc.CorrectPrices(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.lines(), in.Reason)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	v := orderView(o)
+	v["correction"] = pv
+	response.Created(w, "Harga beli dikoreksi", v)
 }
 
 // RegisterRoutes mounts purchasing endpoints with explicit permissions.
@@ -258,5 +445,10 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("PUT /api/v1/purchase-orders/{id}", perm("purchasing.update", authcontracts.Guard(h.Update, branchGuard)))
 	mux.Handle("POST /api/v1/purchase-orders/{id}/confirm", perm("purchasing.update", authcontracts.Guard(h.Confirm, branchGuard)))
 	mux.Handle("POST /api/v1/purchase-orders/{id}/cancel", perm("purchasing.archive", authcontracts.Guard(h.Cancel, branchGuard)))
+	mux.Handle("PUT /api/v1/purchase-orders/{id}/header", perm("purchasing.update", authcontracts.Guard(h.UpdateHeader, branchGuard)))
+	mux.Handle("GET /api/v1/purchase-orders/{id}/close-short/preview", perm("purchasing.archive", authcontracts.Guard(h.PreviewShortClose, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-orders/{id}/close-short", perm("purchasing.archive", authcontracts.Guard(h.ShortClose, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-orders/{id}/price-corrections/preview", perm("purchasing.update", authcontracts.Guard(h.PreviewPriceCorrection, branchGuard)))
+	mux.Handle("POST /api/v1/purchase-orders/{id}/price-corrections", perm("purchasing.update", authcontracts.Guard(h.CorrectPrices, branchGuard)))
 	mux.Handle("GET /api/v1/purchase-orders/export", perm("purchasing.export", authcontracts.Guard(h.Export, branchGuard)))
 }

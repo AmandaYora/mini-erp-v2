@@ -93,6 +93,11 @@ type GoodsReceiptClient interface {
 	// ActiveReceiptCount counts the order's live (pending + posted)
 	// receipts. Purchasing uses it to refuse cancelling an order under them.
 	ActiveReceiptCount(ctx context.Context, poID int64) (int64, error)
+	// PendingReceiptCount counts the order's pending receipts (stock not or
+	// not fully moved). Purchasing refuses a short close or a price correction
+	// while one exists: it would be valued half at the old, half at the new
+	// economics.
+	PendingReceiptCount(ctx context.Context, poID int64) (int64, error)
 	// ListRecent lists POSTED receipts newest-first, bounded by limit. A
 	// pending or void receipt moved no (complete) stock and is never
 	// journalled. Finance reads it for the derived posting queue.
