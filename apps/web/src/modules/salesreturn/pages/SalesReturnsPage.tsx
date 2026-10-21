@@ -11,7 +11,7 @@ import {
   SectionCard,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Money, Page, Toolbar } from "@/shared/components/patterns";
+import { DocNumber, Money, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, statusLabel } from "@/shared/lib/format";
 import { fromCsv } from "@/shared/lib/list-query";
@@ -84,6 +84,7 @@ export default function SalesReturnsPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="sales-returns" columnsKey="sales-returns" />}
         search={
           <SearchInput
             aria-label="Cari retur"
@@ -128,6 +129,7 @@ export default function SalesReturnsPage() {
 
       <SectionCard flush>
         <DataTable<SalesReturn>
+          columnsKey="sales-returns"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

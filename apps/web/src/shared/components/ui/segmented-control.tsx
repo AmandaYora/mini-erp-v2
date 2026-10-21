@@ -23,7 +23,7 @@ export function Segmented({ options, value, onChange }: SegmentedProps) {
             onClick={() => onChange(o.value)}
             className={`cursor-pointer rounded-md px-3 py-1 text-[0.8125rem] font-medium transition-[background-color,color,box-shadow] duration-150 ${
               active
-                ? "bg-card text-foreground shadow-[0_1px_2px_rgba(11,18,32,0.12)]"
+                ? "bg-card text-foreground shadow-[var(--shadow-md)]"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >

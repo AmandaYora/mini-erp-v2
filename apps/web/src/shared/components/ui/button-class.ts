@@ -15,7 +15,7 @@ const buttonVariants = cva(
         secondary:
           "border border-input bg-card text-foreground shadow-[var(--shadow-card)] hover:bg-accent hover:text-accent-foreground",
         ghost: "text-primary hover:bg-accent",
-        danger: "bg-destructive text-white hover:brightness-95",
+        danger: "bg-destructive text-destructive-foreground hover:brightness-95",
       },
       size: {
         sm: "h-8 px-3 text-sm",

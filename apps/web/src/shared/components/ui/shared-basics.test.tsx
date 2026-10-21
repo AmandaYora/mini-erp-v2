@@ -53,7 +53,7 @@ describe("SelectField", () => {
     );
     // SearchSelect sync (bukan Async): trigger tanpa aria-expanded.
     await user.click(screen.getByRole("button", { name: "Pilih…" }));
-    await user.click(screen.getByRole("button", { name: "B" }));
+    await user.click(screen.getByRole("option", { name: "B" }));
     expect(onChange).toHaveBeenCalledWith(2);
     expect(container.querySelector('input[type="hidden"][name="lokasi"]')).not.toBeNull();
   });

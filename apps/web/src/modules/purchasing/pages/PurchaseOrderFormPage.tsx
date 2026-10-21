@@ -711,6 +711,7 @@ export default function PurchaseOrderFormPage() {
         return (
           <div className="min-w-0">
             <SearchSelect
+              aria-label={`Produk baris ${idx + 1}`}
               options={productOptions}
               value={row.productId}
               onChange={(v) => void handleProductChange(row.key, typeof v === "number" ? v : null)}

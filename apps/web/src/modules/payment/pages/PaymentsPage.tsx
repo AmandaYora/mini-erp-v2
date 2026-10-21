@@ -19,7 +19,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/shared/components/ui";
-import { DocNumber, Money, Page, Toolbar, useUrlTab } from "@/shared/components/patterns";
+import { DocNumber, Money, Page, SavedViews, Toolbar, useUrlTab } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate } from "@/shared/lib/format";
 import { isAbort, toApiError } from "@/shared/services/http-client";
@@ -281,6 +281,7 @@ export default function PaymentsPage() {
 
         <TabsContent value="daftar" className="flex flex-col gap-6">
           <Toolbar
+            right={<SavedViews listKey="payments" columnsKey="payments" />}
             search={
               <SearchInput
                 aria-label="Cari pembayaran"
@@ -407,6 +408,7 @@ export default function PaymentsPage() {
               </p>
             )}
             <DataTable<Payment>
+              columnsKey="payments"
               rows={items}
               rowKey={(r) => r.id}
               loading={loading}

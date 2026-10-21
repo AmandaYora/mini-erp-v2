@@ -211,6 +211,7 @@ export function HierarchicalSelect({
                     <button
                       key={`${option.value}-${option.label}`}
                       type="button"
+                      data-select-option=""
                       disabled={option.disabled}
                       aria-disabled={option.disabled}
                       onClick={() => handleSelect(option)}

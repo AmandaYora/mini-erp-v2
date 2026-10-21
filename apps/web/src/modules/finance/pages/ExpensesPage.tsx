@@ -13,7 +13,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { ActionMenu, DocNumber, Money, Page, Toolbar } from "@/shared/components/patterns";
+import { ActionMenu, DocNumber, Money, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, statusLabel } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
@@ -135,6 +135,7 @@ export default function ExpensesPage() {
       <PageHeader title="Biaya" description="Biaya operasional yang otomatis memposting jurnal." actions={createButton} />
 
       <Toolbar
+        right={<SavedViews listKey="expenses" columnsKey="expenses" />}
         search={<SearchInput aria-label="Cari biaya" value={filters.search} onSearch={(v) => setFilters({ search: v })} placeholder="Nomor atau catatan…" />}
         primary={
           <>
@@ -179,6 +180,7 @@ export default function ExpensesPage() {
 
       <SectionCard flush>
         <DataTable<Expense>
+          columnsKey="expenses"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

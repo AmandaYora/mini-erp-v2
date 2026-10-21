@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Columns3 } from "lucide-react";
 import { Checkbox } from "@/shared/components/primitives/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/components/primitives/popover";
@@ -6,6 +6,7 @@ import { EmptyState } from "../feedback/empty-state";
 import { ErrorState } from "../feedback/error-state";
 import { TableSkeleton } from "../feedback/skeleton";
 import { cn } from "@/shared/lib/cn";
+import { onHiddenColumnsChange, readHiddenColumns, writeHiddenColumns } from "@/shared/lib/list-views";
 import { Button } from "./button";
 
 export type DataTableAlign = "left" | "center" | "right";
@@ -77,15 +78,8 @@ function colId<T>(c: DataTableColumn<T>): string {
 }
 
 function readHidden<T>(key: string | undefined, columns: DataTableColumn<T>[]): Set<string> {
-  const defaults = new Set(columns.filter((c) => c.defaultHidden).map(colId));
-  if (!key) return defaults;
-  try {
-    const raw = localStorage.getItem(`mini-erp.cols.${key}`);
-    if (raw) return new Set(JSON.parse(raw) as string[]);
-  } catch {
-    /* penyimpanan privat: pakai default */
-  }
-  return defaults;
+  const saved = key ? readHiddenColumns(key) : null;
+  return new Set(saved ?? columns.filter((c) => c.defaultHidden).map(colId));
 }
 
 export function DataTable<T>({
@@ -112,6 +106,13 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const rows = rowsProp ?? [];
   const [hidden, setHidden] = useState<Set<string>>(() => readHidden(columnsKey, columns));
+  // Tampilan tersimpan bisa mengganti pilihan kolom dari luar tabel.
+  useEffect(() => {
+    if (!columnsKey) return;
+    return onHiddenColumnsChange(columnsKey, () => setHidden(readHidden(columnsKey, columns)));
+    // `columns` dibuat ulang tiap render; default-nya hanya dibaca saat event tiba.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnsKey]);
   const visible = useMemo(() => columns.filter((c) => !hidden.has(colId(c))), [columns, hidden]);
 
   if (error) return <ErrorState message={error} onRetry={onRetry} className="m-4" />;
@@ -143,13 +144,7 @@ export function DataTable<T>({
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setHidden(next);
-    if (columnsKey) {
-      try {
-        localStorage.setItem(`mini-erp.cols.${columnsKey}`, JSON.stringify([...next]));
-      } catch {
-        /* abaikan */
-      }
-    }
+    if (columnsKey) writeHiddenColumns(columnsKey, [...next]);
   }
   function handleRowClick(e: MouseEvent<HTMLTableRowElement>, row: T) {
     if (!onRowClick) return;

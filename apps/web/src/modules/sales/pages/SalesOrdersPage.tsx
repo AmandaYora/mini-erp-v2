@@ -19,7 +19,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Money, Page, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
+import { DocNumber, Money, Page, SavedViews, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate, statusLabel } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
@@ -153,6 +153,7 @@ export default function SalesOrdersPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="sales-orders" columnsKey="sales-orders" />}
         search={
           <SearchInput
             aria-label="Cari order jual"
@@ -242,6 +243,7 @@ export default function SalesOrdersPage() {
 
       <SectionCard flush>
         <DataTable<SalesOrder>
+          columnsKey="sales-orders"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

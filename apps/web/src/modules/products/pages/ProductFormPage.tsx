@@ -390,7 +390,7 @@ export default function ProductFormPage() {
       )}
 
       <form onSubmit={handleSubmit}>
-        <div className="grid gap-x-10 xl:grid-cols-[10rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-x-10 xl:grid-cols-[10rem_minmax(0,1fr)]">
           <SectionNav />
           <div className="min-w-0">
             <FormSection id="sec-identitas" title="Identitas" description="Kode, nama, tipe, dan kategori produk.">

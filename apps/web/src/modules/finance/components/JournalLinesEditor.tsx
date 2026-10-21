@@ -35,6 +35,7 @@ export function JournalLinesEditor({
       render: (l, i) => (
         <div role="group" aria-label={`Akun baris ${i + 1}`}>
           <SearchSelect
+            aria-label={`Akun baris ${i + 1}`}
             options={options}
             value={l.accountCode || null}
             onChange={(v) => draft.update(l.key, { accountCode: typeof v === "string" ? v : "" })}

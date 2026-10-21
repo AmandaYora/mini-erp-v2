@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { setAuthExpiredHandler, toApiError, tokenStore } from "@/shared/services/http-client";
+import { setPrefsOwner } from "@/shared/stores/ui-prefs.store";
 import { authService } from "@/modules/auth/services/auth.service";
 import type { AuthBranch, AuthCompany, AuthRole, AuthUser } from "@/modules/auth/types";
 
@@ -100,6 +101,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   can: (perm) => get().permissions.includes(perm),
 }));
+
+// Preferensi tampilan (kolom, tampilan tersimpan, terakhir dibuka) mengikuti pengguna aktif.
+useAuthStore.subscribe((s, prev) => {
+  if (s.user?.id !== prev.user?.id) setPrefsOwner(s.user?.id);
+});
 
 /** Sekali saat boot: refresh gagal total = tendang ke login. */
 export function wireAuthExpiry(onExpired: () => void) {

@@ -28,7 +28,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => void useAuthStore.getState().loadMe()}
-            className="mt-6 cursor-pointer rounded-lg bg-primary px-4 py-2 font-semibold text-white hover:bg-primary-hover"
+            className="mt-6 cursor-pointer rounded-lg bg-primary px-4 py-2 font-semibold text-primary-foreground hover:bg-primary-hover"
           >
             Coba lagi
           </button>

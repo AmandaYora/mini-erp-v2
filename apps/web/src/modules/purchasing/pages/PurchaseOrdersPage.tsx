@@ -14,7 +14,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Money, Page, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
+import { DocNumber, Money, Page, SavedViews, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, statusLabel } from "@/shared/lib/format";
 import { fromCsv } from "@/shared/lib/list-query";
 import { isAbort, toApiError } from "@/shared/services/http-client";
@@ -150,6 +150,7 @@ export default function PurchaseOrdersPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="purchase-orders" columnsKey="purchase-orders" />}
         search={
           <SearchInput
             aria-label="Cari order beli"
@@ -204,6 +205,7 @@ export default function PurchaseOrdersPage() {
 
       <SectionCard flush>
         <DataTable<PurchaseOrder>
+          columnsKey="purchase-orders"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

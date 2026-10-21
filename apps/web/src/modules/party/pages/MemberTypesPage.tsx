@@ -10,7 +10,7 @@ import {
   SectionCard,
   StatusBadge,
 } from "@/shared/components/ui";
-import { ActionMenu, ArchiveViewToggle, DocNumber, Page, Toolbar } from "@/shared/components/patterns";
+import { ActionMenu, ArchiveViewToggle, DocNumber, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatIDR } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
@@ -186,10 +186,13 @@ export default function MemberTypesPage() {
         }
         primary={<PartyStatusFilter value={filters.status} onChange={(v) => setFilters({ status: v })} />}
         right={
-          <ArchiveViewToggle
-            showingArchive={filters.status === "archived"}
-            onChange={(show) => setFilters({ status: show ? "archived" : "active" })}
-          />
+          <>
+            <ArchiveViewToggle
+              showingArchive={filters.status === "archived"}
+              onChange={(show) => setFilters({ status: show ? "archived" : "active" })}
+            />
+            <SavedViews listKey="member-types" columnsKey="member-types" />
+          </>
         }
         active={active}
         onClearAll={() => setFilters(PARTY_LIST_DEFAULTS)}
@@ -197,6 +200,7 @@ export default function MemberTypesPage() {
 
       <SectionCard flush>
         <DataTable<MemberType>
+          columnsKey="member-types"
           rows={rows}
           rowKey={(r) => r.id}
           loading={loading}

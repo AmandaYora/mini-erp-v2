@@ -1,3 +1,4 @@
+import { AlertDialog as AlertDialogPrimitive } from "radix-ui";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -19,8 +20,10 @@ export interface ConfirmDialogProps {
 }
 
 /**
- * Konfirmasi (AlertDialog Radix, role=alertdialog). Tombol dikelola manual — Esc/overlay
- * memanggil onCancel; "konfirmasi" tidak ikut memicu onCancel.
+ * Konfirmasi (AlertDialog Radix, role=alertdialog). Esc/overlay/"Batal" memanggil onCancel;
+ * "konfirmasi" tidak ikut memicu onCancel. "Batal" adalah `AlertDialog.Cancel`: Radix memindahkan
+ * fokus ke sana saat dialog terbuka (tanpa itu fokus tertinggal di tombol pembuka di belakang
+ * overlay — U7-2) dan pilihan aman menjadi bawaan Enter.
  */
 export function ConfirmDialog({
   open,
@@ -39,9 +42,11 @@ export function ConfirmDialog({
           <AlertDialogDescription className="mt-2 text-base text-foreground">{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="mt-6 flex-row justify-end gap-2 border-t border-border pt-4">
-          <Button variant="secondary" size="sm" onClick={onCancel}>
-            Batal
-          </Button>
+          <AlertDialogPrimitive.Cancel asChild>
+            <Button variant="secondary" size="sm">
+              Batal
+            </Button>
+          </AlertDialogPrimitive.Cancel>
           <Button variant={tone === "danger" ? "danger" : "primary"} size="sm" onClick={onConfirm}>
             {confirmLabel}
           </Button>

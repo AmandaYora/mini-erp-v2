@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 /**
  * Kelas Tailwind + tipe + helper murni untuk trio select
@@ -103,4 +103,43 @@ export function getOptionDisplayLabel(
   if (!option) return placeholder;
   if (option.path && option.path.length > 0) return option.path.join(" > ");
   return option.label;
+}
+
+/**
+ * Navigasi keyboard daftar opsi di dalam popover select (dipasang di wadah popover):
+ * - ↓ dari kotak cari / opsi → opsi berikutnya (berputar ke awal), ↑ → opsi sebelumnya, dari opsi
+ *   pertama kembali ke kotak cari;
+ * - Enter di kotak cari memilih opsi pertama yang aktif (tanpa mengirim form di belakangnya).
+ * Opsi ditandai `data-select-option` dan dipilih lewat klik programatik, sehingga tiap select tetap
+ * memakai handler pilihnya sendiri.
+ */
+export function selectListKeyDown(e: KeyboardEvent<HTMLElement>): void {
+  // Sudah ditangani isian (mis. AsyncSearchSelect menunda Enter saat daftar masih basi).
+  if (e.defaultPrevented) {
+    if (e.key === "Enter") e.stopPropagation();
+    return;
+  }
+  const root = e.currentTarget;
+  const options = Array.from(root.querySelectorAll<HTMLElement>("[data-select-option]:not(:disabled)"));
+  const input = root.querySelector<HTMLInputElement>("input");
+  const target = e.target as HTMLElement;
+  const idx = options.indexOf(target);
+  // Popover dirender lewat portal, tetapi event React tetap merambat ke induk di pohon komponen
+  // (mis. baris LineItemsEditor yang menambah baris saat Enter): hentikan setelah ditangani.
+  if (e.key === "ArrowDown") {
+    if (options.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    (options[idx + 1] ?? options[0]).focus();
+  } else if (e.key === "ArrowUp") {
+    if (idx < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (idx === 0) input?.focus();
+    else options[idx - 1].focus();
+  } else if (e.key === "Enter" && target === input) {
+    e.preventDefault();
+    e.stopPropagation();
+    options[0]?.click();
+  }
 }

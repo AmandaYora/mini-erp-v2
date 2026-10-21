@@ -42,6 +42,7 @@
   --warning: oklch(0.53 0.12 60);
   --warning-soft: oklch(0.965 0.045 85);
   --destructive: oklch(0.52 0.19 27);
+  --destructive-foreground: oklch(1 0 0);
   --destructive-soft: oklch(0.96 0.025 25);
   --info: oklch(0.5 0.1 225);
   --info-soft: oklch(0.96 0.025 225);
@@ -73,6 +74,8 @@
   --shadow-card: 0 1px 2px oklch(0.21 0.025 262 / 0.04);
   --shadow-md: 0 1px 0 oklch(0.21 0.025 262 / 0.04), 0 4px 12px -4px oklch(0.21 0.025 262 / 0.08);
   --shadow-pop: 0 8px 24px -6px oklch(0.21 0.025 262 / 0.14), 0 2px 4px oklch(0.21 0.025 262 / 0.06);
+  /* Pendar bilah muat global (warna brand setengah transparan) */
+  --shadow-glow: 0 0 10px color-mix(in oklab, var(--primary) 50%, transparent);
 }
 
 html[data-density="compact"] {
@@ -135,6 +138,7 @@ html[data-density="comfortable"] {
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-destructive-soft: var(--destructive-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);

@@ -440,9 +440,10 @@ export default function SalesReturnCreatePage() {
       id: "product",
       header: "Produk",
       width: "14rem",
-      render: (r) => (
+      render: (r, i) => (
         <div>
           <SearchSelect
+            aria-label={`Produk pengganti baris ${i + 1}`}
             options={productOptions.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))}
             value={r.productId}
             placeholder="Pilih produk…"

@@ -10,7 +10,7 @@ import {
   StatusBadge,
 } from "@/shared/components/ui";
 import type { SearchSelectOption } from "@/shared/components/ui";
-import { ArchiveViewToggle, DocNumber, Page, Toolbar } from "@/shared/components/patterns";
+import { ArchiveViewToggle, DocNumber, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
@@ -132,10 +132,13 @@ export default function CustomersPage() {
         }
         primary={<PartyStatusFilter value={filters.status} onChange={(v) => setFilters({ status: v })} />}
         right={
-          <ArchiveViewToggle
-            showingArchive={filters.status === "archived"}
-            onChange={(show) => setFilters({ status: show ? "archived" : "active" })}
-          />
+          <>
+            <ArchiveViewToggle
+              showingArchive={filters.status === "archived"}
+              onChange={(show) => setFilters({ status: show ? "archived" : "active" })}
+            />
+            <SavedViews listKey="customers" columnsKey="customers" />
+          </>
         }
         active={active}
         onClearAll={() => setFilters(PARTY_LIST_DEFAULTS)}
@@ -143,6 +146,7 @@ export default function CustomersPage() {
 
       <SectionCard flush>
         <DataTable<Customer>
+          columnsKey="customers"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

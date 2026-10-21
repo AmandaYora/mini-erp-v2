@@ -12,7 +12,7 @@ import {
   SelectInput,
   TextInput,
 } from "@/shared/components/ui";
-import { Page, Toolbar } from "@/shared/components/patterns";
+import { Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, formatDateTime } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
@@ -91,6 +91,7 @@ export default function AuditPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="audit" columnsKey="audit" />}
         search={
           <SelectInput
             aria-label="Aksi"
@@ -178,6 +179,7 @@ export default function AuditPage() {
 
       <SectionCard flush>
         <DataTable<AuditRecord>
+          columnsKey="audit"
           caption="Jejak audit"
           rows={data?.items}
           rowKey={(r) => r.id}

@@ -408,6 +408,7 @@ export default function CreateDeliveryPage() {
                   width: "16rem",
                   render: (r) => (
                     <SearchSelect
+                      aria-label={`Lokasi asal ${r.productName}`}
                       options={(locations ?? []).map((l) => ({ value: l.id, label: `${l.code} — ${l.name}` }))}
                       value={r.locationId}
                       placeholder="Otomatis (server)"

@@ -162,7 +162,7 @@ describe("Modal & ConfirmDialog (Radix)", () => {
     );
     const dialog = screen.getByRole("dialog", { name: "Form" });
     await user.click(within(dialog).getByRole("button", { name: "Pilih…" }));
-    await user.click(await screen.findByRole("button", { name: "Dua" }));
+    await user.click(await screen.findByRole("option", { name: "Dua" }));
     expect(onChange).toHaveBeenCalledWith(2);
   });
 

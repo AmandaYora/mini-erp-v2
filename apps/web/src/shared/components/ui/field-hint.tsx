@@ -58,7 +58,7 @@ export function FieldHint({ children }: { children: ReactNode }) {
         aria-label="Keterangan"
         aria-expanded={open}
         className={[
-          "inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 p-0 text-[0.75rem] font-bold leading-none text-white transition-[background-color,opacity] duration-150",
+          "inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 p-0 text-[0.75rem] font-bold leading-none text-primary-foreground transition-[background-color,opacity] duration-150",
           open ? "bg-primary opacity-100" : "bg-muted-foreground opacity-65",
         ].join(" ")}
       >
@@ -67,7 +67,7 @@ export function FieldHint({ children }: { children: ReactNode }) {
       {open && pos && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fixed z-[9999] max-w-[260px] -translate-x-1/2 rounded-md border border-border bg-card px-3 py-2 text-[0.8rem] leading-normal text-foreground shadow-[0_4px_16px_rgba(0,0,0,0.12)]"
+              className="fixed z-[9999] max-w-[260px] -translate-x-1/2 rounded-md border border-border bg-card px-3 py-2 text-[0.8rem] leading-normal text-foreground shadow-[var(--shadow-pop)]"
               style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}
             >
               {children}

@@ -58,7 +58,7 @@ function open() {
 async function pickBranch(label: string) {
   const trigger = await screen.findByRole("button", { name: /Cabang tujuan/ });
   fireEvent.click(trigger);
-  fireEvent.click(await screen.findByRole("button", { name: label }));
+  fireEvent.click(await screen.findByRole("option", { name: label }));
 }
 
 describe("TransferNewPage — lokasi tujuan mengikuti cabang tujuan (K-06)", () => {
@@ -80,7 +80,7 @@ describe("TransferNewPage — lokasi tujuan mengikuti cabang tujuan (K-06)", () 
     const destTrigger = await screen.findByRole("button", { name: /Lokasi tujuan/ });
     await waitFor(() => expect(destTrigger).toBeEnabled());
     fireEvent.click(destTrigger);
-    fireEvent.click(await screen.findByRole("button", { name: "K2 — Gudang K2" }));
+    fireEvent.click(await screen.findByRole("option", { name: "K2 — Gudang K2" }));
     expect(await screen.findByText("K2 — Gudang K2")).toBeInTheDocument();
 
     // Ganti cabang tujuan: pilihan lama dikosongkan, daftar cabang 3 dimuat.

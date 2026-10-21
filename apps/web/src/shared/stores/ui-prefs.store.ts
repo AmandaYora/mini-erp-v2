@@ -6,6 +6,19 @@ const DENSITY_KEY = "mini-erp.density";
 const RECENT_KEY = "mini-erp.recent";
 const RECENT_MAX = 8;
 
+// Pemilik preferensi per pengguna (PLAN U11: "terakhir dibuka", kolom tabel, dan tampilan
+// tersimpan disimpan di localStorage per pengguna). Diisi store auth setiap kali user berganti.
+let prefsOwner = "anon";
+
+export function setPrefsOwner(userId: number | string | null | undefined): void {
+  prefsOwner = userId === null || userId === undefined || userId === "" ? "anon" : String(userId);
+}
+
+/** Kunci localStorage yang dibatasi pengguna aktif: `<base>@<userId>`. */
+export function userKey(base: string): string {
+  return `${base}@${prefsOwner}`;
+}
+
 function readDensity(): Density {
   try {
     const v = localStorage.getItem(DENSITY_KEY);
@@ -48,7 +61,7 @@ export interface RecentDoc {
 
 export function readRecent(): RecentDoc[] {
   try {
-    const raw = localStorage.getItem(RECENT_KEY);
+    const raw = localStorage.getItem(userKey(RECENT_KEY));
     return raw ? (JSON.parse(raw) as RecentDoc[]) : [];
   } catch {
     return [];
@@ -59,7 +72,7 @@ export function readRecent(): RecentDoc[] {
 export function pushRecent(doc: RecentDoc): void {
   try {
     const next = [doc, ...readRecent().filter((d) => d.path !== doc.path)].slice(0, RECENT_MAX);
-    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    localStorage.setItem(userKey(RECENT_KEY), JSON.stringify(next));
   } catch {
     /* abaikan */
   }

@@ -13,7 +13,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Page, Qty, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
+import { DocNumber, Page, Qty, SavedViews, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, statusLabel } from "@/shared/lib/format";
 import { isAbort, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
@@ -100,6 +100,7 @@ export default function DeliveriesPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="deliveries" columnsKey="deliveries" />}
         search={
           <SearchInput
             aria-label="Cari surat jalan"
@@ -157,6 +158,7 @@ export default function DeliveriesPage() {
 
       <SectionCard flush>
         <DataTable<DeliveryNote>
+          columnsKey="deliveries"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

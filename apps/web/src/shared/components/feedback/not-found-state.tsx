@@ -30,7 +30,7 @@ export function NotFoundState({
       </span>
       <p className="font-display text-3xl font-semibold text-foreground">404</p>
       <h1 className="mt-1 text-lg font-semibold text-foreground">{title}</h1>
-      <p className="mt-1 text-sm text-muted-foreground">{message}</p>
+      <p className="mt-1 text-sm break-words text-muted-foreground [overflow-wrap:anywhere]">{message}</p>
       {children}
       <Link to={backTo} className={`${buttonClass("primary", "md")} mt-6 hover:no-underline`}>
         {backLabel}

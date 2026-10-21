@@ -95,16 +95,19 @@ export function SearchSelect({
             className={INPUT}
           />
         </div>
-        <ul className="overflow-auto p-1" style={{ maxHeight: LIST_MAX_HEIGHT }}>
+        <ul role="listbox" className="overflow-auto p-1" style={{ maxHeight: LIST_MAX_HEIGHT }}>
           {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-muted-foreground">Tidak ada hasil</li>
+            <li role="presentation" className="px-3 py-2 text-sm text-muted-foreground">Tidak ada hasil</li>
           ) : (
             filtered.map((o) => {
               const active = o.value === value;
               return (
-                <li key={o.value}>
+                <li key={o.value} role="presentation">
                   <button
                     type="button"
+                    role="option"
+                    aria-selected={active}
+                    data-select-option=""
                     onClick={() => {
                       onChange(o.value);
                       setOpen(false);

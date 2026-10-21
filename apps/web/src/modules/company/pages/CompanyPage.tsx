@@ -81,7 +81,7 @@ export default function CompanyPage() {
       ) : error || !data ? (
         <ErrorState message={error ?? "Data perusahaan tidak tersedia."} onRetry={reload} />
       ) : (
-        <div className="grid items-start gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[11rem_minmax(0,1fr)]">
           <nav aria-label="Seksi pengaturan" className="flex gap-1 overflow-x-auto lg:sticky lg:top-20 lg:flex-col">
             {SECTIONS.map((s) => (
               <button

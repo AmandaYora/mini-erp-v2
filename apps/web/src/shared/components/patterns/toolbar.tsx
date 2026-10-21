@@ -57,7 +57,7 @@ export function Toolbar({
             </PopoverContent>
           </Popover>
         )}
-        {right && <div className="ml-auto flex items-center gap-2">{right}</div>}
+        {right && <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">{right}</div>}
       </div>
       {active.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">

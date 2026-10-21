@@ -14,6 +14,12 @@
 //   linkButton   <Link> membungkus <Button>
 //   segmented    <Segmented di halaman/komponen modul
 //   hex          warna hex mentah di className/style
+//
+// Audit token (U6-4, nol toleransi, terpisah dari ratchet): di SELURUH apps/web/src kecuali theme/,
+// modules/print (kertas), dan *.test.*, tidak boleh ada warna mentah — hex, rgb()/hsl()/oklch(), atau
+// kelas palet Tailwind (bg-red-500, text-white, …). Warna hanya lewat token di theme/theme.css, supaya
+// tema gelap kelak cukup menambah blok `.dark`. Baris yang memang butuh warna tetap (mis. latar putih
+// QR) diberi `ui-ratchet-ignore` beserta alasannya.
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -66,7 +72,39 @@ function measure() {
   return Object.fromEntries(Object.entries(res).sort(([a], [b]) => a.localeCompare(b)));
 }
 
+const PALETTE =
+  "red|blue|green|yellow|gray|grey|slate|zinc|neutral|stone|orange|amber|lime|emerald|teal|cyan|sky|indigo|violet|purple|fuchsia|pink|rose";
+const RAW_COLOR = [
+  ["hex", CATEGORIES.hex],
+  ["fungsi warna", /\b(?:rgba?|hsla?|oklch|oklab|lab|lch)\(/g],
+  [
+    "kelas palet",
+    new RegExp(
+      `\\b(?:bg|text|border(?:-[trblxy])?|ring|ring-offset|fill|stroke|from|to|via|outline|divide|shadow|decoration|accent|caret|placeholder)-(?:(?:${PALETTE})-\\d{2,3}|white|black)\\b`,
+      "g",
+    ),
+  ],
+];
+
+function tokenAudit() {
+  const found = [];
+  for (const file of walk(SRC)) {
+    const rel = relative(SRC, file).split(sep);
+    if (rel[0] === "theme" || rel[0] === "test" || (rel[0] === "modules" && rel[1] === "print")) continue;
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (line.includes("ui-ratchet-ignore")) return;
+        for (const [kind, re] of RAW_COLOR) {
+          for (const m of line.matchAll(re)) found.push(`${rel.join("/")}:${i + 1} ${kind} ${m[0].replace(/^["'`(\s[]/, "")}`);
+        }
+      });
+  }
+  return found;
+}
+
 const args = new Set(process.argv.slice(2));
+const rawColors = tokenAudit();
 const now = measure();
 const cats = Object.keys(CATEGORIES);
 const total = Object.fromEntries(cats.map((c) => [c, Object.values(now).reduce((n, r) => n + r[c], 0)]));
@@ -75,6 +113,8 @@ if (args.has("--report")) {
   console.log(["scope".padEnd(16), ...cats.map((c) => c.padStart(12))].join(" "));
   for (const [s, r] of Object.entries(now)) console.log([s.padEnd(16), ...cats.map((c) => String(r[c]).padStart(12))].join(" "));
   console.log(["TOTAL".padEnd(16), ...cats.map((c) => String(total[c]).padStart(12))].join(" "));
+  console.log(`audit token: ${rawColors.length} warna mentah`);
+  for (const f of rawColors) console.log(`  ${f}`);
   process.exit(0);
 }
 
@@ -93,6 +133,14 @@ if (args.has("--update") || !prev) {
   process.exit(0);
 }
 
+if (rawColors.length > 0) {
+  console.error(
+    "ui-ratchet: GAGAL — warna mentah di luar theme/ (audit token U6-4; pakai kelas token, atau beri `ui-ratchet-ignore` + alasan):\n  " +
+      rawColors.join("\n  "),
+  );
+  process.exit(1);
+}
+
 const bad = [];
 for (const [s, r] of Object.entries(now)) {
   const base = prev.scopes[s] ?? Object.fromEntries(cats.map((c) => [c, 0]));
@@ -103,4 +151,4 @@ if (bad.length > 0) {
   process.exit(1);
 }
 const improved = cats.filter((c) => total[c] < prev.total[c]);
-console.log(`ui-ratchet: OK. total=${JSON.stringify(total)}${improved.length ? `  (turun: ${improved.join(", ")} — jalankan --update untuk mengunci)` : ""}`);
+console.log(`ui-ratchet: OK (audit token: 0 warna mentah). total=${JSON.stringify(total)}${improved.length ? `  (turun: ${improved.join(", ")} — jalankan --update untuk mengunci)` : ""}`);

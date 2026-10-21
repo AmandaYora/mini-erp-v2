@@ -14,7 +14,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { ActionMenu, ArchiveViewToggle, DocNumber, Money, Page, Toolbar } from "@/shared/components/patterns";
+import { ActionMenu, ArchiveViewToggle, DocNumber, Money, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { ErrorState } from "@/shared/components/feedback/error-state";
@@ -311,6 +311,7 @@ export default function ProductsPage() {
               <LayoutGrid aria-hidden /> Galeri
             </Button>
           </div>
+            <SavedViews listKey="products" columnsKey="products" />
           </>
         }
       />
@@ -354,6 +355,7 @@ export default function ProductsPage() {
           )
         ) : (
           <DataTable<Product>
+            columnsKey="products"
             rows={items}
             rowKey={(r) => r.id}
             loading={loading}

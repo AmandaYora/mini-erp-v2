@@ -124,6 +124,10 @@ export function AsyncSearchSelect({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [tooShort, setTooShort] = useState(false);
+  // Kata kunci yang hasilnya sedang tampil; beda dengan `search` = daftar basi (debounce/fetch berjalan).
+  const [settledQuery, setSettledQuery] = useState<string | null>(null);
+  // Enter ditekan saat daftar basi: pilih hasil pertama begitu hasil kata kunci terbaru tiba (U7-2).
+  const pendingEnterRef = useRef(false);
 
   const seqRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -145,6 +149,8 @@ export function AsyncSearchSelect({
       setFetchError(null);
       setLoading(false);
       setTooShort(true);
+      setSettledQuery(trimmedQuery);
+      pendingEnterRef.current = false;
       return;
     }
     setTooShort(false);
@@ -162,6 +168,12 @@ export function AsyncSearchSelect({
         if (seqRef.current !== requestId) return;
         const next = Array.isArray(result) ? result : result.options;
         setOptions(next);
+        setSettledQuery(trimmedQuery);
+        if (pendingEnterRef.current) {
+          pendingEnterRef.current = false;
+          const first = next[0];
+          if (first) handleSelect(first);
+        }
         setHasMore(Array.isArray(result) ? false : Boolean(result.hasMore));
         const selected = next.find((o) => o.value === valueAtStart);
         if (selected) setSelectedCache(selected);
@@ -173,6 +185,8 @@ export function AsyncSearchSelect({
         setOptions([]);
         setHasMore(false);
         setFetchError("Gagal memuat pilihan");
+        setSettledQuery(trimmedQuery);
+        pendingEnterRef.current = false;
       })
       .finally(() => {
         if (seqRef.current === requestId) setLoading(false);
@@ -197,6 +211,7 @@ export function AsyncSearchSelect({
   function handleOpenChange(next: boolean) {
     if (disabled) return;
     setOpen(next);
+    if (!next) pendingEnterRef.current = false;
     if (next) {
       setSearch("");
       runFetch("");
@@ -204,6 +219,7 @@ export function AsyncSearchSelect({
   }
 
   function handleSelect(option: AsyncSearchOption) {
+    pendingEnterRef.current = false;
     setInternalValue(option.value);
     setSelectedCache(option);
     onChange?.(option.value, option);
@@ -229,6 +245,7 @@ export function AsyncSearchSelect({
     placeholder;
   const hasValue = internalValue !== null && internalValue !== undefined && internalValue !== "";
   const showClear = allowClear && hasValue && !disabled;
+  const stale = loading || settledQuery !== search.trim();
 
   return (
     <div className={["async-search-select", "relative w-full min-w-0", className].filter(Boolean).join(" ")}>
@@ -291,13 +308,21 @@ export function AsyncSearchSelect({
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
+                    pendingEnterRef.current = false;
                     scheduleFetch(e.target.value);
+                  }}
+                  onKeyDown={(e) => {
+                    // Daftar basi: jangan pilih hasil kata kunci lama; tunggu hasil terbaru.
+                    if (e.key === "Enter" && stale) {
+                      e.preventDefault();
+                      pendingEnterRef.current = true;
+                    }
                   }}
                   placeholder={searchPlaceholder}
                   className={["async-search-select-input", INPUT, SS_INPUT].join(" ")}
                 />
               </div>
-              <div className={SS_LIST} role="listbox" style={{ maxHeight: LIST_MAX_HEIGHT }}>
+              <div className={SS_LIST} role="listbox" aria-busy={stale || undefined} style={{ maxHeight: LIST_MAX_HEIGHT }}>
                 {options.map((option) => {
                   const active = option.value === internalValue;
                   return (
@@ -305,6 +330,7 @@ export function AsyncSearchSelect({
                       key={option.value}
                       type="button"
                       role="option"
+                      data-select-option=""
                       aria-selected={active}
                       onClick={() => handleSelect(option)}
                       className={[

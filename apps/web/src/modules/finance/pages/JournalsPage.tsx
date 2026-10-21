@@ -12,7 +12,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Page, Toolbar } from "@/shared/components/patterns";
+import { DocNumber, Page, SavedViews, Toolbar } from "@/shared/components/patterns";
 import type { ActiveFilter } from "@/shared/components/patterns";
 import { formatDate, statusLabel } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
@@ -81,6 +81,7 @@ export default function JournalsPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="journals" columnsKey="journals" />}
         search={
           <SearchInput
             aria-label="Cari jurnal"
@@ -142,6 +143,7 @@ export default function JournalsPage() {
 
       <SectionCard flush>
         <DataTable<JournalEntry>
+          columnsKey="journals"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

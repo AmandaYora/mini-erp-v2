@@ -453,12 +453,14 @@ export default function AppShell() {
     );
   }, [visibleGroups, pathname]);
 
-  // Catat halaman detail yang dibuka untuk "Terakhir dibuka" di command palette.
+  // Catat halaman detail yang dibuka untuk "Terakhir dibuka" di command palette. Label memakai
+  // nomor dokumen (crumb halaman detail) begitu termuat; sebelum itu id dari URL.
+  const crumb = usePageMetaStore((s) => s.crumb);
   useEffect(() => {
     if (activePath && pathname !== activePath) {
-      pushRecent({ path: pathname, label: `${getBreadcrumb(pathname).title} · ${pathname.split("/").pop()}` });
+      pushRecent({ path: pathname, label: `${getBreadcrumb(pathname).title} · ${crumb ?? pathname.split("/").pop()}` });
     }
-  }, [pathname, activePath]);
+  }, [pathname, activePath, crumb]);
 
   return (
     <SidebarProvider

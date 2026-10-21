@@ -8,7 +8,7 @@ import {
   SectionCard,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Page, Qty, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
+import { DocNumber, Page, Qty, SavedViews, Toolbar, type ActiveFilter } from "@/shared/components/patterns";
 import { formatDate } from "@/shared/lib/format";
 import { isAbort, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
@@ -84,6 +84,7 @@ export default function GoodsReceiptsPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="goods-receipts" columnsKey="goods-receipts" />}
         primary={
           <div className="min-w-64 flex-1 sm:max-w-md">
             <FormField label="Order beli">
@@ -102,6 +103,7 @@ export default function GoodsReceiptsPage() {
 
       <SectionCard flush>
         <DataTable<GoodsReceipt>
+          columnsKey="goods-receipts"
           rows={items}
           rowKey={(r) => r.id}
           loading={loading}

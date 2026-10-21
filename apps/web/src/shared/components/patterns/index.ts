@@ -15,6 +15,7 @@ export type { ActiveFilter } from "./toolbar";
 export { LineItemsEditor } from "./line-items-editor";
 export type { LineColumn, LineItemsEditorProps } from "./line-items-editor";
 export { NavTabs, useUrlTab } from "./nav-tabs";
+export { SavedViews } from "./saved-views";
 export type { NavTabItem } from "./nav-tabs";
 export { ActionMenu } from "./action-menu";
 export type { ActionMenuItem } from "./action-menu";

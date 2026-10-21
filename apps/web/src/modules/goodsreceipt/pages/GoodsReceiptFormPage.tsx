@@ -374,6 +374,7 @@ export default function GoodsReceiptFormPage() {
           <span className="inline-flex h-9 items-center text-xs text-muted-foreground">Non-stok (tanpa lokasi)</span>
         ) : (
           <SearchSelect
+            aria-label={`Lokasi ${r.productName}`}
             options={locationOptions}
             value={r.locationId}
             placeholder="Pilih lokasi…"

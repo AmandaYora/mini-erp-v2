@@ -10,7 +10,7 @@ import {
   SelectInput,
   StatusBadge,
 } from "@/shared/components/ui";
-import { DocNumber, Page, Qty, Toolbar } from "@/shared/components/patterns";
+import { DocNumber, Page, Qty, SavedViews, Toolbar } from "@/shared/components/patterns";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 import { formatDate, statusLabel } from "@/shared/lib/format";
@@ -97,6 +97,7 @@ export default function TransfersPage() {
       />
 
       <Toolbar
+        right={<SavedViews listKey="stock-transfers" columnsKey="stock-transfers" />}
         primary={
           <>
           <div className="w-48 max-w-full">
@@ -145,6 +146,7 @@ export default function TransfersPage() {
 
       <SectionCard flush>
         <DataTable<StockTransfer>
+          columnsKey="stock-transfers"
           loading={loading}
           error={error}
           onRetry={reload}
