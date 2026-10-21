@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
@@ -1300,6 +1301,21 @@ func (s *Service) OffsetForOrders(ctx context.Context, orderType string, ids []i
 		return nil, apperror.Internal(err)
 	}
 	return out, nil
+}
+
+// PaidForOrdersAsOf sums, per order, the active allocations of payments
+// dated on or before asOf (YYYY-MM-DD, a WIB calendar day). paid_at is a WIB
+// wall-clock document date, so the bound is the start of the next day.
+func (s *Service) PaidForOrdersAsOf(ctx context.Context, orderType string, ids []int64, asOf string) (map[int64]int64, error) {
+	day, err := time.Parse("2006-01-02", strings.TrimSpace(asOf))
+	if err != nil {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "asOf", Message: "format tanggal harus YYYY-MM-DD"}})
+	}
+	paid, err := s.repo.PaidForOrdersBefore(ctx, orderType, ids, day.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return paid, nil
 }
 
 // RecordForOrder records one payment in full against one order — the

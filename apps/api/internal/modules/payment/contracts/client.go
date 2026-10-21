@@ -157,6 +157,10 @@ type PaymentClient interface {
 	// OffsetForOrders is the part of PaidForOrders made by offset legs (a
 	// return set against the bill): no money moved for it.
 	OffsetForOrders(ctx context.Context, orderType string, ids []int64) (map[int64]int64, error)
+	// PaidForOrdersAsOf is PaidForOrders counting only payments (offset legs
+	// included) dated on or before asOf, a YYYY-MM-DD WIB day — aging "per
+	// tanggal" must not subtract money that arrived later.
+	PaidForOrdersAsOf(ctx context.Context, orderType string, ids []int64, asOf string) (map[int64]int64, error)
 	// CancelledAmong returns which of ids are cancelled. Finance uses it to
 	// find journals that outlived their cancelled source document.
 	CancelledAmong(ctx context.Context, branchID int64, ids []int64) ([]int64, error)

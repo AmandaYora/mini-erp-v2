@@ -312,7 +312,7 @@ Endpoint yang sudah ada hari ini:
 | `GET` | `/api/v1/finance/opening` | Jurnal saldo awal yang sudah dibukukan, atau null bila cabang belum cutover |
 | `GET` | `/api/v1/finance/opening/inventory` | Persediaan saldo awal yang dihitung server dari ledger biaya (total, jumlah posisi, jumlah berharga katalog, produk berstok tanpa harga modal, `openingPosted`) — izin `finance.view` |
 | `POST` | `/api/v1/finance/opening/preview` | Pratinjau jurnal saldo awal (tanpa tulis); baris Persediaan + Modal Awal ditambahkan server (Persediaan ditampilkan satu baris), respons memuat `inventory` |
-| `POST` | `/api/v1/finance/opening/post` | Bukukan saldo awal (idempoten, termasuk bila jurnal `opening` berasal dari ETL). Baris yang dikirim harus seimbang sendiri dan tidak boleh memuat akun Persediaan; `lines` boleh kosong bila hanya ada persediaan |
+| `POST` | `/api/v1/finance/opening/post` | Bukukan saldo awal (idempoten, termasuk bila jurnal `opening` berasal dari ETL). Baris yang dikirim harus seimbang sendiri dan tidak boleh memuat akun Persediaan; `lines` boleh kosong bila hanya ada persediaan. Aturan `partyId` per baris sama dengan jurnal manual (juga untuk `/opening/preview`) |
 | `POST` | `/api/v1/finance/opening/complete` | Setelah saldo awal terkunci: beri harga modal produk berstok yang bernilai nol (`items[{productId, variantId, unitCost?}]`, default harga beli katalog); satu jurnal suplemen Persediaan/Modal Awal (`opening_supplement`) + baris ledger biaya `opening_cost` — izin `finance.manage` |
 | `GET` | `/api/v1/finance/cutover` | Batas per jenis dokumen: di bawahnya dianggap sudah dijurnal |
 | `PUT` | `/api/v1/finance/cutover` | Tetapkan batas cutover |
@@ -321,11 +321,11 @@ Endpoint yang sudah ada hari ini:
 | `GET` | `/api/v1/finance/close/readiness` | Gerbang kesiapan tutup buku per bulan (`year`, `month`) |
 | `POST` | `/api/v1/finance/close/safe-close` | Tutup bulan hanya bila semua gerbang lolos |
 | `GET` | `/api/v1/finance/tax-adjustments` | Daftar penyesuaian fiskal; tiap baris memuat `classification`, `classLabel`, `note` (FN-07) |
-| `POST` | `/api/v1/finance/tax-adjustments` | Catat penyesuaian fiskal (jurnal bertipe penyesuaian, tak masuk laba komersial). Body tambahan `classification` WAJIB (`positive`/`negative`/`final_income`/`non_object`) dan `note` opsional (maks 1000). Model jurnal tidak berubah (ADR-0018 D6) |
+| `POST` | `/api/v1/finance/tax-adjustments` | Catat penyesuaian fiskal (jurnal bertipe penyesuaian, tak masuk laba komersial). Body tambahan `classification` WAJIB (`positive`/`negative`/`final_income`/`non_object`) dan `note` opsional (maks 1000). Model jurnal tidak berubah (ADR-0018 D6). `partyId` per baris opsional (jurnal fiskal tak dibaca per pihak); bila dikirim diperiksa seperti jurnal manual |
 | `GET` | `/api/v1/finance/tax-adjustments/{id}/attachments` | Lampiran (gambar) koreksi fiskal: `[{id,name,mime,sizeBytes,url}]` (izin `finance.tax_adjustment.view`) |
 | `POST` | `/api/v1/finance/tax-adjustments/{id}/attachments` | Unggah lampiran (multipart `file`, JPG/PNG/WebP maks 5 MB; izin `finance.tax_adjustment.manage`) |
 | `GET` | `/api/v1/finance/journals` | Daftar jurnal |
-| `POST` | `/api/v1/finance/journals/manual` | Jurnal manual (imbang wajib). Baris ke akun yang dipetakan `inventory` ditolak 422: Persediaan hanya bergerak bersama mutasi stok (ADR-0020) |
+| `POST` | `/api/v1/finance/journals/manual` | Jurnal manual (imbang wajib). Baris ke akun yang dipetakan `inventory` ditolak 422: Persediaan hanya bergerak bersama mutasi stok (ADR-0020). Baris `lines[]` = `{accountCode, debit, credit, partyId?}`: baris ke akun yang dipetakan `receivable`/`customer_advance` WAJIB `partyId` pelanggan, `payable`/`supplier_advance` WAJIB `partyId` pemasok (422 per baris "baris N: akun … wajib memilih …"); baris akun lain tidak boleh membawa `partyId` (F5) |
 | `GET` | `/api/v1/finance/journals/{id}` | Detail jurnal |
 | `POST` | `/api/v1/finance/journals/{id}/reverse` | Balik jurnal (alasan wajib) |
 | `GET` | `/api/v1/finance/expenses` | Daftar biaya; filter `partyId`; tiap baris memuat `partyId`/`partyName` (FN-10) |
@@ -346,8 +346,8 @@ Endpoint yang sudah ada hari ini:
 | `GET` | `/api/v1/finance/reports/inventory-value` | Nilai persediaan (rata-rata). Satu-satunya implementasi valuasi (`finance.report.view`). `branch=all|<id>` (izin `finance.report.all_branches`) menilai beberapa cabang; respons memuat `byBranch[{branchId,branchName,total,positions}]` (FN-09) |
 | `GET` | `/api/v1/finance/reports/margin` | Marjin kotor per rentang; `branch=all` menambah `byBranch[]` yang berjumlah sama dengan total (FN-09) |
 | `GET` | `/api/v1/finance/reports/margin-by-product` | Marjin per produk dari buku (`from`/`to`, `limit` = batas tampilan) |
-| `GET` | `/api/v1/finance/reports/receivables` | Piutang per pihak (`asOf`; `view=documents` = per dokumen berumur) |
-| `GET` | `/api/v1/finance/reports/payables` | Hutang per pihak (`asOf`; `view=documents` = per dokumen berumur) |
+| `GET` | `/api/v1/finance/reports/receivables` | Piutang per pihak (`asOf`; `view=documents` = per dokumen berumur: hanya order bertanggal ≤ `asOf`, dikurangi pembayaran/offset bertanggal ≤ `asOf`; respons juga `accountCode`, `accountName`, `glBalance` = saldo akun kendali per `asOf` (semua baris), `difference` = `glBalance − total`) |
+| `GET` | `/api/v1/finance/reports/payables` | Hutang per pihak (`asOf`; `view=documents` = per dokumen berumur, aturan dan rekonsiliasi sama dengan piutang) |
 | `GET` | `/api/v1/finance/reports/fiscal-summary` | Ringkasan fiskal per rentang (`from`/`to`) |
 | `GET` | `/api/v1/finance/reports/cash-summary` | Ringkasan kas per bulan (`year`, `month`) |
 | `GET` | `/api/v1/finance/export/tax-package` | Parameter `branch` (`all` atau id cabang; izin `finance.report.all_branches`, 403 bila tidak/di luar akses; N-53) memuat beberapa cabang dalam satu paket: sheet Rincian PPN, PPN Masukan, Buku Besar mendapat kolom Cabang, sampul menyebut cabang, total sama dengan TaxSummary/TaxDetail lingkup yang sama; tanpa `branch` = cabang sesi (bentuk lama). Paket ekspor pajak (`variant` = `actual`/`capped`) untuk satu bulan (`year`, `month`) ATAU rentang bebas (`from`, `to`; varian `capped` harus dalam satu tahun pajak). Sheet: Ringkasan, Untung Rugi (rinci per akun), Posisi Harta Hutang, Cek Saldo Akun, Rincian PPN (keluaran + retur jual), PPN Masukan (pembelian + retur beli, kolom tanpa faktur), Rekonsiliasi Fiskal (per jenis koreksi), Buku Besar semua akun (maks. 60.000 baris, lebih dari itu ditolak dengan pesan persempit rentang) (FN-04) |

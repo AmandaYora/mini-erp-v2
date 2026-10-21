@@ -72,13 +72,18 @@ func classifyPayment(p *paymentcontracts.Payment) (paymentKind, error) {
 	}
 	// Direction must make sense for the family: customers pay in / are refunded
 	// out; suppliers are paid out / refund in. Either direction is allowed per
-	// family (that is exactly refund vs normal), so only the memo differs.
+	// family (that is exactly refund vs normal), so only the memo differs —
+	// and it must follow the direction on BOTH sides (F6: every customer
+	// receipt used to read "Refund pelanggan").
+	out := p.Direction == paymentcontracts.DirectionOut
 	switch {
 	case k.advance:
 		k.memo = "Pakai saldo uang muka"
-	case family == "receivable":
+	case family == "receivable" && out:
 		k.memo = "Refund pelanggan"
-	case p.Direction == paymentcontracts.DirectionOut:
+	case family == "receivable":
+		k.memo = "Penerimaan pelanggan"
+	case out:
 		k.memo = "Bayar"
 	default:
 		k.memo = "Refund pemasok"

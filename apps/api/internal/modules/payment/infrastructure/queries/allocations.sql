@@ -29,6 +29,17 @@ WHERE a.order_type = sqlc.arg(order_type) AND a.order_id IN (sqlc.slice('order_i
   AND p.status = 'active' AND p.method = 'offset'
 GROUP BY a.order_id;
 
+-- name: SumPaidForOrdersBefore :many
+-- SumPaidForOrders as of a date (F4): only payments dated before paid_before
+-- (paid_at is a WIB wall-clock document date; the caller passes the start of
+-- the day after the as-of date). Offset legs are payments too, so a return
+-- that reduced the bill after the date is left out the same way.
+SELECT a.order_id, CAST(COALESCE(SUM(a.amount), 0) AS SIGNED) AS total FROM payment_allocations a
+JOIN payments p ON p.id = a.payment_id
+WHERE a.order_type = sqlc.arg(order_type) AND a.order_id IN (sqlc.slice('order_ids')) AND p.status = 'active'
+  AND p.paid_at < sqlc.arg(paid_before)
+GROUP BY a.order_id;
+
 -- name: SumCreditUsedForReturn :one
 -- Saldo (uang muka) of one return already used on bills (N-41): active
 -- allocations ONTO the return made by legs that name this very return as their

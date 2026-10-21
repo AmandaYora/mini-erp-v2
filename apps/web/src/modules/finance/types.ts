@@ -722,12 +722,20 @@ export interface AgingBuckets {
   over90: number;
 }
 
-/** GET reports/receivables|payables?view=documents[&asOf=]. */
+/**
+ * GET reports/receivables|payables?view=documents[&asOf=]. Dokumen bertanggal ≤ asOf dikurangi
+ * pembayaran bertanggal ≤ asOf. `glBalance` = saldo akun kendali (Piutang/Hutang Usaha) per asOf,
+ * semua baris (dengan atau tanpa pihak); `difference` = glBalance − total.
+ */
 export interface AgingReport {
   asOf: string;
   documents: AgingDoc[];
   buckets: AgingBuckets;
   total: number;
+  accountCode: string;
+  accountName: string;
+  glBalance: number;
+  difference: number;
 }
 
 /** Selisih rollup harian vs baris jurnal. */

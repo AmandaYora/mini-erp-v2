@@ -6,7 +6,9 @@ import { z } from "zod";
 //   (builders.go: buildLines; K-04a: saldo customer/supplier dari retur).
 // - manual: memo wajib; lines ≥1; tiap baris TEPAT satu sisi >0 dan total
 //   debit == kredit > 0 (posting.go: insertEntry + Manual; akun dicari by
-//   CODE, huruf besar otomatis).
+//   CODE, huruf besar otomatis). Baris ke akun kendali per pihak (Piutang,
+//   Hutang, Uang Muka) wajib partyId; baris lain tanpa partyId (partylegs.go)
+//   — diperiksa parseJournalDraft karena butuh pemetaan akun.
 // - akun: code unik & tak bisa diubah (UpdateAccount tanpa code); type salah
 //   satu dari 5 tipe; ganti type akun berjurnal ditolak backend.
 // - expense: expenseAccountId harus akun type beban & aktif; payAccountId
@@ -56,6 +58,7 @@ export const manualLineSchema = z.object({
     .number({ invalid_type_error: "Kredit harus angka" })
     .int("Kredit harus bilangan bulat")
     .nonnegative("Kredit tidak boleh negatif"),
+  partyId: z.number().int().positive("Pilih pelanggan/pemasok").optional(),
 });
 
 export const manualJournalSchema = z

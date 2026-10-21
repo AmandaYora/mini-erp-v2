@@ -6,14 +6,77 @@ import {
   isDraftBalanced,
   isEntryBalanced,
   parseJournalDraft,
+  partyAccountsFromMappings,
 } from "@/modules/finance/lib/journal-lines";
 import type { DraftLine } from "@/modules/finance/lib/journal-lines";
+import type { Account, AccountMappings } from "@/modules/finance/types";
 
-const line = (key: number, accountCode: string, debit: string, credit: string): DraftLine => ({
+const line = (key: number, accountCode: string, debit: string, credit: string, partyId: number | null = null): DraftLine => ({
   key,
   accountCode,
   debit,
   credit,
+  partyId,
+});
+
+const acc = (id: number, code: string): Account =>
+  ({ id, code, name: `Akun ${code}`, type: "aset", isCash: false, status: "active" }) as Account;
+
+// Kode piutang sengaja bukan 1100: kode akun kendali datang dari pemetaan, bukan tertanam.
+const maps: AccountMappings = {
+  cash: acc(1, "1000"),
+  receivable: acc(2, "1150"),
+  payable: acc(3, "2000"),
+  customer_advance: acc(4, "2200"),
+  supplier_advance: acc(5, "2300"),
+};
+
+describe("akun kendali per pihak (F5)", () => {
+  it("dibaca dari pemetaan akun", () => {
+    const pa = partyAccountsFromMappings(maps);
+    expect([...pa.entries()].sort()).toEqual([
+      ["1150", "customer"],
+      ["2000", "supplier"],
+      ["2200", "customer"],
+      ["2300", "supplier"],
+    ]);
+    expect(partyAccountsFromMappings(null).size).toBe(0);
+  });
+
+  it("baris akun kendali tanpa pihak ditolak per baris", () => {
+    const res = parseJournalDraft({
+      date: "",
+      memo: "Koreksi",
+      lines: [line(1, "3000", "500", ""), line(2, "2000", "", "500")],
+      partyAccounts: partyAccountsFromMappings(maps),
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors["lines.1.partyId"]).toBe("Pilih pemasok");
+      expect(res.errors.lines).toBe("Baris 2: akun 2000 wajib memilih pemasok");
+    }
+  });
+
+  it("pihak hanya dikirim di baris akun kendali", () => {
+    const res = parseJournalDraft({
+      date: "",
+      memo: "Koreksi",
+      // Baris kas membawa partyId sisa pilihan lama: tidak ikut terkirim.
+      lines: [line(1, "1150", "500", "", 7), line(2, "1000", "", "500", 7)],
+      partyAccounts: partyAccountsFromMappings(maps),
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.values.lines[0]).toEqual({ accountCode: "1150", debit: 500, credit: 0, partyId: 7 });
+      expect(res.values.lines[1]).not.toHaveProperty("partyId");
+    }
+  });
+
+  it("tanpa peta akun kendali (koreksi fiskal) tidak ada pihak yang diminta atau dikirim", () => {
+    const res = parseJournalDraft({ date: "", memo: "Fiskal", lines: [line(1, "6900", "500", ""), line(2, "1150", "", "500", 7)] });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.values.lines[1]).not.toHaveProperty("partyId");
+  });
 });
 
 describe("editor jurnal", () => {

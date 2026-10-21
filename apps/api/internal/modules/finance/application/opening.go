@@ -29,10 +29,16 @@ func (s *Service) OpeningStatus(ctx context.Context, branchID int64) (*contracts
 }
 
 // resolveOpeningLines maps caller legs (account by code) to balanced lines.
+// rule: the opening demands a party on Piutang/Hutang/Uang Muka legs (they
+// open per-party balances); fiscal adjustments only check one when given.
 // Shared by preview and post (and fiscal adjustments) so they can never disagree.
-func (s *Service) resolveOpeningLines(ctx context.Context, in []ManualLine) ([]*contracts.JournalLine, error) {
+func (s *Service) resolveOpeningLines(ctx context.Context, in []ManualLine, rule partyRule) ([]*contracts.JournalLine, error) {
 	if len(in) == 0 {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "lines", Message: "wajib diisi"}})
+	}
+	controls, err := s.partyControls(ctx)
+	if err != nil {
+		return nil, err
 	}
 	lines := make([]*contracts.JournalLine, 0, len(in))
 	for i, l := range in {
@@ -44,7 +50,11 @@ func (s *Service) resolveOpeningLines(ctx context.Context, in []ManualLine) ([]*
 			return nil, apperror.Validation("", []apperror.FieldError{
 				{Field: "lines", Message: fmt.Sprintf("baris %d: akun tidak ditemukan", i+1)}})
 		}
-		lines = append(lines, &contracts.JournalLine{AccountID: a.ID, Debit: l.Debit, Credit: l.Credit})
+		party, err := s.lineParty(ctx, controls, rule, i, a, l.PartyID)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, &contracts.JournalLine{AccountID: a.ID, Debit: l.Debit, Credit: l.Credit, PartyID: party})
 	}
 	var debit, credit int64
 	for _, l := range lines {
@@ -75,7 +85,7 @@ func (s *Service) buildOpeningLines(ctx context.Context, branchID int64, in []Ma
 	}
 	var lines []*contracts.JournalLine
 	if len(in) > 0 || len(valued) == 0 {
-		lines, err = s.resolveOpeningLines(ctx, in)
+		lines, err = s.resolveOpeningLines(ctx, in, partyRequired)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -137,7 +147,7 @@ func (s *Service) PreviewOpening(ctx context.Context, branchID int64, date, memo
 			continue
 		}
 		outs = append(outs, &contracts.JournalLine{
-			AccountID: l.AccountID, Debit: l.Debit, Credit: l.Credit,
+			AccountID: l.AccountID, Debit: l.Debit, Credit: l.Credit, PartyID: l.PartyID,
 			AccountCode: a.Code, AccountName: a.Name, Description: l.Description,
 		})
 	}
@@ -187,21 +197,22 @@ func (s *Service) PostOpening(ctx context.Context, actorID, branchID int64, date
 }
 
 // stripPreviewKeepDims drops display-only account labels before persistence;
-// product/variant dimensions and per-line memos stay.
+// product/variant/party dimensions and per-line memos stay.
 func stripPreviewKeepDims(lines []*contracts.JournalLine) []*contracts.JournalLine {
 	out := make([]*contracts.JournalLine, 0, len(lines))
 	for _, l := range lines {
 		out = append(out, &contracts.JournalLine{AccountID: l.AccountID, Debit: l.Debit, Credit: l.Credit,
-			ProductID: l.ProductID, VariantID: l.VariantID, Description: l.Description})
+			ProductID: l.ProductID, VariantID: l.VariantID, PartyID: l.PartyID, Description: l.Description})
 	}
 	return out
 }
 
-// stripPreview drops display-only account labels before persistence.
+// stripPreview drops display-only account labels before persistence (the
+// party dimension stays).
 func stripPreview(lines []*contracts.JournalLine) []*contracts.JournalLine {
 	out := make([]*contracts.JournalLine, 0, len(lines))
 	for _, l := range lines {
-		out = append(out, &contracts.JournalLine{AccountID: l.AccountID, Debit: l.Debit, Credit: l.Credit})
+		out = append(out, &contracts.JournalLine{AccountID: l.AccountID, Debit: l.Debit, Credit: l.Credit, PartyID: l.PartyID})
 	}
 	return out
 }

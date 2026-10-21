@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { Badge, DataTable, FormField, SectionCard, SelectInput, SummaryCard } from "@/shared/components/ui";
-import { DocNumber, Money, Qty } from "@/shared/components/patterns";
+import { DescriptionList, DocNumber, Money, Qty } from "@/shared/components/patterns";
 import { ErrorState } from "@/shared/components/feedback/error-state";
 import { formatDate, formatIDR, todayWIB } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
@@ -69,9 +69,39 @@ function AgingTable({ docs, loading, emptyTitle }: { docs: AgingDoc[]; loading: 
   );
 }
 
+// Rekonsiliasi ke buku (F4): saldo akun kendali per tanggal (semua baris jurnal, dengan atau tanpa
+// pihak) vs total dokumen terbuka per tanggal yang sama. Selisihnya ditampilkan, bukan disembunyikan.
+function AgingReconciliation({ report }: { report: AgingReport }) {
+  if (!report.accountCode) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-muted/50 p-4">
+      <DescriptionList
+        items={[
+          {
+            label: `Saldo buku ${report.accountCode} ${report.accountName} per ${formatDate(report.asOf)}`,
+            value: <Money value={report.glBalance} className="font-medium" />,
+          },
+          { label: "Total dokumen terbuka", value: <Money value={report.total} className="font-medium" /> },
+          {
+            label: "Selisih (saldo awal migrasi/penyesuaian tanpa dokumen)",
+            value: <Money accounting value={report.difference} className="font-medium" />,
+          },
+        ]}
+      />
+      <p className="mt-3 text-xs text-muted-foreground">
+        Selisih juga memuat dokumen yang belum diposting ke jurnal. Tampilan Per pihak hanya menjumlah baris jurnal yang
+        bertanda pelanggan/pemasok.
+      </p>
+    </div>
+  );
+}
+
 function AgingSection({ title, report, loading, emptyTitle }: { title: string; report: AgingReport | null; loading: boolean; emptyTitle: string }) {
   return (
-    <SectionCard title={title} description="Dokumen terbuka per tanggal, dikelompokkan menurut umur sejak tanggal dokumen.">
+    <SectionCard
+      title={title}
+      description="Dokumen bertanggal sampai tanggal ini, dikurangi pembayaran sampai tanggal yang sama; dikelompokkan menurut umur sejak tanggal dokumen."
+    >
       {report && (
         <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-5">
           {agingBucketRows(report.buckets).map((b) => (
@@ -80,6 +110,7 @@ function AgingSection({ title, report, loading, emptyTitle }: { title: string; r
           <SummaryCard label="Total" value={formatIDR(report.total)} tone="success" />
         </div>
       )}
+      {report && <AgingReconciliation report={report} />}
       <div className="-mx-5 -mb-5">
         <AgingTable docs={report?.documents ?? []} loading={loading} emptyTitle={emptyTitle} />
       </div>

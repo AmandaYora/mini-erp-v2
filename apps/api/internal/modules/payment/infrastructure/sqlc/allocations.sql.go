@@ -8,6 +8,7 @@ package sqlc
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 const insertAllocation = `-- name: InsertAllocation :exec
@@ -347,6 +348,64 @@ func (q *Queries) SumPaidForOrders(ctx context.Context, arg SumPaidForOrdersPara
 	items := []SumPaidForOrdersRow{}
 	for rows.Next() {
 		var i SumPaidForOrdersRow
+		if err := rows.Scan(&i.OrderID, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sumPaidForOrdersBefore = `-- name: SumPaidForOrdersBefore :many
+SELECT a.order_id, CAST(COALESCE(SUM(a.amount), 0) AS SIGNED) AS total FROM payment_allocations a
+JOIN payments p ON p.id = a.payment_id
+WHERE a.order_type = ? AND a.order_id IN (/*SLICE:order_ids*/?) AND p.status = 'active'
+  AND p.paid_at < ?
+GROUP BY a.order_id
+`
+
+type SumPaidForOrdersBeforeParams struct {
+	OrderType  string
+	OrderIds   []int64
+	PaidBefore time.Time
+}
+
+type SumPaidForOrdersBeforeRow struct {
+	OrderID int64
+	Total   int64
+}
+
+// SumPaidForOrders as of a date (F4): only payments dated before paid_before
+// (paid_at is a WIB wall-clock document date; the caller passes the start of
+// the day after the as-of date). Offset legs are payments too, so a return
+// that reduced the bill after the date is left out the same way.
+func (q *Queries) SumPaidForOrdersBefore(ctx context.Context, arg SumPaidForOrdersBeforeParams) ([]SumPaidForOrdersBeforeRow, error) {
+	query := sumPaidForOrdersBefore
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.OrderType)
+	if len(arg.OrderIds) > 0 {
+		for _, v := range arg.OrderIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:order_ids*/?", strings.Repeat(",?", len(arg.OrderIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:order_ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.PaidBefore)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SumPaidForOrdersBeforeRow{}
+	for rows.Next() {
+		var i SumPaidForOrdersBeforeRow
 		if err := rows.Scan(&i.OrderID, &i.Total); err != nil {
 			return nil, err
 		}

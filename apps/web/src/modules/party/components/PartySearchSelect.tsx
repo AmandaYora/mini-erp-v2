@@ -28,6 +28,7 @@ export interface PartySearchSelectProps {
   limit?: number;
   /** Izinkan mengosongkan pilihan. Default true. */
   allowClear?: boolean;
+  "aria-label"?: string;
 }
 
 function formatPartyOption(party: Party, withType = false): PartyOption {
@@ -62,6 +63,7 @@ export function PartySearchSelect({
   searchPlaceholder = "Cari nama, kode, atau kontak…",
   limit = 20,
   allowClear = true,
+  "aria-label": ariaLabel,
 }: PartySearchSelectProps) {
   const svc = partyKind === "supplier" ? supplierService : customerService;
   const [resolved, setResolved] = useState<PartyOption | null>(
@@ -126,6 +128,7 @@ export function PartySearchSelect({
   return (
     <AsyncSearchSelect
       id={id}
+      aria-label={ariaLabel}
       value={value}
       disabled={disabled}
       minChars={MIN_PARTY_SEARCH}
