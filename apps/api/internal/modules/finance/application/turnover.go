@@ -36,12 +36,19 @@ type TurnoverOrder struct {
 // is asked for, so it can never go stale against a late posting or a
 // reversal — the same reason the posting queue has no table.
 type TurnoverBasis struct {
-	Year             int             `json:"year"`
-	CutoffDate       string          `json:"cutoffDate"`
-	Ceiling          int64           `json:"ceiling"`
-	IncludedTurnover int64           `json:"includedTurnover"`
-	ExcludedTurnover int64           `json:"excludedTurnover"`
-	Orders           []TurnoverOrder `json:"orders"`
+	Year             int    `json:"year"`
+	CutoffDate       string `json:"cutoffDate"`
+	Ceiling          int64  `json:"ceiling"`
+	IncludedTurnover int64  `json:"includedTurnover"`
+	ExcludedTurnover int64  `json:"excludedTurnover"`
+	// UnattributedTurnover is revenue booked without a sales order behind
+	// it: the migrated legacy journals for the months before cutover, and
+	// manual entries. It is part of the year's peredaran bruto, so it is
+	// counted first (it predates or sits outside every order) and is always
+	// inside IncludedTurnover — it can never be excluded, because there is
+	// no order to drop.
+	UnattributedTurnover int64           `json:"unattributedTurnover"`
+	Orders               []TurnoverOrder `json:"orders"`
 	// StraddlingPayments lists payment documents that settle both an
 	// included and an excluded order. They are KEPT (see excludedEntries),
 	// and surfaced here because they are the one place the capped view
@@ -136,6 +143,7 @@ func (s *Service) grossTurnoverBasisThrough(ctx context.Context, year int, to st
 	// order. A sales return arrives as NEGATIVE revenue, so it reduces the
 	// order's turnover exactly as peredaran bruto expects.
 	attributed := make([]entryOrders, 0, len(rows))
+	var unattributed int64
 	revenueByOrder := map[int64]int64{}
 	firstDate := map[int64]string{}
 	for _, r := range rows {
@@ -153,8 +161,11 @@ func (s *Service) grossTurnoverBasisThrough(ctx context.Context, year int, to st
 			orders = byPayment[r.SourceID]
 		}
 		if len(orders) == 0 {
-			// Purchases, expenses, opening, manual entries: no sales order
-			// behind them, so the ceiling never touches them.
+			// Purchases, expenses, opening entries carry no revenue. Revenue
+			// with no order behind it (migrated legacy journals, manual
+			// entries) still counts against the ceiling, but nothing can be
+			// excluded for it.
+			unattributed += r.Revenue
 			continue
 		}
 		attributed = append(attributed, entryOrders{
@@ -195,11 +206,11 @@ func (s *Service) grossTurnoverBasisThrough(ctx context.Context, year int, to st
 	}
 
 	basis := &TurnoverBasis{
-		Year: year, CutoffDate: cutoff, Ceiling: GrossTurnoverCeiling,
+		Year: year, CutoffDate: cutoff, Ceiling: GrossTurnoverCeiling, UnattributedTurnover: unattributed,
 		Orders: make([]TurnoverOrder, 0, len(ids)), excludedEntries: map[int64]bool{},
 	}
 	excludedOrders := map[int64]bool{}
-	var running int64
+	running := unattributed
 	for _, id := range ids {
 		rev := revenueByOrder[id]
 		row := TurnoverOrder{

@@ -340,6 +340,7 @@ func (s *Service) buildCappedPackage(ctx context.Context, branchID int64, from, 
 	cover.write("Lingkup", "Seluruh cabang (per wajib pajak, bukan per cabang)")
 	cover.write("Plafon setahun", basis.Ceiling)
 	cover.write("Peredaran bruto dipakai", basis.IncludedTurnover)
+	cover.write("  di antaranya tanpa order (jurnal migrasi/manual)", basis.UnattributedTurnover)
 	cover.write("Sisa plafon", basis.ceilingHeadroom())
 	cover.write("Peredaran bruto di luar plafon", basis.ExcludedTurnover)
 	cover.write("Order di dalam plafon", countIncluded(basis))
@@ -363,6 +364,10 @@ func (s *Service) buildCappedPackage(ctx context.Context, branchID int64, from, 
 	rec := newSheet(f, "Peredaran Bruto")
 	rec.widths(14, 24, 30, 18, 20, 16)
 	rec.write("Tanggal", "No. Order", "Pelanggan", "Peredaran bruto", "Kumulatif", "Status")
+	if basis.UnattributedTurnover != 0 {
+		rec.write("", "-", "Pendapatan tanpa order (jurnal migrasi/manual)",
+			basis.UnattributedTurnover, basis.UnattributedTurnover, "Di dalam plafon")
+	}
 	for _, o := range basis.Orders {
 		if !o.Included {
 			continue

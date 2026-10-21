@@ -359,3 +359,34 @@ func TestReversedJournalNetsOrderTurnover(t *testing.T) {
 		t.Fatalf("turnover after reversal = %d + %d, want 0", basis.IncludedTurnover, basis.ExcludedTurnover)
 	}
 }
+
+// Audit F2: revenue with no sales order behind it — the migrated legacy
+// journals for the months before cutover, or a manual entry — is part of the
+// year's peredaran bruto. It consumes the ceiling first, so an order that
+// would breach once that revenue is counted falls outside.
+func TestGrossTurnoverCountsRevenueWithoutOrder(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	fx = newBigTicket(t, ctx(), fx)
+
+	legacy := int64(3_000_000_000)
+	if _, err := testMods.finance.Service().Manual(ctx(), 0, fx.branchID, "2026-01-31", "pendapatan legacy",
+		[]financeapp.ManualLine{{AccountCode: "1000", Debit: legacy}, {AccountCode: "4000", Credit: legacy}}); err != nil {
+		t.Fatalf("manual revenue: %v", err)
+	}
+	so := sellAndPost(t, ctx(), fx, 1, "2026-02-10") // 3 M + 2 M breaches
+
+	basis, err := testMods.finance.Service().GrossTurnoverBasis(ctx(), 2026, 2)
+	if err != nil {
+		t.Fatalf("turnover basis: %v", err)
+	}
+	if basis.UnattributedTurnover != legacy || basis.IncludedTurnover != legacy {
+		t.Fatalf("unattributed/included = %d / %d, want %d both", basis.UnattributedTurnover, basis.IncludedTurnover, legacy)
+	}
+	if len(basis.Orders) != 1 || basis.Orders[0].OrderID != so || basis.Orders[0].Included {
+		t.Fatalf("order must fall outside once migrated revenue is counted: %+v", basis.Orders)
+	}
+	if basis.ExcludedTurnover != bigTicketPrice {
+		t.Fatalf("excluded = %d, want %d", basis.ExcludedTurnover, bigTicketPrice)
+	}
+}
