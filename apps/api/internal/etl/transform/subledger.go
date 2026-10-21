@@ -52,6 +52,49 @@ func (s *state) subledgerCorrections() {
 		}
 	}
 	rup := func(r *big.Rat) int64 { return RoundHalfAway(r) }
+	// A cancelled payment's journal may already be undone by another live
+	// entry legacy wrote instead of a reversal (e.g. a return refund: Dr Kas /
+	// Cr Hutang for the same amount). Index two-line entries by their shape so
+	// such a compensation is found, and used up once.
+	type shape struct {
+		dr, cr, party, amount int64
+	}
+	compensations := map[shape][]int64{}
+	for id, ls := range lines {
+		if len(ls) != 2 || !live(id) {
+			continue
+		}
+		var d, c row.Row
+		for _, l := range ls {
+			if l.Rat("debit_amount").Sign() > 0 {
+				d = l
+			} else {
+				c = l
+			}
+		}
+		if d == nil || c == nil {
+			continue
+		}
+		party := d.Int("id_business_party")
+		if party == 0 {
+			party = c.Int("id_business_party")
+		}
+		k := shape{d.Int("id_finance_account"), c.Int("id_finance_account"), party, rup(d.Rat("debit_amount"))}
+		compensations[k] = append(compensations[k], id)
+	}
+	for _, ids := range compensations {
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+	usedComp := map[int64]bool{}
+	compensated := func(origDr, origCr, party, amount, self int64) (int64, bool) {
+		for _, id := range compensations[shape{origCr, origDr, party, amount}] {
+			if id != self && !usedComp[id] {
+				usedComp[id] = true
+				return id, true
+			}
+		}
+		return 0, false
+	}
 
 	for _, p := range sortedBy(s.raw["payments"], "id_payment") {
 		lid := p.Int("id_payment")
@@ -84,6 +127,16 @@ func (s *state) subledgerCorrections() {
 				continue
 			}
 			amt := rup(debit.Rat("debit_amount"))
+			lparty := debit.Int("id_business_party")
+			if lparty == 0 {
+				lparty = credit.Int("id_business_party")
+			}
+			if cj, ok := compensated(debit.Int("id_finance_account"), credit.Int("id_finance_account"), lparty, amt, j); ok {
+				s.find(report.Info, "PAYMENT_CANCELLED_COMPENSATED", "payments", lid,
+					"pembayaran %s dibatalkan di legacy; jurnalnya %s sudah dikompensasi jurnal %s (akun & jumlah sama, arah berlawanan): tidak dikoreksi",
+					p.Str("payment_number"), journal[j].Str("journal_number"), journal[cj].Str("journal_number"))
+				continue
+			}
 			party, _ := s.id("parties", p.Int("id_business_party"))
 			// The mirror: Dr what was credited, Cr what was debited.
 			s.migCorr = append(s.migCorr, migCorrection{kind: corrPaymentCancelled, branch: branch, ref: p.Str("payment_number"),
