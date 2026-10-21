@@ -756,8 +756,13 @@ export interface InventoryRecon {
   ledger: number;
   diff: number;
   tolerance: number;
-  /** Dokumen belum dijurnal; selagi ada, selisih hanya peringatan. */
+  /** Dokumen belum dijurnal dan nilai ledger yang sudah mereka gerakkan. */
   pending: number;
+  pendingValue: number;
+  /** Nilai ledger dokumen yang sengaja diabaikan dari antrian posting. */
+  ignoredValue: number;
+  /** Selisih setelah dokumen belum dijurnal dan diabaikan; harus ≈ 0. */
+  unexplained: number;
   missingCost: number;
   consistent: boolean;
 }

@@ -35,11 +35,10 @@ func (s *Service) VerifyRollups(ctx context.Context, branchID int64) (*Integrity
 	if err != nil {
 		return nil, err
 	}
-	// While documents are still unjournalled the gap may be theirs: it is
-	// reported but does not fail the check (readiness blocks the close on them).
-	inventoryOK := rec.Consistent || rec.Pending > 0
+	// Unjournalled documents are already netted out of the comparison by their
+	// own ledger value (InventoryRecon.Unexplained), so any gap left fails.
 	return &IntegrityReport{RollupDiffs: diffs, Unbalanced: unbalanced, Inventory: rec,
-		Consistent: len(diffs) == 0 && unbalanced == 0 && inventoryOK}, nil
+		Consistent: len(diffs) == 0 && unbalanced == 0 && rec.Consistent}, nil
 }
 
 // RebuildRollups recomputes the branch's daily rollup from the lines.

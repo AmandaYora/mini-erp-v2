@@ -154,16 +154,22 @@ func (s *Service) Readiness(ctx context.Context, branchID int64, year, month int
 		fmt.Sprintf("%d pemetaan akun belum diatur", len(missingMaps)), int64(len(missingMaps)))
 	add("negative_inventory", "Persediaan tidak negatif", state(negative, CheckFailed),
 		fmt.Sprintf("%d posisi persediaan bernilai negatif", negative), negative)
+	// The gap is netted by the ledger value of the documents still waiting
+	// for a journal (and of those ignored on purpose); what remains has no
+	// known cause and blocks the close.
 	reconStatus, reconDetail := CheckOK, ""
-	if !recon.Consistent {
-		reconDetail = fmt.Sprintf("akun Persediaan buku %d berbeda %d dari nilai ledger biaya %d", recon.Book, recon.Diff, recon.Ledger)
-		if recon.Pending > 0 {
-			reconStatus = CheckWarning // pending documents may explain it
-		} else {
-			reconStatus = CheckFailed
-		}
+	switch {
+	case !recon.Consistent:
+		reconStatus = CheckFailed
+		reconDetail = fmt.Sprintf("akun Persediaan buku %d berbeda %d dari nilai ledger biaya %d; "+
+			"setelah dokumen belum dijurnal (%d) dan diabaikan (%d) masih tersisa selisih tak terjelaskan %d",
+			recon.Book, recon.Diff, recon.Ledger, recon.PendingValue, recon.IgnoredValue, recon.Unexplained)
+	case recon.Diff != 0 && (recon.PendingValue != 0 || recon.IgnoredValue != 0):
+		reconStatus = CheckWarning
+		reconDetail = fmt.Sprintf("selisih buku−ledger %d dijelaskan oleh dokumen belum dijurnal (%d) dan dokumen diabaikan (%d)",
+			recon.Diff, recon.PendingValue, recon.IgnoredValue)
 	}
-	add("inventory_recon", "Persediaan buku = ledger biaya", reconStatus, reconDetail, int64(absInt64(recon.Diff)))
+	add("inventory_recon", "Persediaan buku = ledger biaya", reconStatus, reconDetail, absInt64(recon.Unexplained))
 	if recon.OpeningUnposted != 0 {
 		add("opening_unposted", "Stok awal belum dijurnal", CheckWarning,
 			fmt.Sprintf("stok awal senilai %d belum dijurnal: saldo awal keuangan belum diposting", recon.OpeningUnposted), 1)

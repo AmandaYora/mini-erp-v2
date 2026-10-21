@@ -3,7 +3,9 @@ import type {
   AgingDoc,
   CashFlowRow,
   IntegrityReport,
+  InventoryRecon,
 } from "@/modules/finance/types";
+import { formatIDR, formatNumber } from "@/shared/lib/format";
 
 /** Label + nilai pita umur, berurutan dari yang terbaru. */
 export function agingBucketRows(b: AgingBuckets): { key: string; label: string; amount: number }[] {
@@ -36,6 +38,20 @@ export function cashRowReconciles(r: CashFlowRow): boolean {
 /** Total masuk / keluar seluruh rekening (server hanya mengirim total awal/akhir). */
 export function cashFlowTotals(rows: CashFlowRow[]): { in: number; out: number } {
   return rows.reduce((a, r) => ({ in: a.in + r.in, out: a.out + r.out }), { in: 0, out: 0 });
+}
+
+/**
+ * Penjelasan selisih Persediaan buku vs ledger biaya: bagian yang dijelaskan
+ * dokumen belum dijurnal / diabaikan disebut, sisanya (tak terjelaskan) yang
+ * menentukan lulus atau gagal.
+ */
+export function inventoryGapHint(r: InventoryRecon): string {
+  const explained: string[] = [];
+  if (r.pendingValue !== 0) explained.push(`${formatIDR(r.pendingValue)} dari ${formatNumber(r.pending)} dokumen belum dijurnal`);
+  if (r.ignoredValue !== 0) explained.push(`${formatIDR(r.ignoredValue)} dari dokumen yang diabaikan`);
+  const note = explained.length > 0 ? ` Selisih buku − ledger ${formatIDR(r.diff)} sudah memperhitungkan ${explained.join(" dan ")}.` : "";
+  if (r.consistent) return `Cocok (dalam toleransi pembulatan).${note}`;
+  return `Telusuri jurnal manual/balik pada akun Persediaan, saldo awal, atau mutasi stok tanpa jurnal.${note}`;
 }
 
 /** Ringkasan satu kalimat hasil pemeriksaan integritas pembukuan. */

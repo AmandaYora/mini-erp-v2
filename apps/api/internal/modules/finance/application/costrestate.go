@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	"mini-erp/internal/modules/finance/contracts"
@@ -23,14 +24,19 @@ import (
 // outflow prices go stale and so do the journals booked from them. This tool
 // replays each position's chain from the ledger itself, reports what every
 // outflow SHOULD have cost, and — on commit — rewrites those rows and books ONE
-// balanced correction journal (Persediaan against HPP) so the K-05
-// reconciliation stays at zero.
+// balanced correction journal so the K-05 reconciliation stays at zero.
 //
-// Inputs that are never restated: inflows (their cost is evidence — a receipt's
-// PO economics, an opening cost, a cost-only supplement row) and cross-branch
-// transfers (the other branch's ledger carries the same cost and no journal
-// exists for them by design). Only finance's own ledger table is read; no stock
-// data is needed, so the tool stays inside the module boundary.
+// Only outflows a journal booked at their ledger value are restated, and each
+// correction goes to the account that journal used (ADR-0020): a shipment's
+// to HPP, a shortage adjustment's to Selisih Persediaan, a write-off's to its
+// expense, a purchase return's to its price difference. Never restated:
+// inflows (their cost is evidence — a receipt's PO economics, an opening cost,
+// a cost-only supplement row, or the mirror of another leg), value-neutral
+// moves (transfers and damaged-location moves: both legs carry one value and
+// no journal exists for them by design), and documents that were cancelled
+// (their cancellation mirrors the recorded value, and no journal remains to
+// correct). Only finance's own ledger table is read; no stock data is needed,
+// so the tool stays inside the module boundary.
 
 // SourceCostRestatement marks the correction journal.
 const SourceCostRestatement = "cost_restatement"
@@ -56,8 +62,11 @@ type RestateProduct struct {
 	ValueBefore float64 `json:"valueBefore"`
 	ValueAfter  float64 `json:"valueAfter"`
 	// Delta is the whole-rupiah change of the position's value (after − before):
-	// positive books Dr Persediaan / Cr HPP, negative the reverse.
+	// positive books Dr Persediaan / Cr the offset accounts, negative the reverse.
 	Delta int64 `json:"delta"`
+	// Offsets splits Delta by the account-mapping key it corrects ("cogs",
+	// "adjustment", "writeoff", "purchase_return_difference").
+	Offsets map[string]int64 `json:"offsets"`
 }
 
 // RestateSkipped is a position left untouched on purpose.
@@ -90,6 +99,16 @@ type restatedRow struct {
 	id    int64
 	unit  float64
 	total float64
+}
+
+// restateOffsets maps each restatable outflow to the mapping key of the
+// account its journal booked the cost against. An outflow kind missing here
+// is never restated.
+var restateOffsets = map[string]string{
+	"delivery":        "cogs",
+	"adjustment":      "adjustment",
+	"write_off":       "writeoff",
+	"purchase_return": "purchase_return_difference",
 }
 
 // RestateCostOptions drives RestateCost.
@@ -179,6 +198,12 @@ func (s *Service) restateLocked(ctx context.Context, o RestateCostOptions, date 
 // negative result is a symptom of something else (an oversell, a missing
 // inflow) and restating it would only move the problem.
 func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateReport) {
+	cancelled := map[string]bool{}
+	for _, r := range rows {
+		if strings.HasSuffix(r.RefType, "_cancel") {
+			cancelled[strings.TrimSuffix(r.RefType, "_cancel")+"#"+strconv.FormatInt(r.RefID, 10)] = true
+		}
+	}
 	i := 0
 	for i < len(rows) {
 		j := i
@@ -191,7 +216,7 @@ func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateRep
 
 		var qty, total, valueBefore float64
 		var updates []restatedRow
-		var drift float64
+		offsets := map[string]float64{}
 		for _, r := range chain {
 			valueBefore += r.Total
 			if r.Direction == "in" {
@@ -200,14 +225,18 @@ func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateRep
 				continue
 			}
 			newTotal := r.Total
-			if !transferRef(r.RefType) && qty > 1e-9 {
-				avg := total / qty
-				u := math.Round(avg*10000) / 10000
-				t := -math.Round(r.Qty*avg*100) / 100
+			offset, restatable := restateOffsets[r.RefType]
+			if restatable && !cancelled[r.RefType+"#"+strconv.FormatInt(r.RefID, 10)] && qty > positionEpsilon {
+				// The same pricing the costing run uses: whole rupiah, and an
+				// out that empties the position takes exactly what is left.
+				t := -wholeRupiah(r.Qty * total / qty)
+				if math.Abs(qty-r.Qty) <= positionEpsilon {
+					t = -total
+				}
 				if math.Abs(t-r.Total) >= restateTolerance {
 					newTotal = t
-					updates = append(updates, restatedRow{id: r.ID, unit: u, total: t})
-					drift += t - r.Total
+					updates = append(updates, restatedRow{id: r.ID, unit: math.Round(-t/r.Qty*10000) / 10000, total: t})
+					offsets[offset] += t - r.Total
 				}
 			}
 			qty -= r.Qty
@@ -216,23 +245,26 @@ func (s *Service) replayChains(rows []infrastructure.RestateRow, rep *RestateRep
 		if len(updates) == 0 {
 			continue
 		}
-		p := RestateProduct{ProductID: chain[0].ProductID, VariantID: chain[0].VariantID,
-			Rows: len(updates), ValueBefore: valueBefore, ValueAfter: valueBefore + drift}
-		if qty < -1e-9 || total < -restateTolerance {
+		var drift float64
+		p := RestateProduct{ProductID: chain[0].ProductID, VariantID: chain[0].VariantID, Rows: len(updates), Offsets: map[string]int64{}}
+		for k, v := range offsets {
+			if d := money.Round(v); d != 0 {
+				p.Offsets[k] = d
+				p.Delta += d
+			}
+			drift += v
+		}
+		p.ValueBefore, p.ValueAfter = valueBefore, valueBefore+drift
+		if qty < -positionEpsilon || total < -restateTolerance {
 			rep.Skipped = append(rep.Skipped, RestateSkipped{ProductID: p.ProductID, VariantID: p.VariantID,
 				Reason: fmt.Sprintf("hasil akhir negatif (qty %.4f, nilai %.2f); di luar cakupan restatement, periksa terpisah", qty, total)})
 			continue
 		}
-		p.Delta = money.Round(drift)
 		rep.RowsChanged += len(updates)
 		rep.rowUpdates = append(rep.rowUpdates, updates...)
 		rep.Products = append(rep.Products, p)
 		rep.Delta += p.Delta
 	}
-}
-
-func transferRef(refType string) bool {
-	return len(refType) >= 8 && refType[:8] == "transfer"
 }
 
 // decorateRestate names the products of the report.
@@ -254,10 +286,9 @@ func (s *Service) commitRestatement(ctx context.Context, o RestateCostOptions, d
 	if err != nil {
 		return apperror.Internal(err)
 	}
-	inventory, cogs := maps["inventory"], maps["cogs"]
-	if inventory == nil || cogs == nil || inventory.Status != "active" || cogs.Status != "active" {
-		return apperror.Validation("", []apperror.FieldError{{Field: "mapping",
-			Message: "pemetaan akun 'inventory' dan 'cogs' wajib aktif"}})
+	inventory := maps["inventory"]
+	if inventory == nil || inventory.Status != "active" {
+		return apperror.Validation("", []apperror.FieldError{{Field: "mapping", Message: "pemetaan akun 'inventory' wajib aktif"}})
 	}
 	sort.Slice(rep.Products, func(i, j int) bool {
 		if rep.Products[i].ProductID == rep.Products[j].ProductID {
@@ -267,24 +298,33 @@ func (s *Service) commitRestatement(ctx context.Context, o RestateCostOptions, d
 	})
 	var legs []*contracts.JournalLine
 	for _, p := range rep.Products {
-		if p.Delta == 0 {
-			continue
+		keys := make([]string, 0, len(p.Offsets))
+		for k := range p.Offsets {
+			keys = append(keys, k)
 		}
-		amt := p.Delta
-		invDebit := amt > 0
-		if amt < 0 {
-			amt = -amt
+		sort.Strings(keys)
+		for _, k := range keys {
+			amt := p.Offsets[k]
+			offset := maps[k]
+			if offset == nil || offset.Status != "active" {
+				return apperror.Validation("", []apperror.FieldError{{Field: "mapping",
+					Message: "pemetaan akun '" + k + "' wajib aktif untuk restatement"}})
+			}
+			invDebit := amt > 0
+			if amt < 0 {
+				amt = -amt
+			}
+			inv := &contracts.JournalLine{AccountID: inventory.ID, ProductID: p.ProductID, VariantID: p.VariantID,
+				Description: "Restatement biaya persediaan"}
+			off := &contracts.JournalLine{AccountID: offset.ID, ProductID: p.ProductID, VariantID: p.VariantID,
+				Description: "Restatement biaya persediaan"}
+			if invDebit {
+				inv.Debit, off.Credit = amt, amt
+			} else {
+				inv.Credit, off.Debit = amt, amt
+			}
+			legs = append(legs, inv, off)
 		}
-		inv := &contracts.JournalLine{AccountID: inventory.ID, ProductID: p.ProductID, VariantID: p.VariantID,
-			Description: "Restatement biaya persediaan"}
-		cg := &contracts.JournalLine{AccountID: cogs.ID, ProductID: p.ProductID, VariantID: p.VariantID,
-			Description: "Restatement biaya persediaan"}
-		if invDebit {
-			inv.Debit, cg.Credit = amt, amt
-		} else {
-			inv.Credit, cg.Debit = amt, amt
-		}
-		legs = append(legs, inv, cg)
 	}
 	updates := make([]infrastructure.RestateUpdate, 0, len(rep.rowUpdates))
 	for _, u := range rep.rowUpdates {
@@ -299,7 +339,7 @@ func (s *Service) commitRestatement(ctx context.Context, o RestateCostOptions, d
 	detail := make([]map[string]any, 0, len(top))
 	for _, p := range top {
 		detail = append(detail, map[string]any{"productId": p.ProductID, "variantId": p.VariantID,
-			"before": p.ValueBefore, "after": p.ValueAfter, "delta": p.Delta})
+			"before": p.ValueBefore, "after": p.ValueAfter, "delta": p.Delta, "offsets": p.Offsets})
 	}
 	summary["products"] = detail
 	audit := func(ctx context.Context, tx auditcontracts.AuditTx, entryID int64, number string) error {

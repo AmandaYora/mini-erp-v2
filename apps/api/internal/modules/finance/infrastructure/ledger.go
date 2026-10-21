@@ -49,9 +49,12 @@ func (r *Repository) MaxCostMovementID(ctx context.Context, branchID int64) (int
 	return id.Int64, nil
 }
 
-// InsertCostRow records one costed movement.
-func (r *Repository) InsertCostRow(ctx context.Context, branchID, productID, variantID, movementID int64, direction string, qty, unit float64, estimated bool, refType string, refID int64, movedAt string) error {
-	total := qty * unit
+// InsertCostRow records one costed movement. value is the movement's
+// magnitude in rupiah (the caller rounds it); the row stores it signed, so a
+// position's value is always SUM(total_cost) and never drifts from the
+// journals that read the same rows.
+func (r *Repository) InsertCostRow(ctx context.Context, branchID, productID, variantID, movementID int64, direction string, qty, unit, value float64, estimated bool, refType string, refID int64, movedAt string) error {
+	total := value
 	if direction == "out" {
 		total = -total
 	}
@@ -66,6 +69,50 @@ func (r *Repository) InsertCostRow(ctx context.Context, branchID, productID, var
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		branchID, productID, variantID, movementID, refType, dbutil.NullIfZero(refID), direction, qty, unit, total, est, dbutil.NullIfEmpty(normalizeStamp(movedAt)))
 	return err
+}
+
+// RefCostSum totals the ledger rows of one document leg: (ref_type, ref_id,
+// product, variant, direction). branchID 0 reads every branch (the two legs
+// of a cross-branch transfer live in different branch ledgers). qty and value
+// are magnitudes; estimated is true when any of the rows is.
+func (r *Repository) RefCostSum(ctx context.Context, branchID int64, refType string, refID, productID, variantID int64, direction string) (qty, value float64, estimated bool, err error) {
+	q := `SELECT COALESCE(SUM(qty_base), 0), COALESCE(SUM(ABS(total_cost)), 0), COALESCE(MAX(is_estimated), 0)
+		 FROM finance_inventory_cost_movements
+		 WHERE ref_type = ? AND ref_id = ? AND product_id = ? AND variant_id = ? AND direction = ?`
+	args := []any{refType, refID, productID, variantID, direction}
+	if branchID > 0 {
+		q += " AND branch_id = ?"
+		args = append(args, branchID)
+	}
+	var qs, vs string
+	var est int
+	if err := r.db.QueryRowContext(ctx, q, args...).Scan(&qs, &vs, &est); err != nil {
+		return 0, 0, false, err
+	}
+	return dbutil.ParseDecimal(qs), dbutil.ParseDecimal(vs), est == 1, nil
+}
+
+// PrecedingRefRow returns the latest ledger row of a ref type for one
+// position strictly before a movement id, or nil. Pairs without a document id
+// (damaged-location moves: out then in, same transaction) are matched by it.
+func (r *Repository) PrecedingRefRow(ctx context.Context, branchID, productID, variantID int64, refType string, beforeMovementID int64) (*CostRow, error) {
+	var row CostRow
+	var qty, unit, total sql.NullString
+	var est int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT stock_movement_id, direction, qty_base, unit_cost, total_cost, is_estimated
+		 FROM finance_inventory_cost_movements
+		 WHERE branch_id = ? AND product_id = ? AND variant_id = ? AND ref_type = ? AND stock_movement_id < ?
+		 ORDER BY stock_movement_id DESC LIMIT 1`,
+		branchID, productID, variantID, refType, beforeMovementID).Scan(&row.MovementID, &row.Direction, &qty, &unit, &total, &est)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	row.Qty, row.UnitCost, row.Total, row.Estimated = dbutil.ParseDecimal(qty.String), dbutil.ParseDecimal(unit.String), dbutil.ParseDecimal(total.String), est == 1
+	return &row, nil
 }
 
 // normalizeStamp turns the driver's RFC3339 timestamp into a MySQL DATETIME
@@ -114,15 +161,20 @@ func (r *Repository) CostRowByMovement(ctx context.Context, branchID, movementID
 	return &m, nil
 }
 
-// UnpostedStockMovements lists adjustment / write-off movements that have no
-// live journal yet, oldest first, bounded. The anti-join stays inside finance's
-// own tables (the cost ledger and the journal index).
+// JournaledMovementRefs are the stock movements journaled one by one (no
+// owning document books them): adjustments, write-offs and damaged goods that
+// arrived without a source position.
+var JournaledMovementRefs = []string{"adjustment", "write_off", "damaged_arrival"}
+
+// UnpostedStockMovements lists the JournaledMovementRefs movements that have
+// no live journal yet, oldest first, bounded. The anti-join stays inside
+// finance's own tables (the cost ledger and the journal index).
 func (r *Repository) UnpostedStockMovements(ctx context.Context, branchID, afterID int64, limit int) ([]StockMovementRow, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT c.stock_movement_id, c.product_id, c.variant_id, c.direction, c.ref_type,
 			c.qty_base, c.total_cost, c.is_estimated, c.moved_at
 		 FROM finance_inventory_cost_movements c
-		 WHERE c.branch_id = ? AND c.ref_type IN ('adjustment', 'write_off')
+		 WHERE c.branch_id = ? AND c.ref_type IN ('adjustment', 'write_off', 'damaged_arrival')
 		   AND c.stock_movement_id > ?
 		   AND NOT EXISTS (SELECT 1 FROM finance_journal_entries e
 		                    WHERE e.branch_id = c.branch_id AND e.source_doc_type = 'stock_movement'

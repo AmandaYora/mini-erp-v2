@@ -215,7 +215,7 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/stock/transfers/{id}/receive` | Terima (tambah tujuan) |
 | `POST` | `/api/v1/stock/transfers/{id}/cancel` | Batalkan (draf langsung, terkirim via reversal) |
 | `GET` | `/api/v1/stock/damaged` | Saldo lokasi rusak, paginasi server (`page`,`limit`, `empty=true` = posisi sudah nol). Respons `data` = objek `{items,total,withStock,empty,totalEstimatedLoss,page,limit,totalPages}` + `meta`; tiap item memuat `estimatedUnitCost` (harga modal rata-rata, fallback harga beli) dan `estimatedLoss` = qty x harga (ST-03) |
-| `POST` | `/api/v1/stock/damaged/move-in` | Catat rusak; `locationId` opsional: tanpa lokasi asal, barang dicatat langsung masuk sebagai rusak (datang rusak, ST-06) |
+| `POST` | `/api/v1/stock/damaged/move-in` | Catat rusak; `locationId` opsional: tanpa lokasi asal, barang dicatat langsung masuk sebagai rusak (datang rusak, ST-06; mutasi `damaged_arrival`, masuk antrian posting dan dijurnal seperti selisih stok lebih, ADR-0020) |
 | `POST` | `/api/v1/stock/damaged/restore` | Pulihkan |
 | `POST` | `/api/v1/stock/damaged/write-off` | Hapusbukukan (alasan wajib) |
 | `GET` | `/api/v1/stock/opening/template` | Template saldo awal (.xlsx, sheet `Stok Awal`, judul Indonesia) berisi daftar barang berstok + lokasi saran (prioritas alokasi); jumlah dikosongkan (ST-05) |
@@ -305,7 +305,7 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/finance/opening/complete` | Setelah saldo awal terkunci: beri harga modal produk berstok yang bernilai nol (`items[{productId, variantId, unitCost?}]`, default harga beli katalog); satu jurnal suplemen Persediaan/Modal Awal (`opening_supplement`) + baris ledger biaya `opening_cost` — izin `finance.manage` |
 | `GET` | `/api/v1/finance/cutover` | Batas per jenis dokumen: di bawahnya dianggap sudah dijurnal |
 | `PUT` | `/api/v1/finance/cutover` | Tetapkan batas cutover |
-| `GET` | `/api/v1/finance/integrity` | Bandingkan agregat harian dengan baris jurnal, dan akun Persediaan buku dengan nilai ledger biaya (`inventory`: book/ledger/diff/tolerance/pending/missingCost). Kesiapan tutup periode (`close/readiness`) menambah cek `inventory_recon` (blocker; peringatan bila masih ada dokumen belum dijurnal) dan `missing_cost` (peringatan) |
+| `GET` | `/api/v1/finance/integrity` | Bandingkan agregat harian dengan baris jurnal, dan akun Persediaan buku dengan nilai ledger biaya (`inventory`: book/ledger/diff/tolerance/pending/pendingValue/ignoredValue/unexplained/missingCost; konsisten bila nilai mutlak `unexplained` ≤ toleransi, `unexplained` = diff + nilai ledger dokumen belum dijurnal + diabaikan, ADR-0020). Kesiapan tutup periode (`close/readiness`) menambah cek `inventory_recon` (blocker bila ada selisih tak terjelaskan; peringatan bila selisih seluruhnya dijelaskan dokumen belum dijurnal/diabaikan) dan `missing_cost` (peringatan) |
 | `POST` | `/api/v1/finance/integrity/rebuild` | Bangun ulang agregat harian dari baris jurnal |
 | `GET` | `/api/v1/finance/close/readiness` | Gerbang kesiapan tutup buku per bulan (`year`, `month`) |
 | `POST` | `/api/v1/finance/close/safe-close` | Tutup bulan hanya bila semua gerbang lolos |
@@ -314,11 +314,11 @@ Endpoint yang sudah ada hari ini:
 | `GET` | `/api/v1/finance/tax-adjustments/{id}/attachments` | Lampiran (gambar) koreksi fiskal: `[{id,name,mime,sizeBytes,url}]` (izin `finance.tax_adjustment.view`) |
 | `POST` | `/api/v1/finance/tax-adjustments/{id}/attachments` | Unggah lampiran (multipart `file`, JPG/PNG/WebP maks 5 MB; izin `finance.tax_adjustment.manage`) |
 | `GET` | `/api/v1/finance/journals` | Daftar jurnal |
-| `POST` | `/api/v1/finance/journals/manual` | Jurnal manual (imbang wajib) |
+| `POST` | `/api/v1/finance/journals/manual` | Jurnal manual (imbang wajib). Baris ke akun yang dipetakan `inventory` ditolak 422: Persediaan hanya bergerak bersama mutasi stok (ADR-0020) |
 | `GET` | `/api/v1/finance/journals/{id}` | Detail jurnal |
 | `POST` | `/api/v1/finance/journals/{id}/reverse` | Balik jurnal (alasan wajib) |
 | `GET` | `/api/v1/finance/expenses` | Daftar biaya; filter `partyId`; tiap baris memuat `partyId`/`partyName` (FN-10) |
-| `POST` | `/api/v1/finance/expenses` | Catat biaya (auto-jurnal); `partyId` opsional (pihak lawan, tercatat juga pada baris beban jurnal) |
+| `POST` | `/api/v1/finance/expenses` | Catat biaya (auto-jurnal); `partyId` opsional (pihak lawan, tercatat juga pada baris beban jurnal). Akun beban = akun yang dipetakan `cogs` ditolak 422 (HPP hanya dari ledger biaya, ADR-0020) |
 | `GET` | `/api/v1/finance/expenses/{id}` | Detail biaya |
 | `POST` | `/api/v1/finance/expenses/{id}/cancel` | Batalkan biaya (jurnal dibalik) |
 | `POST` | `/api/v1/finance/costing/sync` | Sinkronisasi HPP dari mutasi stok |

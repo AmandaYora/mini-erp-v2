@@ -66,6 +66,7 @@ Jenis dokumen di `docs/` (referensi, status, riwayat) dan status tiap rencana: [
 | [0017](decisions/ADR-0017-design-system-v2.md) | Design System v2 "Bingkai Navy" di atas shadcn/ui (Radix) |
 | [0018](decisions/ADR-0018-keputusan-paritas.md) | Keputusan pemilik D1–D11 untuk program paritas & cutover (D9 tanggal saldo awal, D10 cutover langsung, D11 koreksi akuntansi migrasi) |
 | [0019](decisions/ADR-0019-deploy-elcodelabs-ghcr.md) | Deploy produksi ke VPS elcodelabs: image dibangun CI ke GHCR, server hanya pull & run (`minierp`, port 8084) |
+| [0020](decisions/ADR-0020-invarian-akuntansi-persediaan.md) | Invarian akuntansi persediaan: tiap mutasi dijurnal sebesar nilai ledger atau netral; kaki cermin, rupiah bulat, akun kendali, rekonsiliasi menjelaskan selisih |
 
 ADR baru: nomor berikutnya, format `## Status / Context / Decision / Consequences`, lalu tambahkan
 barisnya di tabel ini. ADR yang diganti tidak dihapus; tandai statusnya `Superseded by ADR-NNNN`.

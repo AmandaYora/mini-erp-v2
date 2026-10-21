@@ -77,7 +77,9 @@ func TestUnexpectedErrorsReachAuditTrailDedupedAndBounded(t *testing.T) {
 		WHERE a.action_key = 'error.unexpected' AND a.note LIKE '%panic%'`).Scan(&note, &meta); err != nil {
 		t.Fatalf("read row: %v", err)
 	}
-	for _, leak := range []string{"hunter2", "rahasia", "77", "Bearer"} {
+	// The concrete path, not a bare "77": the row's random request id may
+	// contain those digits.
+	for _, leak := range []string{"hunter2", "rahasia", "panic/77", "Bearer"} {
 		if strings.Contains(note+meta, leak) {
 			t.Fatalf("audit row leaks %q: note=%q meta=%s", leak, note, meta)
 		}
