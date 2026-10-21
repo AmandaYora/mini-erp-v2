@@ -19,6 +19,7 @@ import (
 // revenue either.
 type revCandidate struct {
 	dn, legacyDoc, legacyOrder, branch int64
+	journals                           []int64 // the legacy journals that did post (its COGS)
 }
 
 type soLine struct {
@@ -112,9 +113,25 @@ func (s *state) unbookedRevenue() {
 		}
 		sjList := strings.Join(sjs, ", ")
 		if so.Str("status") == "cancelled" {
+			// Decision (ADR-0018 D11f): the order was cancelled and, in every
+			// case found, re-entered as a new order for the same customer the
+			// same day — the SJ is a duplicate record, not a sale. No revenue or
+			// receivable is invented; quantities stay as legacy holds them (the
+			// warehouse's reference). Its COGS was not the cost of a sale, so
+			// it moves to the stock-difference account, where inventory
+			// discrepancies (and the opname that settled them) belong.
+			var total int64
+			for _, c := range group {
+				for _, cg := range s.legacyCOGS(c.journals) {
+					s.migCorr = append(s.migCorr, migCorrection{kind: corrCancelledShipped, branch: c.branch, doc: soID, ref: so.Str("number"),
+						product: cg.product, variant: cg.variant, deliveryNote: c.dn, legacyMovement: c.legacyDoc, amount: cg.amount,
+						reason: "SJ " + number[c.dn] + " milik order batal"})
+					total += cg.amount
+				}
+			}
 			s.out.Explain["revenue_unbooked_cancelled_orders"]++
 			s.find(report.Warn, "REVENUE_UNBOOKED_CANCELLED", "orders", lo,
-				"order %s dibatalkan di legacy padahal SJ %s terkonfirmasi tanpa pembatalan: HPP-nya dijurnal legacy, pendapatan tidak; tanpa koreksi otomatis, mohon telaah pemilik/akuntan", so.Str("number"), sjList)
+				"order %s dibatalkan di legacy padahal SJ %s terkonfirmasi tanpa pembatalan (order diganti order baru): tanpa pendapatan/piutang; HPP Rp%d direklasifikasi ke selisih persediaan (jurnal koreksi migrasi)", so.Str("number"), sjList, total)
 			continue
 		}
 		var revenue, tax int64
@@ -172,6 +189,63 @@ func (s *state) unbookedRevenue() {
 			"pendapatan Rp%d (penjualan Rp%d + PPN Rp%d) order %s atas SJ %s tidak pernah dijurnal: legacy menjurnal pendapatan saat order selesai (belum terjadi) sedangkan HPP SJ-nya sudah dijurnal, dan SJ di bawah batas cutover tidak diantre revamp; jurnal koreksi migrasi Dr Piutang / Cr Penjualan",
 			revenue+tax, revenue, tax, so.Str("number"), sjList)
 	}
+}
+
+type cogsLeg struct {
+	product, variant, amount int64
+}
+
+// legacyCOGS sums, per product/variant, what the given legacy journals
+// debited (net) to the COGS account — the cost legacy booked for an SJ.
+func (s *state) legacyCOGS(journals []int64) []cogsLeg {
+	want := map[int64]bool{}
+	for _, j := range journals {
+		want[j] = true
+	}
+	// Read from the legacy rows: the account index is built later (finance step).
+	isCOGS := map[int64]bool{}
+	for _, a := range s.raw["finance_accounts"] {
+		if a.Str("system_key") == "cogs" {
+			isCOGS[a.Int("id_finance_account")] = true
+		}
+	}
+	type pv struct{ p, v int64 }
+	sum := map[pv]*big.Rat{}
+	var order []pv
+	for _, l := range s.raw["finance_journal_lines"] {
+		if !want[l.Int("id_finance_journal_entry")] {
+			continue
+		}
+		if !isCOGS[l.Int("id_finance_account")] {
+			continue
+		}
+		var k pv
+		if p, ok := l.NInt("id_product"); ok {
+			k.p, _ = s.id("products", p)
+		}
+		if v, ok := l.NInt("id_product_variant"); ok {
+			k.v, _ = s.id("product_variants", v)
+		}
+		if sum[k] == nil {
+			sum[k] = new(big.Rat)
+			order = append(order, k)
+		}
+		sum[k].Add(sum[k], new(big.Rat).Sub(l.Rat("debit_amount"), l.Rat("credit_amount")))
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].p != order[j].p {
+			return order[i].p < order[j].p
+		}
+		return order[i].v < order[j].v
+	})
+	var out []cogsLeg
+	for _, k := range order {
+		f, _ := sum[k].Float64()
+		if amt := money.Round(f); amt != 0 {
+			out = append(out, cogsLeg{product: k.p, variant: k.v, amount: amt})
+		}
+	}
+	return out
 }
 
 // completeDelivered completes a confirmed sales order whose every line is
@@ -251,10 +325,12 @@ func (s *state) completeDelivered() {
 	}
 }
 
-// draftOrdersPaid lists draft sales orders that already carry an active
-// payment: the money is in the books (Cr Piutang) while the order never
-// shipped, so the customer shows a credit until operations confirm (and
-// deliver) the order or cancel and refund it.
+// draftOrdersPaid migrates a draft sales order that already carries an active
+// payment as CONFIRMED (ADR-0018 D11f). Money was taken for it, and in the
+// revamp only a confirmed order may hold money: confirmed, it is an open,
+// prepaid order awaiting delivery, which operations deliver — or cancel
+// through the web after cancelling (refunding) its payment. Left a draft, its
+// payment would be invisible (drafts show unpaid) and editable away.
 func (s *state) draftOrdersPaid() {
 	active := map[int64]string{}
 	for _, p := range s.out.Tables["payments"] {
@@ -282,9 +358,12 @@ func (s *state) draftOrdersPaid() {
 		if o.Str("status") != "draft" || paid[id] == 0 {
 			continue
 		}
+		o["status"] = "confirmed"
 		s.out.Explain["draft_orders_paid"]++
+		s.emit("order_reclass", row.Row{"branch_id": o.Int("branch_id"), "kind": "sales", "number": o.Str("number"), "from": "draft", "to": "confirmed",
+			"grand_total": o.Int("grand_total"), "tax_total": o.Int("tax_total"), "discount_total": o.Int("discount_total")})
 		s.find(report.Warn, "DRAFT_ORDER_PAID", "orders", legacyOf[id],
-			"order %s masih draf tetapi sudah dibayar Rp%d (%s): operasional mengonfirmasi order itu atau membatalkannya dan mengembalikan uangnya",
+			"order %s masih draf di legacy tetapi sudah dibayar Rp%d (%s): dimigrasi TERKONFIRMASI menunggu pengiriman; bila ternyata batal, batalkan pembayarannya lalu ordernya lewat web",
 			o.Str("number"), paid[id], strings.Join(pays[id], ", "))
 	}
 }

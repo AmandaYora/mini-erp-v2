@@ -220,16 +220,20 @@ func TestTransformOrderCleanups(t *testing.T) {
 				t.Errorf("delivered order 6 = %s completed_at %q, want completed at the SJ confirmation", o.Str("status"), o.Str("completed_at"))
 			}
 		case newID(out, "sales_orders", 5):
-			if o.Str("status") != "draft" {
-				t.Errorf("draft order 5 became %s", o.Str("status"))
+			if o.Str("status") != "confirmed" {
+				t.Errorf("paid draft order 5 = %s, want confirmed (ADR-0018 D11f)", o.Str("status"))
 			}
 		}
 	}
 	if f := finding(out, "ORDER_COMPLETED_DELIVERED", 6); f == nil || f.Severity != report.Info {
 		t.Errorf("ORDER_COMPLETED_DELIVERED = %+v", f)
 	}
-	if rc := out.Tables["order_reclass"]; len(rc) != 1 || rc[0].Str("from") != "confirmed" || rc[0].Str("to") != "completed" || rc[0].Int("grand_total") != 60000 {
-		t.Errorf("order_reclass = %v", rc)
+	moves := map[string]int64{}
+	for _, rc := range out.Tables["order_reclass"] {
+		moves[rc.Str("from")+">"+rc.Str("to")] += rc.Int("grand_total")
+	}
+	if len(moves) != 2 || moves["confirmed>completed"] != 60000 || moves["draft>confirmed"] == 0 {
+		t.Errorf("order_reclass = %v", out.Tables["order_reclass"])
 	}
 	if f := finding(out, "DRAFT_ORDER_PAID", 5); f == nil || f.Severity != report.Warn || !strings.Contains(f.Detail, "Rp20000") {
 		t.Errorf("DRAFT_ORDER_PAID = %+v", f)
@@ -257,5 +261,72 @@ func TestTransformStockSameInstantOrder(t *testing.T) {
 	}
 	if finding(out, "STOCK_CARD_RECOMPUTED", 0) == nil {
 		t.Error("STOCK_CARD_RECOMPUTED summary missing")
+	}
+}
+
+// ADR-0018 D11f: an SJ of an order legacy cancelled (and re-entered as a new
+// order) keeps its quantities, books no revenue or receivable, and the COGS
+// legacy journalled for it moves to the stock-difference account.
+func TestTransformCancelledOrderShippedCOGS(t *testing.T) {
+	raw := loadRaw(t)
+	var cancelled, cogs, inventory int64
+	for _, d := range raw["order_status_definitions"] {
+		if d.Str("status_group") == "cancelled" {
+			cancelled = d.Int("id_order_status_definition")
+		}
+	}
+	for _, a := range raw["finance_accounts"] {
+		switch a.Str("system_key") {
+		case "cogs":
+			cogs = a.Int("id_finance_account")
+		case "inventory":
+			inventory = a.Int("id_finance_account")
+		}
+	}
+	if cancelled == 0 || cogs == 0 || inventory == 0 {
+		t.Fatalf("fixture lacks a cancelled status (%d) or COGS/inventory accounts (%d/%d)", cancelled, cogs, inventory)
+	}
+	for _, o := range raw["orders"] {
+		if o.Int("id_order") == 6 {
+			o["id_current_status"] = cancelled
+		}
+	}
+	entry := row.Row{"id_finance_journal_entry": int64(990), "id_company": int64(1), "id_branch": int64(2), "journal_number": "JE-CBG/2026/00990",
+		"journal_date": "2026-02-11T04:00:00.000000Z", "description": "HPP SJ order batal", "event_key": "stock_issue_cogs",
+		"source_type": "inventory_movement", "id_source": int64(17), "status": "posted", "posting_type": "auto",
+		"posted_at": "2026-02-11T04:00:00.000000Z", "posted_by": int64(2), "created_at": "2026-02-11T04:00:00.000000Z",
+		"updated_at": "2026-02-11T04:00:00.000000Z", "archived_at": nil, "id_reversal_of": nil, "metadata_json": nil, "reversed_at": nil, "reversed_by": nil}
+	line := func(id, acct int64, dr, cr string) row.Row {
+		return row.Row{"id_finance_journal_line": id, "id_company": int64(1), "id_branch": int64(2), "id_finance_journal_entry": int64(990),
+			"id_finance_account": acct, "debit_amount": dr, "credit_amount": cr, "line_no": id - 9900, "id_product": int64(1),
+			"id_product_variant": int64(1), "id_business_party": nil, "id_inventory_movement": nil, "id_order": nil, "id_payment": nil,
+			"description": nil, "metadata_json": nil, "created_at": "2026-02-11T04:00:00.000000Z"}
+	}
+	raw["finance_journal_entries"] = append(raw["finance_journal_entries"], entry)
+	raw["finance_journal_lines"] = append(raw["finance_journal_lines"], line(9901, cogs, "33000.00", "0.00"), line(9902, inventory, "0.00", "33000.00"))
+	src := cogsPosted(902, 2, 17)
+	src["id_journal_entry"] = int64(990)
+	raw["finance_posting_sources"] = append(raw["finance_posting_sources"], src, cogsPosted(903, 2, 18))
+	out := run(t, raw)
+
+	var reclass int64
+	for _, r := range out.Tables["migration_corrections"] {
+		switch r.Str("kind") {
+		case "revenue_unbooked":
+			if r.Str("ref") == "ORD-CBG/PJ/2026/02/00001" {
+				t.Errorf("revenue invented for a cancelled order: %v", r)
+			}
+		case "cancelled_order_cogs":
+			if r.Str("credit_account") == r.Str("debit_account") {
+				t.Errorf("reclass on one account: %v", r)
+			}
+			reclass += r.Int("amount")
+		}
+	}
+	if reclass != 33000 {
+		t.Errorf("COGS reclassified = %d, want the 33000 legacy journalled", reclass)
+	}
+	if f := finding(out, "REVENUE_UNBOOKED_CANCELLED", 6); f == nil || !strings.Contains(f.Detail, "Rp33000") {
+		t.Errorf("REVENUE_UNBOOKED_CANCELLED = %+v", f)
 	}
 }

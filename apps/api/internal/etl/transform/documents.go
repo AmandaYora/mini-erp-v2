@@ -383,7 +383,7 @@ func (s *state) deliveryNotes() error {
 			}
 			if st := s.post[postKey{"order", oid, "sales_completed"}]; st != legacyPostedStatus && st != "ignored" &&
 				!s.journaled[[2]string{"order", strconv.FormatInt(oid, 10)}] {
-				s.revCand = append(s.revCand, revCandidate{dn: id, legacyDoc: dr.legacy, legacyOrder: oid, branch: dr.branch})
+				s.revCand = append(s.revCand, revCandidate{dn: id, legacyDoc: dr.legacy, legacyOrder: oid, branch: dr.branch, journals: dr.journals})
 			}
 		}
 	}

@@ -1123,7 +1123,7 @@ func (v *verifier) lessWriteDowns(src map[string]string) {
 }
 
 func (v *verifier) migrationCorrections() {
-	const id22, desc22 = "V-26", "jurnal koreksi migrasi = daftar koreksi (per jurnal) = Σ temuan DN_CANCEL_COGS, COST_STATE_NO_QTY/NO_VALUE, COGS_UNPOSTED, STOCK_UNPOSTED, REVENUE_UNBOOKED"
+	const id22, desc22 = "V-26", "jurnal koreksi migrasi = daftar koreksi (per jurnal) = Σ temuan DN_CANCEL_COGS, COST_STATE_NO_QTY/NO_VALUE, COGS_UNPOSTED, STOCK_UNPOSTED, REVENUE_UNBOOKED(_CANCELLED)"
 	rows, codes, err := v.corrections()
 	if err != nil {
 		v.fail(id22, desc22, err)
@@ -1151,7 +1151,7 @@ func (v *verifier) migrationCorrections() {
 	if f, err := os.ReadFile(filepath.Join(transform.ReportDir(v.work), "findings.csv")); err == nil {
 		re := regexp.MustCompile(`Rp(-?\d+)`)
 		for _, line := range strings.Split(string(f), "\n") {
-			if !strings.Contains(line, ",DN_CANCEL_COGS,") && !strings.Contains(line, ",COST_STATE_NO_QTY,") && !strings.Contains(line, ",REVENUE_UNBOOKED,") &&
+			if !strings.Contains(line, ",DN_CANCEL_COGS,") && !strings.Contains(line, ",COST_STATE_NO_QTY,") && !strings.Contains(line, ",REVENUE_UNBOOKED,") && !strings.Contains(line, ",REVENUE_UNBOOKED_CANCELLED,") &&
 				!strings.Contains(line, ",COGS_UNPOSTED,") && !strings.Contains(line, ",STOCK_UNPOSTED,") && !strings.Contains(line, ",COST_STATE_NO_VALUE,") {
 				continue
 			}

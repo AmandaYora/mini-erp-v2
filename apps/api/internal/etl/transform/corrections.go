@@ -41,6 +41,10 @@ const (
 	// revamp's queue will not book it either — Dr Piutang (customer) /
 	// Cr Penjualan per product, Cr PPN Keluaran for the tax (taxLeg).
 	corrRevenueUnbooked = "revenue_unbooked"
+	// corrCancelledShipped: an SJ of an order cancelled in legacy (re-entered
+	// as a new order) whose COGS legacy journalled — not the cost of a sale,
+	// so Dr selisih persediaan / Cr HPP. Quantities are not touched.
+	corrCancelledShipped = "cancelled_order_cogs"
 )
 
 type migCorrection struct {
@@ -64,6 +68,8 @@ func corrAccounts(c migCorrection) (dr, cr string) {
 		return "inventory", "cogs"
 	case corrStateNoQty:
 		return "stock_difference", "inventory"
+	case corrCancelledShipped:
+		return "stock_difference", "cogs"
 	case corrRevenueUnbooked:
 		if c.taxLeg {
 			return "accounts_receivable", "output_tax"
@@ -165,7 +171,7 @@ func (s *state) migrationCorrections() {
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), docNumber["delivery:"+strconv.FormatInt(c.doc, 10)]
 		case corrStateNoQty, corrStateNoValue:
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.product), s.productRow[c.product].Str("code")
-		case corrRevenueUnbooked: // one journal per sales order
+		case corrRevenueUnbooked, corrCancelledShipped: // one journal per sales order
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), c.ref
 		default:
 			// One journal per document; document-less movements of a branch together.
@@ -227,6 +233,10 @@ func (s *state) migrationCorrections() {
 			memo = fmt.Sprintf("Koreksi migrasi: penjualan %s (%s) sudah dikirim dan HPP-nya dijurnal legacy, tetapi pendapatannya tidak pernah dijurnal (legacy menjurnal saat order selesai) dan SJ-nya di bawah batas cutover; piutang dan penjualan dibukukan (Dr Piutang / Cr Penjualan)", g.ref, g.items[0].reason)
 			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
 			desc = "Koreksi migrasi: pendapatan belum dijurnal " + g.ref
+		case corrCancelledShipped:
+			memo = fmt.Sprintf("Koreksi migrasi: order %s dibatalkan di legacy dan diganti order baru, tetapi SJ-nya (%s) tetap terkonfirmasi dan HPP-nya dijurnal; bukan penjualan, HPP dipindah ke selisih persediaan (Dr Selisih Persediaan / Cr HPP), qty stok tidak diubah", g.ref, g.items[0].reason)
+			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
+			desc = "Koreksi migrasi: HPP SJ order batal " + g.ref
 		default:
 			memo = fmt.Sprintf("Koreksi migrasi: %s — mutasi persediaan tanpa jurnal di legacy (%s); Persediaan disesuaikan ke ledger biaya", g.ref, g.items[0].reason)
 			desc = "Koreksi migrasi: mutasi tanpa jurnal " + g.ref
