@@ -113,24 +113,25 @@ type state struct {
 	orderRow   map[int64]row.Row
 	userSkip   map[int64]bool
 
-	post           map[postKey]string
-	postJ          map[postKey]int64
-	journaled      map[[2]string]bool // legacy (source_type, id_source) with a live journal
-	movesByRef     map[string][]row.Row
-	directSJ       map[int64]int64 // legacy order id -> synthetic SJ id
-	dnOfLegacy     map[int64]int64
-	grOfLegacy     map[int64]int64
-	transferOf     map[transferKey]int64
-	transferFirst  map[int64]int64
-	orphanTransfer map[int64]int64 // legacy inventory movement id -> synthetic transfer id (pindah-lokasi tanpa dokumen)
-	deliveryNew    map[int64]int64
-	proofs         []proofRef
-	acct           map[int64]*acct
-	journalNew     map[int64]int64
-	orderLines     map[int64][]row.Row // legacy order items per legacy order
-	migCorr        []migCorrection     // legacy errors the ETL corrects with a journal (ADR-0018 D11)
-	revCand        []revCandidate      // order SJs whose revenue no journal will ever book (REVENUE_UNBOOKED)
-	lastBuy        map[int64]*big.Rat  // product -> last purchase unit cost per base unit (lazy)
+	post            map[postKey]string
+	postJ           map[postKey]int64
+	journaled       map[[2]string]bool // legacy (source_type, id_source) with a live journal
+	movesByRef      map[string][]row.Row
+	directSJ        map[int64]int64 // legacy order id -> synthetic SJ id
+	dnOfLegacy      map[int64]int64
+	grOfLegacy      map[int64]int64
+	transferOf      map[transferKey]int64
+	transferFirst   map[int64]int64
+	orphanTransfer  map[int64]int64 // legacy inventory movement id -> synthetic transfer id (pindah-lokasi tanpa dokumen)
+	deliveryNew     map[int64]int64
+	proofs          []proofRef
+	acct            map[int64]*acct
+	journalNew      map[int64]int64
+	orderLines      map[int64][]row.Row // legacy order items per legacy order
+	migCorr         []migCorrection     // legacy errors the ETL corrects with a journal (ADR-0018 D11)
+	revCand         []revCandidate      // order SJs whose revenue no journal will ever book (REVENUE_UNBOOKED)
+	lastBuy         map[int64]*big.Rat  // product -> last purchase unit cost per base unit (lazy)
+	cancelledStatus map[int64]bool      // legacy order status ids in the cancelled group (lazy)
 
 	// returns (returns.go)
 	srNew     map[int64]int64 // legacy sales return -> new id

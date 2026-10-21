@@ -367,3 +367,18 @@ func (s *state) draftOrdersPaid() {
 			o.Str("number"), paid[id], strings.Join(pays[id], ", "))
 	}
 }
+
+// orderCancelled reports a legacy order whose current status is in the
+// cancelled group.
+func (s *state) orderCancelled(legacyOrder int64) bool {
+	if s.cancelledStatus == nil {
+		s.cancelledStatus = map[int64]bool{}
+		for _, d := range s.raw["order_status_definitions"] {
+			if d.Str("status_group") == "cancelled" {
+				s.cancelledStatus[d.Int("id_order_status_definition")] = true
+			}
+		}
+	}
+	o, ok := s.orderRow[legacyOrder]
+	return ok && s.cancelledStatus[o.Int("id_current_status")]
+}

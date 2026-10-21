@@ -282,6 +282,15 @@ func (s *state) deliveryNotes() error {
 				reqs = append(reqs, postKey{"inventory_movement", m.Int("id_inventory_movement"), "stock_issue_cogs"})
 			}
 			dr.st, dr.reason, dr.journals = s.postState("delivery_notes", lid, date, reqs)
+			// An SJ of an order legacy CANCELLED (re-entered as a new order)
+			// is not a sale (ADR-0018 D11f): the revamp must not journal its
+			// revenue and receivable. Its goods-out reaches the books as a
+			// stock difference through the unjournalled-movement correction.
+			if dr.st == statePending && s.orderCancelled(d.Int("id_order")) {
+				dr.st, dr.reason = stateIgnored, "order_cancelled"
+				s.find(report.Warn, "DN_ORDER_CANCELLED", "delivery_notes", lid,
+					"SJ %s milik order yang dibatalkan legacy: tidak diantre posting (tanpa pendapatan/piutang); barang keluarnya dibukukan sebagai selisih persediaan", d.Str("sj_number"))
+			}
 		}
 		dr.band = band(dr.st)
 		drafts = append(drafts, dr)

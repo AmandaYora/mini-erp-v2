@@ -1047,6 +1047,7 @@ func (s *state) unjournalled(rows map[int64]*crow, done map[int64]bool) {
 		r := rows[id]
 		x := r.mv
 		why := ""
+		notSale := false // an SJ of an order cancelled in legacy (ADR-0018 D11f)
 		switch x.refType {
 		case "transfer":
 			continue
@@ -1060,6 +1061,7 @@ func (s *state) unjournalled(rows map[int64]*crow, done map[int64]bool) {
 				continue
 			}
 			why = "dokumen " + strings.TrimSuffix(st, "/")
+			notSale = st == stateIgnored+"/order_cancelled"
 		case "adjustment":
 			why = "penyesuaian stok tanpa jurnal legacy"
 			if x.notes == "Koreksi migrasi" {
@@ -1073,7 +1075,7 @@ func (s *state) unjournalled(rows map[int64]*crow, done map[int64]bool) {
 			v = -v
 		}
 		kind, code := corrStockUnposted, "STOCK_UNPOSTED"
-		if x.refType == "delivery" {
+		if x.refType == "delivery" && !notSale {
 			kind, code = corrCOGSUnposted, "COGS_UNPOSTED"
 		}
 		var doc int64
