@@ -17,7 +17,7 @@ func TestRefreshRaceWithinGrace(t *testing.T) {
 	fx := newShop(t, ctx())
 	makeUser(t, fx.branchID, "target", "rahasia-kuat-1")
 
-	first, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", "127.0.0.1")
+	first, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", testIP())
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestRefreshReplayBeyondGrace(t *testing.T) {
 	fx := newShop(t, ctx())
 	makeUser(t, fx.branchID, "target", "rahasia-kuat-1")
 
-	first, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", "127.0.0.1")
+	first, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", testIP())
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestConcurrentRefreshSingleWinner(t *testing.T) {
 	fx := newShop(t, ctx())
 	makeUser(t, fx.branchID, "target", "rahasia-kuat-1")
 
-	first, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", "127.0.0.1")
+	first, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", testIP())
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}

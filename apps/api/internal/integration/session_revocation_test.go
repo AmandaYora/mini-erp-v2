@@ -2,14 +2,28 @@ package integration
 
 import (
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 
 	authcontracts "mini-erp/internal/modules/auth/contracts"
 )
 
+var testIPSeq atomic.Uint32
+
+// testIP memberi alamat loopback berbeda per login. Pembatas login di auth
+// (10/menit per IP+username, in-process) berlaku untuk seluruh paket ini; tes
+// sesi yang berurutan login sebagai "target" >10 kali dalam semenit dan dulu
+// gagal acak "rate_limited" di mesin cepat. Pembatasnya sendiri diuji di
+// auth_ratelimit_test.go.
+func testIP() string {
+	n := testIPSeq.Add(1)
+	return fmt.Sprintf("127.0.%d.%d", (n/250)%250+1, n%250+1)
+}
+
 func login(t *testing.T, username, password string) string {
 	t.Helper()
-	res, err := testMods.auth.Service().Login(ctx(), username, password, "127.0.0.1")
+	res, err := testMods.auth.Service().Login(ctx(), username, password, testIP())
 	if err != nil {
 		t.Fatalf("login %s: %v", username, err)
 	}
@@ -105,7 +119,7 @@ func TestRefreshAfterDeactivate(t *testing.T) {
 	fx := newShop(t, ctx())
 	targetID := makeUser(t, fx.branchID, "target", "rahasia-kuat-1")
 
-	res, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", "127.0.0.1")
+	res, err := testMods.auth.Service().Login(ctx(), "target", "rahasia-kuat-1", testIP())
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
