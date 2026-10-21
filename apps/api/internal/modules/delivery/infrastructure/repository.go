@@ -266,6 +266,40 @@ func (r *Repository) Confirm(ctx context.Context, id int64, n *contracts.Deliver
 	return true, tx.Commit()
 }
 
+// Cancel flips draft -> cancelled and records the reason, time and actor in
+// ONE statement guarded by the status (CAS). Returns false when the note was
+// no longer a draft. The optional hook runs inside the CAS transaction only
+// when this call won, so the audit row co-commits with the flip (ADR-0011)
+// and a replay that lost the CAS writes none (ADR-0016).
+func (r *Repository) Cancel(ctx context.Context, id int64, reason string, actorID int64, hook func(ctx context.Context, tx *sql.Tx) error) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	t := now()
+	res, err := r.q.WithTx(tx).CancelNote(ctx, sqlc.CancelNoteParams{
+		Reason:  dbutil.NullString(reason),
+		Stamp:   sql.NullTime{Time: t, Valid: true},
+		ActorID: actor(actorID),
+		Now:     t,
+		ID:      id,
+	})
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil || affected != 1 {
+		return false, err
+	}
+	if hook != nil {
+		if err := hook(ctx, tx); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}
+
 // Transition moves a note between statuses only from an allowed origin (CAS).
 func (r *Repository) Transition(ctx context.Context, id int64, from []string, to string, actorID int64) (bool, error) {
 	if len(from) == 0 {

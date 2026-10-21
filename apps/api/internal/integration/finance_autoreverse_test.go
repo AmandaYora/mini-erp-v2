@@ -71,7 +71,7 @@ func TestCancelledReturnTakesItsJournal(t *testing.T) {
 	if _, err := testMods.payment.Service().Cancel(ctx(), 0, fx.branchID, legID); err != nil {
 		t.Fatalf("cancel offset pair: %v", err)
 	}
-	if _, err := testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, ret.ID); err != nil {
+	if _, err := testMods.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, ret.ID, ""); err != nil {
 		t.Fatalf("cancel return: %v", err)
 	}
 	if n := liveEntries(t, "sales_return", ret.ID); n != 0 {

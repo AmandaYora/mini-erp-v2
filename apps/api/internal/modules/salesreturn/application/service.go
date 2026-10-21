@@ -22,6 +22,7 @@ import (
 	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/money"
 	"mini-erp/internal/shared/timeutil"
+	"mini-erp/internal/shared/validator"
 )
 
 // Service implements contracts.SalesReturnClient plus return administration.
@@ -742,7 +743,15 @@ func (s *Service) checkCommitted(ctx context.Context, soID int64, ret *contracts
 // out) — the KI-99/KI-101 cancel path that legacy promised but never built.
 // The status is re-read inside the lock so two simultaneous cancels cannot
 // both move stock; the second one replays.
-func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*contracts.SalesReturn, error) {
+//
+// The reason is recorded on the return and in the audit entry (co-committed
+// with the status flip); the web endpoint makes it mandatory, programmatic
+// callers may pass "".
+func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.SalesReturn, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
 	first, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
@@ -792,7 +801,18 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 		default:
 			return apperror.Conflict("Retur sudah dibatalkan")
 		}
-		won, err := s.repo.Transition(ctx, ret.ID, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
+		from := ret.Status
+		won, err := s.repo.Cancel(ctx, ret.ID, reason, actorID, func(ctx context.Context, tx *sql.Tx) error {
+			note := ret.Number
+			if reason != "" {
+				note += ": " + reason
+			}
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "sales_returns.cancel", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: note,
+				Before: map[string]any{"status": from},
+				After:  map[string]any{"status": contracts.StatusCancelled, "reason": reason},
+			})
+		})
 		if err != nil {
 			return apperror.Internal(err)
 		}
@@ -832,9 +852,6 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 				_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "finance.autoreverse_failed", Entity: "sales_return_settlement", EntityID: sid, BranchID: branchID, ActorID: actorID, Note: rerr.Error()})
 			}
 		}
-	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.cancel", Entity: "sales_return", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
 	}
 	return out, nil
 }
@@ -993,6 +1010,124 @@ func (s *Service) ConfirmReplacementDelivery(ctx context.Context, actorID, branc
 		return nil, err
 	}
 	_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_returns.confirm_replacement", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
+	return out, nil
+}
+
+// CancelReplacementDelivery takes back a replacement shipment that is still a
+// DRAFT (wrong goods, wrong crew, wrong date…) and reopens the exchange: the
+// draft SJ is voided through delivery's narrow CancelReplacement (which also
+// reverses any stock a failed confirm moved) and the return's replacement
+// status goes dispatched -> pending, so the user can dispatch a corrected
+// replacement or cancel the return. A confirmed replacement shipment stays:
+// the goods reached the customer, so the correction is a new return.
+//
+// Replay-safe (ADR-0016), serialized per return like dispatch/confirm:
+// validate → void every live draft (idempotent) → CAS dispatched -> pending
+// (audited in the same transaction). A retry after a failure between the
+// two writes finds no live draft and only flips the status; a repeat after
+// success finds "pending" with a cancelled replacement note and replays.
+func (s *Service) CancelReplacementDelivery(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.SalesReturn, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
+	ret, err := s.mustOwnBranch(ctx, id, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if ret.ReturnMode != contracts.ReturnModeExchange {
+		return nil, apperror.Conflict("Hanya retur tukar yang punya barang pengganti")
+	}
+	err = doclock.Lock("sr:"+strconv.FormatInt(ret.ID, 10), func() error {
+		fresh, err := s.repo.GetReturn(ctx, ret.ID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if fresh == nil {
+			return apperror.NotFound("Retur penjualan")
+		}
+		notes, err := s.replacementNotes(ctx, branchID, fresh)
+		if err != nil {
+			return err
+		}
+		switch fresh.ReplacementDeliveryStatus {
+		case contracts.ReplacementDispatched:
+		case contracts.ReplacementPending:
+			for _, n := range notes {
+				if n.Status == deliverycontracts.StatusCancelled {
+					return nil // replay: already taken back
+				}
+			}
+			return apperror.Conflict("Barang pengganti belum dikirim, tidak ada yang dibatalkan")
+		case contracts.ReplacementConfirmed:
+			return apperror.Conflict("Surat jalan pengganti sudah dikonfirmasi; barang pengganti tidak dapat ditarik dengan pembatalan")
+		default:
+			return apperror.Conflict("Retur ini tidak punya pengiriman pengganti")
+		}
+		var drafts []*deliverycontracts.DeliveryNote
+		for _, n := range notes {
+			switch n.Status {
+			case deliverycontracts.StatusConfirmed:
+				return apperror.Conflict("Surat jalan pengganti " + n.Number + " sudah dikonfirmasi; barang pengganti tidak dapat ditarik dengan pembatalan")
+			case deliverycontracts.StatusDraft:
+				drafts = append(drafts, n)
+			}
+		}
+		numbers := make([]string, 0, len(drafts))
+		for _, n := range drafts {
+			if _, err := s.delivery.CancelReplacement(ctx, actorID, branchID, n.ID, reason); err != nil {
+				return err
+			}
+			numbers = append(numbers, n.Number)
+		}
+		won, err := s.repo.SetReplacementStatusAudited(ctx, fresh.ID, contracts.ReplacementDispatched, contracts.ReplacementPending, actorID,
+			func(ctx context.Context, tx *sql.Tx) error {
+				note := fresh.Number
+				if len(numbers) > 0 {
+					note += " (" + strings.Join(numbers, ", ") + ")"
+				}
+				if reason != "" {
+					note += ": " + reason
+				}
+				return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+					Action: "sales_returns.cancel_replacement", Entity: "sales_return", EntityID: fresh.ID, BranchID: branchID, ActorID: actorID, Note: note,
+					Before: map[string]any{"replacementDeliveryStatus": contracts.ReplacementDispatched},
+					After:  map[string]any{"replacementDeliveryStatus": contracts.ReplacementPending, "reason": reason, "deliveryNotes": numbers},
+				})
+			})
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if !won {
+			cur, err := s.repo.GetReturn(ctx, fresh.ID)
+			if err != nil {
+				return apperror.Internal(err)
+			}
+			if cur == nil || cur.ReplacementDeliveryStatus != contracts.ReplacementPending {
+				return apperror.Conflict("Status pengiriman pengganti berubah, muat ulang")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetByID(ctx, ret.ID)
+}
+
+// replacementNotes lists the return's replacement shipments (every status)
+// from the order's shipment list.
+func (s *Service) replacementNotes(ctx context.Context, branchID int64, ret *contracts.SalesReturn) ([]*deliverycontracts.DeliveryNote, error) {
+	all, err := s.delivery.ListBySO(ctx, branchID, ret.SalesOrderID)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	var out []*deliverycontracts.DeliveryNote
+	for _, n := range all {
+		if n.DocumentKind == deliverycontracts.DocumentKindReplacement && n.SalesReturnID == ret.ID {
+			out = append(out, n)
+		}
+	}
 	return out, nil
 }
 

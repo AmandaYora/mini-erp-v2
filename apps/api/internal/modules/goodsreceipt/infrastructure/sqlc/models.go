@@ -21,6 +21,9 @@ type GoodsReceipt struct {
 	SupplierDeliveryNumber sql.NullString
 	Status                 string
 	ClientRef              sql.NullString
+	CancelReason           sql.NullString
+	CancelledAt            sql.NullTime
+	CancelledBy            sql.NullInt64
 }
 
 type GoodsReceiptItem struct {

@@ -19,7 +19,7 @@ func now() time.Time { return timeutil.NowUTC() }
 
 // toReturn maps the full header projection of GetReturn.
 func toReturn(r sqlc.GetReturnRow) *contracts.SalesReturn {
-	return &contracts.SalesReturn{
+	ret := &contracts.SalesReturn{
 		ID:                        r.ID,
 		Number:                    r.Number,
 		BranchID:                  r.BranchID,
@@ -41,7 +41,13 @@ func toReturn(r sqlc.GetReturnRow) *contracts.SalesReturn {
 		ReplacementTotal:          r.ReplacementTotal,
 		DifferenceAmount:          r.DifferenceAmount,
 		ReceivableReduction:       r.ReceivableReduction,
+		CancelReason:              r.CancelReason.String,
+		CancelledBy:               r.CancelledBy.Int64,
 	}
+	if r.CancelledAt.Valid {
+		ret.CancelledAt = r.CancelledAt.Time.Format(wireDateTime)
+	}
+	return ret
 }
 
 func toItem(r sqlc.ListItemsByReturnRow) *contracts.Item {

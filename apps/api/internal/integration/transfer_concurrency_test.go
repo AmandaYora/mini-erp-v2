@@ -63,7 +63,7 @@ func TestTransferDispatchVersusCancel(t *testing.T) {
 	var dErr, cErr error
 	wg.Add(2)
 	go func() { defer wg.Done(); _, dErr = svc.DispatchTransfer(ctx(), 0, fx.branchID, id) }()
-	go func() { defer wg.Done(); _, cErr = svc.CancelTransfer(ctx(), 0, fx.branchID, id) }()
+	go func() { defer wg.Done(); _, cErr = svc.CancelTransfer(ctx(), 0, fx.branchID, id, "") }()
 	wg.Wait()
 	got := onHand(t, fx, fx.productID, fx.variantID, fx.locationID)
 	doc, err := svc.GetTransfer(ctx(), fx.branchID, id)
@@ -115,7 +115,7 @@ func TestTransferReceiveOnceAndFinal(t *testing.T) {
 	if err != nil || bal.OnHand != 10 {
 		t.Fatalf("destination = %+v, %v; want 10 (once)", bal, err)
 	}
-	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, id); !isConflict(err) {
+	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, id, ""); !isConflict(err) {
 		t.Fatalf("cancel after receive = %v, want conflict", err)
 	}
 }
@@ -129,14 +129,14 @@ func TestTransferCancelDispatchedRestores(t *testing.T) {
 	if _, err := svc.DispatchTransfer(ctx(), 0, fx.branchID, id); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, id); err != nil {
+	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, id, ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	if got := onHand(t, fx, fx.productID, fx.variantID, fx.locationID); got != 50 {
 		t.Fatalf("onhand = %v, want 50", got)
 	}
 	// A repeat is a clean replay.
-	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, id); err != nil {
+	if _, err := svc.CancelTransfer(ctx(), 0, fx.branchID, id, ""); err != nil {
 		t.Fatalf("cancel again: %v", err)
 	}
 	if got := onHand(t, fx, fx.productID, fx.variantID, fx.locationID); got != 50 {

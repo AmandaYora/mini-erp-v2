@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"mini-erp/internal/shared/dberr"
 	"mini-erp/internal/shared/doclock"
 	"mini-erp/internal/shared/timeutil"
+	"mini-erp/internal/shared/validator"
 )
 
 // Service implements contracts.GoodsReceiptClient plus receipt administration.
@@ -585,14 +587,19 @@ func (s *Service) Complete(ctx context.Context, actorID, branchID, id int64, in 
 
 // Discard abandons a PENDING receipt: any stock it already moved is reversed
 // and the receipt is voided, releasing its PO quota. Posted receipts are final
-// (corrections flow through purchase returns).
-func (s *Service) Discard(ctx context.Context, actorID, branchID, id int64) (*contracts.GoodsReceipt, error) {
+// (corrections flow through purchase returns). The reason is recorded on the
+// receipt and in the audit entry; the web endpoint makes it mandatory,
+// programmatic callers may pass "".
+func (s *Service) Discard(ctx context.Context, actorID, branchID, id int64, reason string) (*contracts.GoodsReceipt, error) {
+	reason, err := validator.Reason(reason, false)
+	if err != nil {
+		return nil, err
+	}
 	first, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
 	}
 	var out *contracts.GoodsReceipt
-	var replayed bool
 	err = doclock.Lock("po:"+strconv.FormatInt(first.PurchaseOrderID, 10), func() error {
 		rec, err := s.mustOwnBranch(ctx, id, branchID)
 		if err != nil {
@@ -600,7 +607,7 @@ func (s *Service) Discard(ctx context.Context, actorID, branchID, id int64) (*co
 		}
 		switch rec.Status {
 		case contracts.StatusVoid:
-			replayed = true
+			// Replay: already discarded (no second audit row).
 			out, err = s.GetByID(ctx, rec.ID)
 			return err
 		case contracts.StatusPosted:
@@ -613,7 +620,17 @@ func (s *Service) Discard(ctx context.Context, actorID, branchID, id int64) (*co
 				return err
 			}
 		}
-		won, err := s.repo.Transition(ctx, rec.ID, []string{contracts.StatusPending}, contracts.StatusVoid)
+		won, err := s.repo.Discard(ctx, rec.ID, reason, actorID, func(ctx context.Context, tx *sql.Tx) error {
+			note := rec.Number
+			if reason != "" {
+				note += ": " + reason
+			}
+			return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
+				Action: "goods_receipts.discard", Entity: "goods_receipt", EntityID: rec.ID, BranchID: branchID, ActorID: actorID, Note: note,
+				Before: map[string]any{"status": contracts.StatusPending},
+				After:  map[string]any{"status": contracts.StatusVoid, "reason": reason},
+			})
+		})
 		if err != nil {
 			return apperror.Internal(err)
 		}
@@ -625,16 +642,12 @@ func (s *Service) Discard(ctx context.Context, actorID, branchID, id int64) (*co
 			if cur == nil || cur.Status != contracts.StatusVoid {
 				return apperror.Conflict("Status penerimaan berubah, muat ulang")
 			}
-			replayed = true
 		}
 		out, err = s.GetByID(ctx, rec.ID)
 		return err
 	})
 	if err != nil {
 		return nil, err
-	}
-	if !replayed {
-		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "goods_receipts.discard", Entity: "goods_receipt", EntityID: out.ID, BranchID: branchID, ActorID: actorID, Note: out.Number})
 	}
 	return out, nil
 }

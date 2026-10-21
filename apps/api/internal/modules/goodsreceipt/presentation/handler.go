@@ -11,6 +11,7 @@ import (
 	"mini-erp/internal/shared/httpx"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the goodsreceipt module HTTP surface.
@@ -39,6 +40,7 @@ func receiptView(rec *contracts.GoodsReceipt) map[string]any {
 		"orderNumber":            rec.OrderNumber, "receivedAt": rec.ReceivedAt,
 		"notes": rec.Notes, "items": items,
 		"lineCount": rec.LineCount, "receivedBy": rec.CreatedBy, "receivedByName": rec.ReceivedByName,
+		"cancelReason": rec.CancelReason, "cancelledAt": timeutil.FormatWIB(rec.CancelledAt), "cancelledBy": rec.CancelledBy,
 	}
 	if rec.Payment != nil {
 		v["payment"] = map[string]any{"id": rec.Payment.ID, "number": rec.Payment.Number}
@@ -163,14 +165,20 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Discard handles POST /api/v1/goods-receipts/{id}/discard: abandon a
-// pending receipt, undoing any stock it already moved.
+// pending receipt, undoing any stock it already moved. Body {reason}
+// (mandatory).
 func (h *Handler) Discard(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
 	if err != nil {
 		response.Fail(w, apperror.NotFound("Penerimaan"))
 		return
 	}
-	rec, appErr := h.svc.Discard(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	reason, err := httpx.DecodeReason(r)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	rec, appErr := h.svc.Discard(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return

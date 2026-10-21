@@ -78,6 +78,7 @@ sql:
   - engine: mysql
     schema:
       - migrations/000012_delivery.up.sql
+      - migrations/000037_delivery_corrections.up.sql
     queries: internal/modules/delivery/infrastructure/queries
     gen:
       go:
@@ -108,6 +109,7 @@ sql:
   - engine: mysql
     schema:
       - migrations/000011_goodsreceipt.up.sql
+      - migrations/000039_goodsreceipt_corrections.up.sql
     queries: internal/modules/goodsreceipt/infrastructure/queries
     gen:
       go:
@@ -180,6 +182,7 @@ sql:
   - engine: mysql
     schema:
       - migrations/000015_purchasereturn.up.sql
+      - migrations/000040_purchasereturn_corrections.up.sql
     queries: internal/modules/purchasereturn/infrastructure/queries
     gen:
       go:
@@ -224,6 +227,7 @@ sql:
   - engine: mysql
     schema:
       - migrations/000014_salesreturn.up.sql
+      - migrations/000036_salesreturn_corrections.up.sql
     queries: internal/modules/salesreturn/infrastructure/queries
     gen:
       go:
@@ -239,6 +243,7 @@ sql:
     schema:
       - migrations/000008_stock.up.sql
       - migrations/000021_stock_parity.up.sql
+      - migrations/000041_stock_corrections.up.sql
     queries: internal/modules/stock/infrastructure/queries
     gen:
       go:

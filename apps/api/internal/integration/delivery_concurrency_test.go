@@ -229,7 +229,7 @@ func TestDeliveryCancelDraftReversesStock(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	if _, err := testMods.delivery.Service().Cancel(ctx(), 0, fx.branchID, n.ID); err != nil {
+	if _, err := testMods.delivery.Service().Cancel(ctx(), 0, fx.branchID, n.ID, ""); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	if got := onHand(t, fx, fx.productID, fx.variantID, fx.locationID); got != 50 {

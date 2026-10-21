@@ -13,6 +13,7 @@ import (
 	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 // Handler serves the purchasereturn module HTTP surface.
@@ -62,7 +63,8 @@ func returnView(ret *contracts.PurchaseReturn) map[string]any {
 		"returnDate": ret.ReturnDate, "subtotal": ret.Subtotal,
 		"discountTotal": ret.DiscountTotal, "taxTotal": ret.TaxTotal,
 		"taxType": ret.TaxType, "taxRate": ret.TaxRate, "total": ret.Total,
-		"status": ret.Status, "notes": ret.Notes, "reason": ret.Reason, "payableReduction": ret.PayableReduction, "items": items,
+		"status": ret.Status, "notes": ret.Notes,
+		"cancelReason": ret.CancelReason, "cancelledAt": timeutil.FormatWIB(ret.CancelledAt), "cancelledBy": ret.CancelledBy, "reason": ret.Reason, "payableReduction": ret.PayableReduction, "items": items,
 		"settlements": settlements, "settledTotal": settled,
 		"unsettledTotal":    ret.Total - settled,
 		"externalRemaining": ret.ExternalRemaining, "allowedSettlementTypes": allowedTypes(ret.AllowedSettlementTypes),
@@ -275,14 +277,20 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Retur pembelian dikonfirmasi", returnView(ret))
 }
 
-// Cancel handles POST /api/v1/purchase-returns/{id}/cancel.
+// Cancel handles POST /api/v1/purchase-returns/{id}/cancel {reason}
+// (reason mandatory).
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
 	if err != nil {
 		response.Fail(w, apperror.NotFound("Retur pembelian"))
 		return
 	}
-	ret, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	reason, err := httpx.DecodeReason(r)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	ret, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return

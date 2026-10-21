@@ -42,6 +42,12 @@ type GoodsReceipt struct {
 	// ReceivedByName is resolved for display on reads that decorate it.
 	CreatedBy      int64
 	ReceivedByName string
+	// CancelReason / CancelledAt / CancelledBy record why, when and by whom a
+	// pending receipt was discarded (empty when never discarded, or discarded
+	// before the reason was recorded).
+	CancelReason string
+	CancelledAt  string
+	CancelledBy  int64
 	// LineCount is the number of lines; filled by the list read (GR-01),
 	// otherwise len(Items) tells it.
 	LineCount int

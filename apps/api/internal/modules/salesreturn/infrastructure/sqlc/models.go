@@ -35,6 +35,9 @@ type SalesReturn struct {
 	ReplacementTotal          int64
 	DifferenceAmount          int64
 	ReceivableReduction       int64
+	CancelReason              sql.NullString
+	CancelledAt               sql.NullTime
+	CancelledBy               sql.NullInt64
 }
 
 type SalesReturnItem struct {

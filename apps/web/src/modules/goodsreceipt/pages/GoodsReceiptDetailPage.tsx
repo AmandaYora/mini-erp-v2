@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import {
   Button,
-  ConfirmDialog,
   DataTable,
   DetailSkeleton,
   ErrorState,
@@ -13,12 +12,14 @@ import {
 } from "@/shared/components/ui";
 import {
   ActionMenu,
+  cancellationItems,
   DescriptionList,
   DocNumber,
   DocumentRail,
   Page,
   PageColumns,
   Qty,
+  ReasonDialog,
 } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
@@ -43,8 +44,8 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 
 // Status: pending (tersimpan, stok belum masuk) → posted, atau void. Aksi pada
 // receipt pending (izin goodsreceipt.create): "Posting ulang" =
-// POST :id/complete (idempoten), "Batalkan" = POST :id/discard (stok yang
-// sudah bergerak dibalik server).
+// POST :id/complete (idempoten), "Batalkan" = POST :id/discard {reason} (alasan
+// wajib; stok yang sudah bergerak dibalik server).
 // Dipesan vs diterima: receiptView TIDAK membawa qty pesanan maupun nama
 // produk — keduanya dijoin best-effort dari detail PO via productId/variantId.
 
@@ -131,15 +132,14 @@ export default function GoodsReceiptDetailPage() {
     }
   }
 
-  async function handleDiscard() {
+  async function handleDiscard(reason: string) {
     setActing(true);
     try {
-      const res = await goodsreceiptService.discard(receiptId);
+      const res = await goodsreceiptService.discard(receiptId, reason);
       setDiscardOpen(false);
       toast.fromServer(res.message, "Penerimaan dibatalkan", res.data.number);
       reload();
     } catch (err) {
-      setDiscardOpen(false);
       toast.danger("Gagal membatalkan penerimaan", formatApiError(err));
     } finally {
       setActing(false);
@@ -289,6 +289,7 @@ export default function GoodsReceiptDetailPage() {
                 { label: "Tanggal terima", value: formatDate(receipt.receivedAt) },
                 { label: "SJ pemasok", value: receipt.supplierDeliveryNumber },
                 { label: "Diterima oleh", value: receipt.receivedByName },
+                ...cancellationItems(receipt),
                 { label: "Catatan", value: receipt.notes.trim(), wide: true },
               ]}
             />
@@ -329,14 +330,15 @@ export default function GoodsReceiptDetailPage() {
           <p className="text-sm text-muted-foreground">Tidak ada isian tambahan untuk posting ulang.</p>
         )}
       </Modal>
-      <ConfirmDialog
+      <ReasonDialog
         open={discardOpen}
         title="Batalkan penerimaan"
-        message={`Batalkan ${number}? Stok yang sudah bergerak akan dibalik.`}
+        description={`${number} dibatalkan; stok yang sudah masuk dikeluarkan lagi dan kuota PO dilepas. Alasan dicatat pada penerimaan dan jejak audit.`}
         confirmLabel="Batalkan penerimaan"
-        tone="danger"
-        onConfirm={() => void handleDiscard()}
-        onCancel={() => setDiscardOpen(false)}
+        placeholder="Mis. salah PO, jumlah tidak sesuai surat jalan pemasok"
+        submitting={acting}
+        onClose={() => setDiscardOpen(false)}
+        onSubmit={(reason) => void handleDiscard(reason)}
       />
     </Page>
   );

@@ -45,6 +45,11 @@ export interface GoodsReceipt {
   /** Pembayaran pay_now yang dibuat panggilan ini (GR-02); tidak ada pada baca ulang. */
   payment?: ReceiptPayment;
   items: GoodsReceiptItem[];
+  /** Jejak pembatalan (alasan wajib sejak koreksi salah input); kosong bila tidak/belum dibatalkan. */
+  cancelReason?: string;
+  /** Waktu batal, "YYYY-MM-DD HH:mm:ss" WIB ("" bila tidak dibatalkan). */
+  cancelledAt?: string;
+  cancelledBy?: number;
 }
 
 /** Pembayaran hasil pelunasan saat terima: dasar melampirkan bukti transfer. */

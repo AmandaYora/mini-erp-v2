@@ -3,7 +3,6 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import {
   Badge,
   Button,
-  ConfirmDialog,
   DataTable,
   DateInput,
   DetailSkeleton,
@@ -19,6 +18,7 @@ import {
 } from "@/shared/components/ui";
 import {
   ActionMenu,
+  cancellationItems,
   DescriptionList,
   DocNumber,
   DocumentRail,
@@ -26,6 +26,7 @@ import {
   Page,
   PageColumns,
   Qty,
+  ReasonDialog,
 } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
@@ -53,7 +54,8 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 
 // Alur: draft → confirmed (stok keluar saat confirm) / cancelled.
 // - Konfirmasi: POST /:id/confirm, gate delivery.create, hanya draft.
-// - Batalkan: POST /:id/cancel, gate delivery.archive, hanya draft —
+// - Batalkan: POST /:id/cancel {reason} (alasan wajib, tampil di Info dokumen),
+//   gate delivery.archive, hanya draft —
 //   tombol disembunyikan untuk status lain (backend menolak confirmed dengan
 //   "gunakan retur").
 // - Bukti kirim: GET /:id/proofs + upload POST /:id/proof (multipart "file").
@@ -223,11 +225,11 @@ export default function DeliveryDetailPage() {
     }
   }
 
-  async function handleCancel() {
-    setCancelOpen(false);
+  async function handleCancel(reason: string) {
     setActing(true);
     try {
-      const res = await deliveryService.cancel(noteId);
+      const res = await deliveryService.cancel(noteId, reason);
+      setCancelOpen(false);
       toast.fromServer(res.message, "Surat jalan dibatalkan", res.data.number);
       reload();
     } catch (err) {
@@ -505,6 +507,7 @@ export default function DeliveryDetailPage() {
                   },
                   { label: "Pelanggan", value: so?.partyName },
                   { label: "Tanggal kirim", value: formatDate(note.deliveryDate) },
+                  ...cancellationItems(note),
                   ...(isReplacement
                     ? [{ label: "Retur terkait", value: replacementReturnId !== null ? `Retur #${replacementReturnId}` : null }]
                     : []),
@@ -694,14 +697,15 @@ export default function DeliveryDetailPage() {
           </div>
         )}
       </Modal>
-      <ConfirmDialog
+      <ReasonDialog
         open={cancelOpen}
-        title="Batalkan Surat Jalan"
-        message={`Batalkan ${note.number}? Tindakan ini tidak bisa dibatalkan.`}
-        confirmLabel="Batalkan Surat Jalan"
-        tone="danger"
-        onConfirm={() => void handleCancel()}
-        onCancel={() => setCancelOpen(false)}
+        title="Batalkan surat jalan"
+        description={`${note.number} dibatalkan dan kuota order dilepas. Alasan dicatat pada surat jalan dan jejak audit.`}
+        confirmLabel="Batalkan surat jalan"
+        placeholder="Mis. salah jumlah, salah lokasi gudang"
+        submitting={acting}
+        onClose={() => setCancelOpen(false)}
+        onSubmit={(reason) => void handleCancel(reason)}
       />
     </Page>
   );

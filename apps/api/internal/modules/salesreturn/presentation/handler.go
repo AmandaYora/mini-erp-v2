@@ -14,6 +14,7 @@ import (
 	"mini-erp/internal/shared/listquery"
 	"mini-erp/internal/shared/pagination"
 	"mini-erp/internal/shared/response"
+	"mini-erp/internal/shared/timeutil"
 )
 
 type linePayload struct {
@@ -82,6 +83,7 @@ func returnView(ret *contracts.SalesReturn) map[string]any {
 		"discountTotal": ret.DiscountTotal, "taxTotal": ret.TaxTotal,
 		"taxType": ret.TaxType, "taxRate": ret.TaxRate, "total": ret.Total,
 		"status": ret.Status, "notes": ret.Notes,
+		"cancelReason": ret.CancelReason, "cancelledAt": timeutil.FormatWIB(ret.CancelledAt), "cancelledBy": ret.CancelledBy,
 		"reason": ret.Reason, "replacementSubtotal": ret.ReplacementSubtotal,
 		"replacementTaxTotal": ret.ReplacementTaxTotal, "replacementTotal": ret.ReplacementTotal,
 		"differenceAmount": ret.DifferenceAmount, "receivableReduction": ret.ReceivableReduction,
@@ -219,14 +221,20 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Retur penjualan dikonfirmasi", returnView(ret))
 }
 
-// Cancel handles POST /api/v1/sales-returns/{id}/cancel.
+// Cancel handles POST /api/v1/sales-returns/{id}/cancel {reason}
+// (reason mandatory).
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
 	if err != nil {
 		response.Fail(w, apperror.NotFound("Retur penjualan"))
 		return
 	}
-	ret, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id)
+	reason, err := httpx.DecodeReason(r)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	ret, appErr := h.svc.Cancel(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, reason)
 	if appErr != nil {
 		response.FailErr(w, appErr)
 		return
@@ -419,6 +427,28 @@ func (h *Handler) ConfirmReplacement(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CancelReplacement handles POST /api/v1/sales-returns/{id}/replacement-delivery/cancel
+// {reason} (reason mandatory): void the exchange's DRAFT replacement shipment
+// and reopen the replacement (status back to pending).
+func (h *Handler) CancelReplacement(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Retur penjualan"))
+		return
+	}
+	reason, err := httpx.DecodeReason(r)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	ret, err := h.svc.CancelReplacementDelivery(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, reason)
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Pengiriman pengganti dibatalkan", returnView(ret))
+}
+
 // settlementPayload is the pay_now surcharge collected with a hand-over.
 type settlementPayload struct {
 	Mode           string `json:"mode"`
@@ -499,5 +529,6 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("POST /api/v1/sales-returns/{id}/cancel", perm("salesreturn.archive", authcontracts.Guard(h.Cancel, branchGuard)))
 	mux.Handle("POST /api/v1/sales-returns/{id}/replacement-deliveries", perm("salesreturn.create", authcontracts.Guard(h.DispatchReplacement, branchGuard)))
 	mux.Handle("POST /api/v1/sales-returns/{id}/replacement-deliveries/{deliveryId}/confirm", perm("salesreturn.create", authcontracts.Guard(h.ConfirmReplacement, branchGuard)))
+	mux.Handle("POST /api/v1/sales-returns/{id}/replacement-delivery/cancel", perm("salesreturn.archive", authcontracts.Guard(h.CancelReplacement, branchGuard)))
 	mux.Handle("POST /api/v1/sales-returns/{id}/settlements", perm("salesreturn.create", authcontracts.Guard(h.AddSettlement, branchGuard)))
 }

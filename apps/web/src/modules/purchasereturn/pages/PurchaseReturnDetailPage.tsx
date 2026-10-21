@@ -3,7 +3,6 @@ import type { FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   Button,
-  ConfirmDialog,
   DataTable,
   DateInput,
   DetailSkeleton,
@@ -18,6 +17,7 @@ import {
 } from "@/shared/components/ui";
 import {
   ActionMenu,
+  cancellationItems,
   DescriptionList,
   DocNumber,
   DocumentRail,
@@ -25,6 +25,7 @@ import {
   Page,
   PageColumns,
   Qty,
+  ReasonDialog,
 } from "@/shared/components/patterns";
 import type { ActionMenuItem, RelatedDocument } from "@/shared/components/patterns";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
@@ -105,14 +106,16 @@ export default function PurchaseReturnDetailPage() {
 
   usePageCrumb(ret?.number);
 
-  async function runAction(fn: () => Promise<MutateResult<PurchaseReturn>>, fallback: string, fail: string) {
+  async function runAction(fn: () => Promise<MutateResult<PurchaseReturn>>, fallback: string, fail: string): Promise<boolean> {
     setBusy(true);
     try {
       const res = await fn();
       setRet(res.data);
       toast.fromServer(res.message, fallback, res.data.number);
+      return true;
     } catch (err) {
       toast.danger(fail, formatApiError(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -126,9 +129,10 @@ export default function PurchaseReturnDetailPage() {
     );
   }
 
-  function handleCancel() {
-    setCancelOpen(false);
-    void runAction(() => purchaseReturnService.cancel(returnId), "Retur dibatalkan", "Gagal membatalkan");
+  async function handleCancel(reason: string) {
+    if (await runAction(() => purchaseReturnService.cancel(returnId, reason), "Retur dibatalkan", "Gagal membatalkan")) {
+      setCancelOpen(false);
+    }
   }
 
   function openSettle() {
@@ -360,6 +364,7 @@ export default function PurchaseReturnDetailPage() {
                     ) : null,
                   },
                   { label: "Tanggal retur", value: formatDate(ret.returnDate) },
+                  ...cancellationItems(ret),
                   { label: "Alasan", value: ret.reason, wide: true },
                   { label: "Catatan", value: ret.notes, wide: true },
                 ]}
@@ -369,13 +374,15 @@ export default function PurchaseReturnDetailPage() {
         }
       />
 
-      <ConfirmDialog
+      <ReasonDialog
         open={cancelOpen}
-        title="Batalkan retur?"
-        message={`Retur ${ret.number} akan dibatalkan${ret.status === "confirmed" ? " dan stok yang sudah keluar akan dimasukkan kembali" : ""}. Bila retur sudah punya pembayaran/refund aktif, batalkan pembayarannya dulu (server menolak).`}
-        confirmLabel="Ya, batalkan"
-        onConfirm={handleCancel}
-        onCancel={() => setCancelOpen(false)}
+        title="Batalkan retur"
+        description={`Retur ${ret.number} dibatalkan${ret.status === "confirmed" ? " dan stok yang sudah keluar dimasukkan kembali" : ""}. Bila retur sudah punya pembayaran/refund aktif, batalkan pembayarannya dulu. Alasan dicatat pada retur dan jejak audit.`}
+        confirmLabel="Batalkan retur"
+        placeholder="Mis. salah pilih PO, jumlah retur salah"
+        submitting={busy}
+        onClose={() => setCancelOpen(false)}
+        onSubmit={(reason) => void handleCancel(reason)}
       />
 
       <FormSheet

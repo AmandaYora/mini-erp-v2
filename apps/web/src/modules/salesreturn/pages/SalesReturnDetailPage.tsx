@@ -5,7 +5,6 @@ import {
   Badge,
   Button,
   Checkbox,
-  ConfirmDialog,
   DataTable,
   DateInput,
   DetailSkeleton,
@@ -22,6 +21,7 @@ import {
 } from "@/shared/components/ui";
 import {
   ActionMenu,
+  cancellationItems,
   DescriptionList,
   DocNumber,
   DocumentRail,
@@ -29,6 +29,7 @@ import {
   Page,
   PageColumns,
   Qty,
+  ReasonDialog,
 } from "@/shared/components/patterns";
 import type { ActionMenuItem, RelatedDocument } from "@/shared/components/patterns";
 import { NotFoundState } from "@/shared/components/feedback/not-found-state";
@@ -81,7 +82,8 @@ export default function SalesReturnDetailPage() {
   const invalidId = !Number.isInteger(returnId) || returnId <= 0;
 
   // RegisterRoutes backend: confirm/cancel/dispatch/confirm-pengganti/settle =
-  // salesreturn.create (preview juga), cancel = salesreturn.archive, context =
+  // salesreturn.create (preview juga), cancel & batal kirim pengganti =
+  // salesreturn.archive (alasan wajib), context =
   // salesreturn.view. TIDAK ada permission baru (Tahap D).
   const canConfirm = can("salesreturn.create");
   const canCancel = can("salesreturn.archive");
@@ -91,6 +93,7 @@ export default function SalesReturnDetailPage() {
   const [ret, setRet] = useState<SalesReturn | null>(null);
   const [busy, setBusy] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReplOpen, setCancelReplOpen] = useState(false);
 
   // Kirim barang pengganti (dispatch).
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -148,14 +151,28 @@ export default function SalesReturnDetailPage() {
 
   usePageCrumb(ret?.number);
 
-  async function runAction(fn: () => Promise<MutateResult<SalesReturn>>, fallback: string, fail: string) {
+  // SJ pengganti yang sedang jalan (retur tukar "dispatched"): statusnya
+  // menentukan apakah pengiriman masih bisa ditarik (hanya draf).
+  const replDispatched = ret?.returnMode === "exchange" && ret.replacementDeliveryStatus === "dispatched";
+  const { data: replNote } = useAsyncData(async () => {
+    if (!ret || !replDispatched) return null;
+    try {
+      return await salesReturnService.findReplacementDelivery(ret.salesOrderId, ret.id);
+    } catch {
+      return null; // tanpa izin lihat SJ: aksi tarik pengiriman disembunyikan
+    }
+  }, [ret?.id, ret?.salesOrderId, replDispatched]);
+
+  async function runAction(fn: () => Promise<MutateResult<SalesReturn>>, fallback: string, fail: string): Promise<boolean> {
     setBusy(true);
     try {
       const res = await fn();
       setRet(res.data);
       toast.fromServer(res.message, fallback, res.data.number);
+      return true;
     } catch (err) {
       toast.danger(fail, formatApiError(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -169,9 +186,19 @@ export default function SalesReturnDetailPage() {
     );
   }
 
-  function handleCancel() {
-    setCancelOpen(false);
-    void runAction(() => salesReturnService.cancel(returnId), "Retur dibatalkan", "Gagal membatalkan");
+  async function handleCancel(reason: string) {
+    if (await runAction(() => salesReturnService.cancel(returnId, reason), "Retur dibatalkan", "Gagal membatalkan")) {
+      setCancelOpen(false);
+    }
+  }
+
+  async function handleCancelReplacement(reason: string) {
+    const ok = await runAction(
+      () => salesReturnService.cancelReplacement(returnId, reason),
+      "Pengiriman pengganti dibatalkan",
+      "Gagal membatalkan pengiriman pengganti",
+    );
+    if (ok) setCancelReplOpen(false);
   }
 
   function openDispatch() {
@@ -377,6 +404,8 @@ export default function SalesReturnDetailPage() {
   const canDispatch =
     canAct && isExchange && ret.status === "confirmed" && ret.replacementDeliveryStatus === "pending";
   const canConfirmRepl = canAct && isExchange && ret.replacementDeliveryStatus === "dispatched";
+  // Pengiriman pengganti yang salah ditarik lewat retur selama SJ-nya masih draf.
+  const canCancelRepl = canCancel && replDispatched && replNote?.status === "draft";
   // K-04c: server menghitung jenis yang masih sah dari arah selisih; retur yang
   // seluruhnya diserap tagihan (atau impas) tidak punya apa-apa lagi untuk dicatat.
   const allowedTypes = ret.allowedSettlementTypes ?? [];
@@ -394,6 +423,17 @@ export default function SalesReturnDetailPage() {
   const primary = flow[0];
   const menuItems: ActionMenuItem[] = [
     ...flow.slice(1).map((f) => ({ key: f.key, label: f.label, onSelect: f.run, disabled: busy })),
+    ...(canCancelRepl
+      ? [
+          {
+            key: "cancel-replacement",
+            label: "Batalkan pengiriman pengganti",
+            destructive: true,
+            disabled: busy,
+            onSelect: () => setCancelReplOpen(true),
+          },
+        ]
+      : []),
     ...(cancellable && canCancel
       ? [{ key: "cancel", label: "Batalkan retur", destructive: true, disabled: busy, onSelect: () => setCancelOpen(true) }]
       : []),
@@ -610,6 +650,19 @@ export default function SalesReturnDetailPage() {
                         },
                       ]
                     : []),
+                  ...(replDispatched && replNote
+                    ? [
+                        {
+                          label: "Surat jalan pengganti",
+                          value: (
+                            <Link to={`${ROUTE_PATHS.deliveries}/${replNote.id}`} className="text-primary hover:underline">
+                              <DocNumber value={replNote.number} />
+                            </Link>
+                          ),
+                        },
+                      ]
+                    : []),
+                  ...cancellationItems(ret),
                   { label: "Alasan", value: ret.reason, wide: true },
                   { label: "Catatan", value: ret.notes, wide: true },
                 ]}
@@ -619,13 +672,26 @@ export default function SalesReturnDetailPage() {
         }
       />
 
-      <ConfirmDialog
+      <ReasonDialog
         open={cancelOpen}
-        title="Batalkan retur?"
-        message={`Retur ${ret.number} akan dibatalkan${ret.status === "confirmed" ? " dan stok yang sudah masuk akan dikeluarkan kembali" : ""}.${isExchange ? " Retur tukar yang barang penggantinya sudah dikirim tidak dapat dibatalkan." : ""} Bila sudah ada refund aktif, batalkan pembayarannya dulu. Membatalkan retur yang sudah dibatalkan hanya mengembalikan datanya (tanpa efek ganda).`}
-        confirmLabel="Ya, batalkan"
-        onConfirm={handleCancel}
-        onCancel={() => setCancelOpen(false)}
+        title="Batalkan retur"
+        description={`Retur ${ret.number} dibatalkan${ret.status === "confirmed" ? " dan stok yang sudah masuk dikeluarkan kembali" : ""}.${isExchange ? " Retur tukar yang barang penggantinya sudah dikirim harus dibatalkan pengirimannya dulu (selama surat jalannya masih draf)." : ""} Bila sudah ada refund aktif, batalkan pembayarannya dulu. Alasan dicatat pada retur dan jejak audit.`}
+        confirmLabel="Batalkan retur"
+        placeholder="Mis. salah pilih order, jumlah retur salah"
+        submitting={busy}
+        onClose={() => setCancelOpen(false)}
+        onSubmit={(reason) => void handleCancel(reason)}
+      />
+
+      <ReasonDialog
+        open={cancelReplOpen}
+        title="Batalkan pengiriman pengganti"
+        description={`Surat jalan pengganti ${replNote?.number ?? ""} (draf) dibatalkan dan barang pengganti kembali menunggu dikirim. Setelah itu kirim ulang pengganti yang benar, atau batalkan retur. Alasan dicatat pada surat jalan, retur, dan jejak audit.`}
+        confirmLabel="Batalkan pengiriman pengganti"
+        placeholder="Mis. salah supir, salah tanggal kirim"
+        submitting={busy}
+        onClose={() => setCancelReplOpen(false)}
+        onSubmit={(reason) => void handleCancelReplacement(reason)}
       />
 
       <Modal

@@ -21,6 +21,12 @@
     },
     {
       "rule": "E",
+      "file": "apps/api/internal/modules/goodsreceipt/application/service.go",
+      "match": "application must not import database/sql (ADR-0011)",
+      "reason": "Transaction boundary: the discard hook receives the CAS *sql.Tx so the goods_receipts.discard audit row (with the reason) co-commits with the void flip (ADR-0011), same shape as delivery/returns."
+    },
+    {
+      "rule": "E",
       "file": "apps/api/internal/modules/finance/application/expenses.go",
       "match": "application must not import database/sql (ADR-0011)",
       "reason": "Transaction boundary: the use case holds *sql.Tx so audit.LogTx and the domain writes share one transaction (ADR-0011). Removed when repositories expose InTx during the sqlc migration (F8-14/F8-18)."

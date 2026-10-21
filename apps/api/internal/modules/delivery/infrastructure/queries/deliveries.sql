@@ -10,7 +10,8 @@ SELECT id, number, branch_id, sales_order_id, delivery_date,
   driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
   recipient_signature_status, recipient_signature_missing_reason,
   drop_location_note, dispatched_at, dispatched_by, confirmed_at,
-  confirmed_by, document_kind, sales_return_id, status, notes
+  confirmed_by, document_kind, sales_return_id, status, notes,
+  cancel_reason, cancelled_at, cancelled_by
 FROM delivery_notes WHERE id = ?;
 
 -- name: ListItemsByDelivery :many
@@ -72,7 +73,8 @@ SELECT id, number, branch_id, sales_order_id, delivery_date,
   driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
   recipient_signature_status, recipient_signature_missing_reason,
   drop_location_note, dispatched_at, dispatched_by, confirmed_at,
-  confirmed_by, document_kind, sales_return_id, status, notes
+  confirmed_by, document_kind, sales_return_id, status, notes,
+  cancel_reason, cancelled_at, cancelled_by
 FROM delivery_notes
 WHERE branch_id = ? AND status = 'confirmed' AND id > ? ORDER BY id ASC LIMIT ?;
 
@@ -105,6 +107,15 @@ SET status = ?, updated_at = sqlc.arg(now), updated_by = ? WHERE id = ?;
 UPDATE delivery_notes
 SET status = sqlc.arg(to_status), updated_at = sqlc.arg(now), updated_by = sqlc.arg(actor_id)
 WHERE id = sqlc.arg(id) AND status IN (sqlc.slice('from_statuses'));
+
+-- name: CancelNote :execresult
+-- CAS: voids a draft and records why, when and by whom in ONE statement.
+UPDATE delivery_notes
+SET status = 'cancelled',
+    cancel_reason = sqlc.arg(reason),
+    cancelled_at = sqlc.arg(stamp), cancelled_by = sqlc.arg(actor_id),
+    updated_at = sqlc.arg(now), updated_by = sqlc.arg(actor_id)
+WHERE id = sqlc.arg(id) AND status = 'draft';
 
 -- name: ConfirmNote :execresult
 -- Flips draft -> confirmed and records dispatch + receipt evidence in ONE

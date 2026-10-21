@@ -7,7 +7,10 @@
 // - POST /api/v1/sales-returns {salesOrderId, returnDate?, notes?,
 //   returnMode?, items[], replacementItems?[]} → 201 returnView (Create).
 // - POST /api/v1/sales-returns/:id/confirm → returnView, TANPA body.
-// - POST /api/v1/sales-returns/:id/cancel → returnView, TANPA body.
+// - POST /api/v1/sales-returns/:id/cancel {reason} → returnView (alasan wajib).
+// - POST /api/v1/sales-returns/:id/replacement-delivery/cancel {reason} →
+//   returnView: batalkan SJ pengganti yang masih draf, status pengganti
+//   kembali "pending" (alasan wajib).
 // - Kandidat sumber: GET /api/v1/sales-orders?status=confirmed|completed
 //   (hanya SO terkonfirmasi/selesai yang bisa diretur) + detail
 //   GET /api/v1/sales-orders/:id untuk baris item.
@@ -92,12 +95,16 @@ export const salesReturnService = {
   create: (body: SalesReturnPayload) =>
     apiPostFull<SalesReturn>("/api/v1/sales-returns", body),
 
-  // Tanpa body — backend hanya butuh :id (handler.go: Confirm/Cancel).
+  // Confirm tanpa body; Cancel {reason} wajib (handler.go: Confirm/Cancel).
   confirm: (id: number) =>
     apiPostFull<SalesReturn>(`/api/v1/sales-returns/${id}/confirm`),
 
-  cancel: (id: number) =>
-    apiPostFull<SalesReturn>(`/api/v1/sales-returns/${id}/cancel`),
+  cancel: (id: number, reason: string) =>
+    apiPostFull<SalesReturn>(`/api/v1/sales-returns/${id}/cancel`, { reason }),
+
+  /** Batalkan SJ pengganti yang masih draf; pengganti kembali menunggu kirim. */
+  cancelReplacement: (id: number, reason: string) =>
+    apiPostFull<SalesReturn>(`/api/v1/sales-returns/${id}/replacement-delivery/cancel`, { reason }),
 
   /** Pratinjau perhitungan (dry-run, tanpa tulis, tanpa nomor dokumen). */
   preview: (body: SalesReturnPreviewPayload) =>
@@ -145,11 +152,16 @@ export const salesReturnService = {
       page: 1,
       limit: 50,
     });
+    // Pengiriman yang dibatalkan lewat retur tetap tercatat; yang hidup
+    // (draf, lalu terkonfirmasi) didahulukan.
+    const notes = res.items.filter(
+      (n) => n.documentKind === "replacement" && n.salesReturnId === salesReturnId,
+    );
     return (
-      res.items.find(
-        (n) =>
-          n.documentKind === "replacement" && n.salesReturnId === salesReturnId,
-      ) ?? null
+      notes.find((n) => n.status === "draft") ??
+      notes.find((n) => n.status === "confirmed") ??
+      notes[0] ??
+      null
     );
   },
 };

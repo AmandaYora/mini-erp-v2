@@ -25,6 +25,36 @@ func (q *Queries) ActiveReturnCount(ctx context.Context, purchaseOrderID int64) 
 	return total, err
 }
 
+const cancelReturn = `-- name: CancelReturn :execresult
+UPDATE purchase_returns
+SET status = 'cancelled',
+  cancel_reason = ?,
+  cancelled_at = ?, cancelled_by = ?,
+  updated_at = ?, updated_by = ?
+WHERE id = ? AND status IN ('draft', 'confirmed')
+`
+
+type CancelReturnParams struct {
+	Reason  sql.NullString
+	Stamp   sql.NullTime
+	ActorID sql.NullInt64
+	Now     time.Time
+	ID      int64
+}
+
+// CAS: voids a draft or confirmed return and records why, when and by whom
+// in ONE statement.
+func (q *Queries) CancelReturn(ctx context.Context, arg CancelReturnParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, cancelReturn,
+		arg.Reason,
+		arg.Stamp,
+		arg.ActorID,
+		arg.Now,
+		arg.ActorID,
+		arg.ID,
+	)
+}
+
 const cancelledAmong = `-- name: CancelledAmong :many
 SELECT id FROM purchase_returns
 WHERE branch_id = ? AND status = 'cancelled' AND id IN (/*SLICE:ids*/?)
@@ -316,7 +346,7 @@ const getReturn = `-- name: GetReturn :one
 
 SELECT id, number, branch_id, purchase_order_id, return_date, subtotal,
   discount_total, tax_total, tax_type, tax_rate, total, status, notes,
-  reason, payable_reduction
+  reason, payable_reduction, cancel_reason, cancelled_at, cancelled_by
 FROM purchase_returns WHERE id = ?
 `
 
@@ -336,6 +366,9 @@ type GetReturnRow struct {
 	Notes            sql.NullString
 	Reason           string
 	PayableReduction int64
+	CancelReason     sql.NullString
+	CancelledAt      sql.NullTime
+	CancelledBy      sql.NullInt64
 }
 
 // Purchase return header + lines + settlement memos (F8-18). Twin of
@@ -362,6 +395,9 @@ func (q *Queries) GetReturn(ctx context.Context, id int64) (GetReturnRow, error)
 		&i.Notes,
 		&i.Reason,
 		&i.PayableReduction,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
 	)
 	return i, err
 }

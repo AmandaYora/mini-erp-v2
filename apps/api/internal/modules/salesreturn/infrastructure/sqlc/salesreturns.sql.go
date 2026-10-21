@@ -25,6 +25,36 @@ func (q *Queries) ActiveReturnCount(ctx context.Context, salesOrderID int64) (in
 	return total, err
 }
 
+const cancelReturn = `-- name: CancelReturn :execresult
+UPDATE sales_returns
+SET status = 'cancelled',
+  cancel_reason = ?,
+  cancelled_at = ?, cancelled_by = ?,
+  updated_at = ?, updated_by = ?
+WHERE id = ? AND status IN ('draft', 'confirmed')
+`
+
+type CancelReturnParams struct {
+	Reason  sql.NullString
+	Stamp   sql.NullTime
+	ActorID sql.NullInt64
+	Now     time.Time
+	ID      int64
+}
+
+// CAS: voids a draft or confirmed return and records why, when and by whom
+// in ONE statement.
+func (q *Queries) CancelReturn(ctx context.Context, arg CancelReturnParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, cancelReturn,
+		arg.Reason,
+		arg.Stamp,
+		arg.ActorID,
+		arg.Now,
+		arg.ActorID,
+		arg.ID,
+	)
+}
+
 const cancelledAmong = `-- name: CancelledAmong :many
 SELECT id FROM sales_returns
 WHERE branch_id = ? AND status = 'cancelled' AND id IN (/*SLICE:ids*/?)
@@ -275,7 +305,8 @@ const getReturn = `-- name: GetReturn :one
 SELECT id, number, branch_id, sales_order_id, return_date, subtotal,
   discount_total, tax_total, tax_type, tax_rate, total, status, notes,
   return_mode, replacement_delivery_status, reason, replacement_subtotal,
-  replacement_tax_total, replacement_total, difference_amount, receivable_reduction
+  replacement_tax_total, replacement_total, difference_amount, receivable_reduction,
+  cancel_reason, cancelled_at, cancelled_by
 FROM sales_returns WHERE id = ?
 `
 
@@ -301,6 +332,9 @@ type GetReturnRow struct {
 	ReplacementTotal          int64
 	DifferenceAmount          int64
 	ReceivableReduction       int64
+	CancelReason              sql.NullString
+	CancelledAt               sql.NullTime
+	CancelledBy               sql.NullInt64
 }
 
 // Sales return header + lines + replacement lines + settlement memos
@@ -334,6 +368,9 @@ func (q *Queries) GetReturn(ctx context.Context, id int64) (GetReturnRow, error)
 		&i.ReplacementTotal,
 		&i.DifferenceAmount,
 		&i.ReceivableReduction,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
 	)
 	return i, err
 }

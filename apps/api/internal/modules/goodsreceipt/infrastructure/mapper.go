@@ -17,7 +17,7 @@ const wireDateTime = "2006-01-02 15:04:05"
 // GetReceiptByClientRef, ListPostedAfter and ListReceipts (identical field
 // sets, so the generated row types convert to sqlc.GetReceiptRow).
 func toReceipt(r sqlc.GetReceiptRow) *contracts.GoodsReceipt {
-	return &contracts.GoodsReceipt{
+	rec := &contracts.GoodsReceipt{
 		ID:                     r.ID,
 		Number:                 r.Number.String,
 		BranchID:               r.BranchID,
@@ -28,7 +28,13 @@ func toReceipt(r sqlc.GetReceiptRow) *contracts.GoodsReceipt {
 		Status:                 r.Status,
 		ClientRef:              r.ClientRef.String,
 		CreatedBy:              r.CreatedBy.Int64,
+		CancelReason:           r.CancelReason.String,
+		CancelledBy:            r.CancelledBy.Int64,
 	}
+	if r.CancelledAt.Valid {
+		rec.CancelledAt = r.CancelledAt.Time.Format(wireDateTime)
+	}
+	return rec
 }
 
 func toItem(r sqlc.ListItemsByReceiptRow) *contracts.Item {

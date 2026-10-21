@@ -83,7 +83,7 @@ func TestUseCreditSales(t *testing.T) {
 	if paid := paidOf(t, paymentcontracts.OrderSales, so2); paid != use {
 		t.Fatalf("bill paid = %d, want %d", paid, use)
 	}
-	if _, err := m.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, retID); err == nil {
+	if _, err := m.salesreturn.Service().Cancel(ctx(), 0, fx.branchID, retID, ""); err == nil {
 		t.Fatal("a return whose saldo is spent must not be cancellable")
 	}
 

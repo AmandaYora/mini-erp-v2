@@ -25,6 +25,35 @@ func (q *Queries) ActiveNoteCount(ctx context.Context, salesOrderID int64) (int6
 	return total, err
 }
 
+const cancelNote = `-- name: CancelNote :execresult
+UPDATE delivery_notes
+SET status = 'cancelled',
+    cancel_reason = ?,
+    cancelled_at = ?, cancelled_by = ?,
+    updated_at = ?, updated_by = ?
+WHERE id = ? AND status = 'draft'
+`
+
+type CancelNoteParams struct {
+	Reason  sql.NullString
+	Stamp   sql.NullTime
+	ActorID sql.NullInt64
+	Now     time.Time
+	ID      int64
+}
+
+// CAS: voids a draft and records why, when and by whom in ONE statement.
+func (q *Queries) CancelNote(ctx context.Context, arg CancelNoteParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, cancelNote,
+		arg.Reason,
+		arg.Stamp,
+		arg.ActorID,
+		arg.Now,
+		arg.ActorID,
+		arg.ID,
+	)
+}
+
 const committedQtyBySO = `-- name: CommittedQtyBySO :many
 SELECT i.product_id, i.variant_id, CAST(COALESCE(SUM(i.qty_base), 0) AS DECIMAL(36,12)) AS total
 FROM delivery_note_items i
@@ -289,7 +318,8 @@ SELECT id, number, branch_id, sales_order_id, delivery_date,
   driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
   recipient_signature_status, recipient_signature_missing_reason,
   drop_location_note, dispatched_at, dispatched_by, confirmed_at,
-  confirmed_by, document_kind, sales_return_id, status, notes
+  confirmed_by, document_kind, sales_return_id, status, notes,
+  cancel_reason, cancelled_at, cancelled_by
 FROM delivery_notes WHERE id = ?
 `
 
@@ -314,6 +344,9 @@ type GetNoteRow struct {
 	SalesReturnID                   sql.NullInt64
 	Status                          string
 	Notes                           sql.NullString
+	CancelReason                    sql.NullString
+	CancelledAt                     sql.NullTime
+	CancelledBy                     sql.NullInt64
 }
 
 // Delivery note header + lines (F8-18). All queries touch only this
@@ -346,6 +379,9 @@ func (q *Queries) GetNote(ctx context.Context, id int64) (GetNoteRow, error) {
 		&i.SalesReturnID,
 		&i.Status,
 		&i.Notes,
+		&i.CancelReason,
+		&i.CancelledAt,
+		&i.CancelledBy,
 	)
 	return i, err
 }
@@ -433,7 +469,8 @@ SELECT id, number, branch_id, sales_order_id, delivery_date,
   driver_name, vehicle_plate, warehouse_staff_name, recipient_name,
   recipient_signature_status, recipient_signature_missing_reason,
   drop_location_note, dispatched_at, dispatched_by, confirmed_at,
-  confirmed_by, document_kind, sales_return_id, status, notes
+  confirmed_by, document_kind, sales_return_id, status, notes,
+  cancel_reason, cancelled_at, cancelled_by
 FROM delivery_notes
 WHERE branch_id = ? AND status = 'confirmed' AND id > ? ORDER BY id ASC LIMIT ?
 `
@@ -465,6 +502,9 @@ type ListConfirmedAfterRow struct {
 	SalesReturnID                   sql.NullInt64
 	Status                          string
 	Notes                           sql.NullString
+	CancelReason                    sql.NullString
+	CancelledAt                     sql.NullTime
+	CancelledBy                     sql.NullInt64
 }
 
 func (q *Queries) ListConfirmedAfter(ctx context.Context, arg ListConfirmedAfterParams) ([]ListConfirmedAfterRow, error) {
@@ -497,6 +537,9 @@ func (q *Queries) ListConfirmedAfter(ctx context.Context, arg ListConfirmedAfter
 			&i.SalesReturnID,
 			&i.Status,
 			&i.Notes,
+			&i.CancelReason,
+			&i.CancelledAt,
+			&i.CancelledBy,
 		); err != nil {
 			return nil, err
 		}

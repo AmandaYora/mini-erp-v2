@@ -87,6 +87,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "sales_returns.settle_memo_failed": "Penyelesaian retur penjualan gagal dicatat",
   "sales_returns.confirm_replacement": "Konfirmasi barang pengganti retur",
   "sales_returns.dispatch_replacement": "Kirim barang pengganti retur",
+  "sales_returns.cancel_replacement": "Batalkan pengiriman barang pengganti retur",
 
   // Pembelian
   "purchase_orders.create": "Buat order beli",

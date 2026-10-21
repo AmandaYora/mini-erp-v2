@@ -79,6 +79,37 @@ func (r *Repository) Transition(ctx context.Context, id int64, from []string, to
 	return r.TransitionAudited(ctx, id, from, to, actorID, nil)
 }
 
+// Cancel flips draft/confirmed -> cancelled and records the reason, time and
+// actor in ONE statement guarded by the status (CAS). The optional hook runs
+// inside the CAS transaction only when this call won, so the audit row
+// co-commits with the flip (ADR-0011) and a replay that lost the CAS writes
+// none (ADR-0016).
+func (r *Repository) Cancel(ctx context.Context, id int64, reason string, actorID int64, hook func(ctx context.Context, tx *sql.Tx) error) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	t := now()
+	res, err := r.q.WithTx(tx).CancelReturn(ctx, sqlc.CancelReturnParams{
+		Reason: dbutil.NullString(reason), Stamp: sql.NullTime{Time: t, Valid: true},
+		ActorID: actor(actorID), Now: t, ID: id,
+	})
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil || affected != 1 {
+		return false, err
+	}
+	if hook != nil {
+		if err := hook(ctx, tx); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}
+
 // TransitionAudited is the CAS status flip with an optional hook that runs in
 // the same transaction only when this call won (ADR-0011/0016): the audit row
 // co-commits with the flip and a replay that lost the CAS writes none.
@@ -224,6 +255,33 @@ func (r *Repository) SetReplacementStatus(ctx context.Context, id int64, from, t
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// SetReplacementStatusAudited is SetReplacementStatus with a hook that runs in
+// the same transaction only when this call won the CAS, so the audit row
+// co-commits with the flip (ADR-0011) and a replay writes none (ADR-0016).
+func (r *Repository) SetReplacementStatusAudited(ctx context.Context, id int64, from, to string, actorID int64, hook func(ctx context.Context, tx *sql.Tx) error) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := r.q.WithTx(tx).SetReplacementStatus(ctx, sqlc.SetReplacementStatusParams{
+		ToStatus: to, Now: now(), ActorID: actor(actorID), ID: id, FromStatus: from,
+	})
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n != 1 {
+		return false, err
+	}
+	if hook != nil {
+		if err := hook(ctx, tx); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 // InsertReplacementItems stores exchange replacement lines (priced once at

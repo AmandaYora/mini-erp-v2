@@ -17,7 +17,7 @@ const wireDateTime = "2006-01-02 15:04:05"
 // UTC_TIMESTAMP in sqlc).
 func now() time.Time { return timeutil.NowUTC() }
 
-// toNote maps the 20-column note projection shared by every note query
+// toNote maps the 23-column note projection shared by every note query
 // (sqlc rows and the raw list/waiting paths select the same columns in the
 // same order, so their row types convert to sqlc.GetNoteRow).
 func toNote(r sqlc.GetNoteRow) *contracts.DeliveryNote {
@@ -39,12 +39,17 @@ func toNote(r sqlc.GetNoteRow) *contracts.DeliveryNote {
 		SalesReturnID:                   r.SalesReturnID.Int64,
 		Status:                          r.Status,
 		Notes:                           r.Notes.String,
+		CancelReason:                    r.CancelReason.String,
+		CancelledBy:                     r.CancelledBy.Int64,
 	}
 	if r.DispatchedAt.Valid {
 		n.DispatchedAt = r.DispatchedAt.Time.Format(wireDateTime)
 	}
 	if r.ConfirmedAt.Valid {
 		n.ConfirmedAt = r.ConfirmedAt.Time.Format(wireDateTime)
+	}
+	if r.CancelledAt.Valid {
+		n.CancelledAt = r.CancelledAt.Time.Format(wireDateTime)
 	}
 	n.DocumentKind = r.DocumentKind
 	if n.DocumentKind == "" {

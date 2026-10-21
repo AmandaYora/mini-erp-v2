@@ -189,8 +189,9 @@ export const stockService = {
   receiveTransfer: (id: number) =>
     apiPostFull<StockTransfer>(`/api/v1/stock/transfers/${id}/receive`),
 
-  cancelTransfer: (id: number) =>
-    apiPostFull<StockTransfer>(`/api/v1/stock/transfers/${id}/cancel`),
+  /** Batalkan transfer draf/dikirim — alasan wajib {reason}. */
+  cancelTransfer: (id: number, reason: string) =>
+    apiPostFull<StockTransfer>(`/api/v1/stock/transfers/${id}/cancel`, { reason }),
 
   // GET /api/v1/stock/damaged — saldo di lokasi RUSAK (bentuk balanceView).
   // Respons objek {items,total,withStock,empty,totalEstimatedLoss,...}; paginasi server (ST-03).
