@@ -217,6 +217,17 @@ func (q *Queries) ConfirmedByOrders(ctx context.Context, arg ConfirmedByOrdersPa
 	return items, nil
 }
 
+const deleteAutoSettlements = `-- name: DeleteAutoSettlements :exec
+DELETE FROM sales_return_settlements WHERE return_id = ? AND auto = 1
+`
+
+// The automatic offset memo goes with the offset it describes (released when
+// the offset pair is cancelled).
+func (q *Queries) DeleteAutoSettlements(ctx context.Context, returnID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteAutoSettlements, returnID)
+	return err
+}
+
 const getCreditSettlement = `-- name: GetCreditSettlement :one
 SELECT s.id, s.return_id, r.number, r.branch_id, r.sales_order_id,
   s.settlement_type, s.settlement_date, s.amount, r.status

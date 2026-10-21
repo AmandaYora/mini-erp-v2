@@ -541,11 +541,25 @@ func (s *Service) createOrder(ctx context.Context, actorID, branchID int64, in O
 func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, in OrderInput) (*contracts.SalesOrder, error) {
 	var out *contracts.SalesOrder
 	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
-		res, err := s.updateOrderLocked(ctx, actorID, branchID, id, in)
-		out = res
-		return err
+		return s.withPaymentLock(ctx, branchID, id, func() error {
+			res, err := s.updateOrderLocked(ctx, actorID, branchID, id, in)
+			out = res
+			return err
+		})
 	})
 	return out, err
+}
+
+// withPaymentLock runs fn under the payment module's lock for this order
+// (paymentcontracts.LockKey), nested inside the caller's so:<id> lock. The
+// "no payment hangs off it" check of a cancel or repricing then cannot race a
+// payment that read the order a moment earlier and is about to insert.
+func (s *Service) withPaymentLock(ctx context.Context, branchID, id int64, fn func() error) error {
+	o, err := s.mustOwnBranch(ctx, id, branchID)
+	if err != nil {
+		return err
+	}
+	return doclock.Lock(paymentcontracts.LockKey(o.PartyID, paymentcontracts.OrderSales, o.ID), fn)
 }
 
 // lightOnly reports whether an update leaves every economic field untouched:
@@ -574,34 +588,34 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if err != nil {
 		return nil, err
 	}
-	if existing.Status == contracts.StatusConfirmed {
-		// Economic changes need a clean order; header notes/ship-to/due date/tax
-		// invoice stay editable while documents hang off it.
-		if err := s.assertNoDependents(ctx, id); err != nil {
-			var ae *apperror.AppError
-			if !errors.As(err, &ae) || ae.Code != apperror.CodeConflict || !s.lightOnly(existing, in) {
-				return nil, err
-			}
-			shipID, shipLabel, shipRecipient, shipPhone, shipAddr, taxNo, taxDate, serr := s.resolveShipTo(ctx, in)
-			if serr != nil {
-				return nil, serr
-			}
-			existing.DueDate = strings.TrimSpace(in.DueDate)
-			existing.Notes = in.Notes
-			existing.ShipToAddressID = shipID
-			existing.ShipToLabel, existing.ShipToRecipient = shipLabel, shipRecipient
-			existing.ShipToPhone, existing.ShipToAddress = shipPhone, shipAddr
-			existing.TaxInvoiceNumber, existing.TaxInvoiceDate = taxNo, taxDate
-			if fields := s.assignedUserErrors(ctx, in.AssignedUserID); len(fields) > 0 {
-				return nil, apperror.Validation("", fields)
-			}
-			existing.AssignedUserID = in.AssignedUserID
-			if err := s.repo.UpdateHeaderLight(ctx, existing, actorID); err != nil {
-				return nil, dberr.Map(err)
-			}
-			_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number + " (header)"})
-			return s.GetByID(ctx, id)
+	// Economic changes need a clean order; header notes/ship-to/due date/tax
+	// invoice stay editable while documents hang off it. Drafts included: a
+	// new draft never takes money, but a migrated one can (legacy allowed
+	// it), and repricing it below what was paid would over-allocate it.
+	if err := s.assertNoDependents(ctx, id); err != nil {
+		var ae *apperror.AppError
+		if !errors.As(err, &ae) || ae.Code != apperror.CodeConflict || !s.lightOnly(existing, in) {
+			return nil, err
 		}
+		shipID, shipLabel, shipRecipient, shipPhone, shipAddr, taxNo, taxDate, serr := s.resolveShipTo(ctx, in)
+		if serr != nil {
+			return nil, serr
+		}
+		existing.DueDate = strings.TrimSpace(in.DueDate)
+		existing.Notes = in.Notes
+		existing.ShipToAddressID = shipID
+		existing.ShipToLabel, existing.ShipToRecipient = shipLabel, shipRecipient
+		existing.ShipToPhone, existing.ShipToAddress = shipPhone, shipAddr
+		existing.TaxInvoiceNumber, existing.TaxInvoiceDate = taxNo, taxDate
+		if fields := s.assignedUserErrors(ctx, in.AssignedUserID); len(fields) > 0 {
+			return nil, apperror.Validation("", fields)
+		}
+		existing.AssignedUserID = in.AssignedUserID
+		if err := s.repo.UpdateHeaderLight(ctx, existing, actorID); err != nil {
+			return nil, dberr.Map(err)
+		}
+		_ = s.audit.Log(ctx, auditcontracts.Entry{Action: "sales_orders.update", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID, Note: existing.Number + " (header)"})
+		return s.GetByID(ctx, id)
 	}
 	if in.Channel == "" {
 		in.Channel = existing.Channel
@@ -756,36 +770,38 @@ func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) 
 	var number string
 	var replayed bool
 	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
-		existing, err := s.mustOwnBranch(ctx, id, branchID)
-		if err != nil {
-			return err
-		}
-		number = existing.Number
-		switch existing.Status {
-		case contracts.StatusCancelled:
-			replayed = true
-			return nil
-		case contracts.StatusCompleted:
-			return apperror.Conflict("Order sudah final")
-		}
-		if err := s.assertNoDependents(ctx, id); err != nil {
-			return err
-		}
-		won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
-		if err != nil {
-			return apperror.Internal(err)
-		}
-		if !won {
-			cur, err := s.repo.GetOrder(ctx, id)
+		return s.withPaymentLock(ctx, branchID, id, func() error {
+			existing, err := s.mustOwnBranch(ctx, id, branchID)
+			if err != nil {
+				return err
+			}
+			number = existing.Number
+			switch existing.Status {
+			case contracts.StatusCancelled:
+				replayed = true
+				return nil
+			case contracts.StatusCompleted:
+				return apperror.Conflict("Order sudah final")
+			}
+			if err := s.assertNoDependents(ctx, id); err != nil {
+				return err
+			}
+			won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
 			if err != nil {
 				return apperror.Internal(err)
 			}
-			if cur == nil || cur.Status != contracts.StatusCancelled {
-				return apperror.Conflict("Status order berubah, muat ulang")
+			if !won {
+				cur, err := s.repo.GetOrder(ctx, id)
+				if err != nil {
+					return apperror.Internal(err)
+				}
+				if cur == nil || cur.Status != contracts.StatusCancelled {
+					return apperror.Conflict("Status order berubah, muat ulang")
+				}
+				replayed = true
 			}
-			replayed = true
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, err

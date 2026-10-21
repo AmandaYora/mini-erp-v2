@@ -2,6 +2,7 @@ package contracts
 
 import (
 	"context"
+	"strconv"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
 )
@@ -184,4 +185,20 @@ func PermissionCatalog() []usercontracts.PermissionSeed {
 		{Code: "payment.create", Name: "Pembayaran: Tambah"},
 		{Code: "payment.archive", Name: "Pembayaran: Batalkan"},
 	}
+}
+
+// LockKey is the in-process serialization key (shared/doclock) every money
+// movement against an order takes: the party, or — for a walk-in order with
+// no party — the order itself. An order module that cancels or reprices the
+// order takes the same key inside its own document lock (document lock first,
+// then this one, the order every payment-making flow already uses), so a
+// payment can never land between its "nothing is paid" check and its write.
+func LockKey(partyID int64, orderType string, orderID int64) string {
+	if partyID != 0 || orderID == 0 {
+		return "party:" + strconv.FormatInt(partyID, 10)
+	}
+	if orderType == "" {
+		orderType = OrderSales
+	}
+	return "wk:" + orderType + "/" + strconv.FormatInt(orderID, 10)
 }

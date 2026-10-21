@@ -346,6 +346,9 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 		if _, err := timeutil.ParseDateInput(strings.TrimSpace(deliveryDate)); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "deliveryDate", Message: "format tanggal harus YYYY-MM-DD"}})
 		}
+		if timeutil.AfterTodayWIB(deliveryDate) {
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "deliveryDate", Message: "tidak boleh di masa depan"}})
+		}
 	} else {
 		deliveryDate = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
 	}
@@ -549,6 +552,15 @@ func (s *Service) draftWarnings(ctx context.Context, branchID int64, so *salesco
 	return warnings
 }
 
+// errReplacementManagedByReturn refuses the generic confirm/cancel on an
+// exchange's replacement note. The sales return owns that note's lifecycle:
+// confirming it here would skip the return's status and surcharge steps, and
+// cancelling it would strand the return in "dispatched", where neither the
+// return nor a new replacement can move it again.
+func errReplacementManagedByReturn() error {
+	return apperror.Conflict("Surat jalan pengganti dikelola dari halaman retur penjualan")
+}
+
 // Confirm ships the note: stock out, status flip, order completion — as a
 // replay-safe sequence (P4). Every step is idempotent and the status flip is
 // the LAST write that decides "done", so any failure in the middle is
@@ -563,6 +575,9 @@ func (s *Service) Confirm(ctx context.Context, actorID, branchID, id int64, in C
 	n, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
+	}
+	if n.DocumentKind == contracts.DocumentKindReplacement {
+		return nil, errReplacementManagedByReturn()
 	}
 	if n.Status == contracts.StatusDraft {
 		if err := validateRecipient(in); err != nil {
@@ -822,6 +837,9 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 	if err != nil {
 		return nil, err
 	}
+	if n.DocumentKind == contracts.DocumentKindReplacement {
+		return nil, errReplacementManagedByReturn()
+	}
 	var replayed bool
 	err = doclock.Lock("so:"+strconv.FormatInt(n.SalesOrderID, 10), func() error {
 		cur, err := s.mustOwnBranch(ctx, id, branchID)
@@ -991,6 +1009,9 @@ func (s *Service) CreateReplacement(ctx context.Context, actorID, branchID int64
 	if deliveryDate != "" {
 		if _, err := timeutil.ParseDateInput(deliveryDate); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "deliveryDate", Message: "format tanggal harus YYYY-MM-DD"}})
+		}
+		if timeutil.AfterTodayWIB(deliveryDate) {
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "deliveryDate", Message: "tidak boleh di masa depan"}})
 		}
 	} else {
 		deliveryDate = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
@@ -1320,6 +1341,9 @@ func validateReplacementSettlement(note *contracts.DeliveryNote, st *contracts.R
 	if d := strings.TrimSpace(st.PaymentDate); d != "" {
 		if _, err := timeutil.ParseDateInput(d); err != nil {
 			return apperror.Validation("", []apperror.FieldError{{Field: "settlement.paymentDate", Message: "format tanggal harus YYYY-MM-DD"}})
+		}
+		if timeutil.AfterTodayWIB(d) {
+			return apperror.Validation("", []apperror.FieldError{{Field: "settlement.paymentDate", Message: "tidak boleh di masa depan"}})
 		}
 	}
 	return nil

@@ -3,6 +3,7 @@ package integration
 import (
 	"testing"
 
+	deliveryapp "mini-erp/internal/modules/delivery/application"
 	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
 	paymentapp "mini-erp/internal/modules/payment/application"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
@@ -78,6 +79,16 @@ func TestExchangeReplacementFlow(t *testing.T) {
 	if _, err := m.salesreturn.Service().CreateReplacementDelivery(ctx(), 0, fx.branchID, ret.ID,
 		salesreturnapp.ReplacementDispatchInput{}); err == nil {
 		t.Fatal("expected rejection for double dispatch, got nil")
+	}
+
+	// Audit S4: the return owns the replacement note. The generic delivery
+	// cancel would strand the return in "dispatched"; the generic confirm
+	// would skip its status and surcharge steps. Both are refused.
+	if _, err := m.delivery.Service().Cancel(ctx(), 0, fx.branchID, dn.ID); err == nil {
+		t.Fatal("generic cancel of a replacement note accepted")
+	}
+	if _, err := m.delivery.Service().Confirm(ctx(), 0, fx.branchID, dn.ID, deliveryapp.ConfirmInput{RecipientName: "x"}); err == nil {
+		t.Fatal("generic confirm of a replacement note accepted")
 	}
 
 	confirmed, err := m.salesreturn.Service().ConfirmReplacementDelivery(ctx(), 0, fx.branchID, ret.ID, dn.ID,

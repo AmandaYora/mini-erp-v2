@@ -480,11 +480,25 @@ func (s *Service) mustOwnBranch(ctx context.Context, id, branchID int64) (*contr
 func (s *Service) UpdateOrder(ctx context.Context, actorID, branchID, id int64, in OrderInput) (*contracts.PurchaseOrder, error) {
 	var out *contracts.PurchaseOrder
 	err := doclock.Lock("po:"+itoa64(id), func() error {
-		res, err := s.updateOrderLocked(ctx, actorID, branchID, id, in)
-		out = res
-		return err
+		return s.withPaymentLock(ctx, branchID, id, func() error {
+			res, err := s.updateOrderLocked(ctx, actorID, branchID, id, in)
+			out = res
+			return err
+		})
 	})
 	return out, err
+}
+
+// withPaymentLock runs fn under the payment module's lock for this order
+// (paymentcontracts.LockKey), nested inside the caller's po:<id> lock, so the
+// "no payment hangs off it" check of a cancel or repricing cannot race a
+// payment that is about to insert.
+func (s *Service) withPaymentLock(ctx context.Context, branchID, id int64, fn func() error) error {
+	o, err := s.mustOwnBranch(ctx, id, branchID)
+	if err != nil {
+		return err
+	}
+	return doclock.Lock(paymentcontracts.LockKey(o.PartyID, paymentcontracts.OrderPurchase, o.ID), fn)
 }
 
 // resolveDueDate keeps an explicit due date; otherwise a credit period counts
@@ -711,36 +725,38 @@ func (s *Service) CancelOrder(ctx context.Context, actorID, branchID, id int64) 
 	var number string
 	var replayed bool
 	err := doclock.Lock("po:"+itoa64(id), func() error {
-		existing, err := s.mustOwnBranch(ctx, id, branchID)
-		if err != nil {
-			return err
-		}
-		number = existing.Number
-		switch existing.Status {
-		case contracts.StatusCancelled:
-			replayed = true
-			return nil
-		case contracts.StatusCompleted:
-			return apperror.Conflict("Order sudah final")
-		}
-		if err := s.assertNoDependents(ctx, id); err != nil {
-			return err
-		}
-		won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
-		if err != nil {
-			return apperror.Internal(err)
-		}
-		if !won {
-			cur, err := s.repo.GetOrder(ctx, id)
+		return s.withPaymentLock(ctx, branchID, id, func() error {
+			existing, err := s.mustOwnBranch(ctx, id, branchID)
+			if err != nil {
+				return err
+			}
+			number = existing.Number
+			switch existing.Status {
+			case contracts.StatusCancelled:
+				replayed = true
+				return nil
+			case contracts.StatusCompleted:
+				return apperror.Conflict("Order sudah final")
+			}
+			if err := s.assertNoDependents(ctx, id); err != nil {
+				return err
+			}
+			won, err := s.repo.Transition(ctx, id, []string{contracts.StatusDraft, contracts.StatusConfirmed}, contracts.StatusCancelled, actorID)
 			if err != nil {
 				return apperror.Internal(err)
 			}
-			if cur == nil || cur.Status != contracts.StatusCancelled {
-				return apperror.Conflict("Status order berubah, muat ulang")
+			if !won {
+				cur, err := s.repo.GetOrder(ctx, id)
+				if err != nil {
+					return apperror.Internal(err)
+				}
+				if cur == nil || cur.Status != contracts.StatusCancelled {
+					return apperror.Conflict("Status order berubah, muat ulang")
+				}
+				replayed = true
 			}
-			replayed = true
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, err

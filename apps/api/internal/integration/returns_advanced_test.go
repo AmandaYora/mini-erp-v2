@@ -193,3 +193,54 @@ func TestPurchaseReturnDateAndOffset(t *testing.T) {
 		t.Fatalf("PO credited %d, want 40000", paid[poID])
 	}
 }
+
+// Audit S6: cancelling the automatic offset pair (the step before cancelling
+// a confirmed return) releases the return's mirror of it — the reduction and
+// the auto memo — so the order balance, the refundable remainder and the books
+// agree. A repeated confirm then does not mirror the cancelled pair again.
+func TestCancelledAutoOffsetReleasesReturn(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	soID := sellFixture(t, ctx(), fx, 10)
+	deliverAll(t, ctx(), fx, soID, 10)
+	svc := testMods.salesreturn.Service()
+	pay := testMods.payment.Service()
+	ret := returnWith(t, fx, soID, "normal", 4)
+	if _, err := svc.Confirm(ctx(), 0, fx.branchID, ret.ID); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	var refundLeg int64 // cancel through the leg WITHOUT the client ref
+	if err := testMods.db.QueryRow(`SELECT id FROM payments WHERE method='offset' AND client_ref IS NULL`).Scan(&refundLeg); err != nil {
+		t.Fatalf("refund leg: %v", err)
+	}
+	if _, err := pay.Cancel(ctx(), 0, fx.branchID, refundLeg); err != nil {
+		t.Fatalf("cancel offset: %v", err)
+	}
+	check := func(when string) {
+		t.Helper()
+		got, err := svc.GetByID(ctx(), ret.ID)
+		if err != nil {
+			t.Fatalf("%s: get return: %v", when, err)
+		}
+		if got.ReceivableReduction != 0 {
+			t.Fatalf("%s: reduction = %d, want 0", when, got.ReceivableReduction)
+		}
+		for _, m := range got.Settlements {
+			if m.Auto {
+				t.Fatalf("%s: auto memo kept: %+v", when, m)
+			}
+		}
+		paid, _ := pay.PaidForOrders(ctx(), paymentcontracts.OrderSales, []int64{soID})
+		if paid[soID] != 0 {
+			t.Fatalf("%s: order still credited %d", when, paid[soID])
+		}
+	}
+	check("after cancel")
+	if _, err := svc.Confirm(ctx(), 0, fx.branchID, ret.ID); err != nil {
+		t.Fatalf("repeat confirm: %v", err)
+	}
+	check("after repeat confirm")
+	if _, err := svc.Cancel(ctx(), 0, fx.branchID, ret.ID); err != nil {
+		t.Fatalf("cancel return once its offset is gone: %v", err)
+	}
+}

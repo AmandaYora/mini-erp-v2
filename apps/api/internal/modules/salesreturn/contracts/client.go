@@ -253,6 +253,11 @@ type ReturnsClient interface {
 	// balance (customer_credit settlements) in one grouped read; returns
 	// without any are absent (saldo list, N-41).
 	CreditSettledByReturns(ctx context.Context, ids []int64) (map[int64]int64, error)
+	// ReleaseAutoOffset undoes the bookkeeping of the return's automatic offset
+	// after the payment module cancelled that offset pair: the reduction goes
+	// back to 0 (and the auto memo with it), so the order balance and the
+	// refundable remainder read the same as the books. Idempotent.
+	ReleaseAutoOffset(ctx context.Context, returnID int64) error
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

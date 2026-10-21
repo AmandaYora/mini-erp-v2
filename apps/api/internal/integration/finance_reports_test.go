@@ -28,11 +28,11 @@ func TestFinanceReportsCumulativeCashAndLedger(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
 	fin := testMods.finance.Service()
-	manual(t, fx.branchID, "2026-12-30", 1000000, true)
-	manual(t, fx.branchID, "2027-01-05", 300000, false)
-	manual(t, fx.branchID, "2027-01-10", 50000, true)
+	manual(t, fx.branchID, "2025-12-30", 1000000, true)
+	manual(t, fx.branchID, "2026-01-05", 300000, false)
+	manual(t, fx.branchID, "2026-01-10", 50000, true)
 
-	rows, err := fin.TrialBalanceAsOf(ctx(), fx.branchID, "2027-01-31")
+	rows, err := fin.TrialBalanceAsOf(ctx(), fx.branchID, "2026-01-31")
 	if err != nil {
 		t.Fatalf("trial balance: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestFinanceReportsCumulativeCashAndLedger(t *testing.T) {
 	if debit != credit || debit != 1000000+300000+50000 {
 		t.Fatalf("cumulative TB debit=%d credit=%d; want balanced at 1.350.000", debit, credit)
 	}
-	dec, _ := fin.TrialBalanceAsOf(ctx(), fx.branchID, "2026-12-31")
+	dec, _ := fin.TrialBalanceAsOf(ctx(), fx.branchID, "2025-12-31")
 	var decDebit int64
 	for _, r := range dec {
 		decDebit += r.Debit
@@ -53,7 +53,7 @@ func TestFinanceReportsCumulativeCashAndLedger(t *testing.T) {
 		t.Fatalf("TB as of 31 Dec debit = %d, want 1.000.000", decDebit)
 	}
 
-	cash, opening, closing, err := fin.CashFlow(ctx(), fx.branchID, "2027-01-01", "2027-01-31")
+	cash, opening, closing, err := fin.CashFlow(ctx(), fx.branchID, "2026-01-01", "2026-01-31")
 	if err != nil {
 		t.Fatalf("cash flow: %v", err)
 	}
@@ -65,18 +65,18 @@ func TestFinanceReportsCumulativeCashAndLedger(t *testing.T) {
 	}
 
 	// General ledger of cash, 2 lines per window: the running balance continues.
-	p1, err := fin.GeneralLedgerPage(ctx(), fx.branchID, "1000", "2026-12-01", "2027-01-31", 1, 2)
+	p1, err := fin.GeneralLedgerPage(ctx(), fx.branchID, "1000", "2025-12-01", "2026-01-31", 1, 2)
 	if err != nil {
 		t.Fatalf("ledger p1: %v", err)
 	}
-	p2, err := fin.GeneralLedgerPage(ctx(), fx.branchID, "1000", "2026-12-01", "2027-01-31", 2, 2)
+	p2, err := fin.GeneralLedgerPage(ctx(), fx.branchID, "1000", "2025-12-01", "2026-01-31", 2, 2)
 	if err != nil {
 		t.Fatalf("ledger p2: %v", err)
 	}
 	if p1.Total != 3 || len(p1.Lines) != 2 || len(p2.Lines) != 1 {
 		t.Fatalf("ledger windows: total=%d p1=%d p2=%d; want 3, 2, 1", p1.Total, len(p1.Lines), len(p2.Lines))
 	}
-	if p1.Lines[0].Date != "2026-12-30" || p1.Lines[1].Balance != 700000 || p2.Lines[0].Balance != 750000 {
+	if p1.Lines[0].Date != "2025-12-30" || p1.Lines[1].Balance != 700000 || p2.Lines[0].Balance != 750000 {
 		t.Fatalf("running balances p1=%+v p2=%+v; want 1.000.000 → 700.000 → 750.000 in date order", p1.Lines, p2.Lines)
 	}
 }
@@ -90,11 +90,11 @@ func TestFinanceReportsAllBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("branch: %v", err)
 	}
-	manual(t, fx.branchID, "2027-02-01", 100000, true)
-	manual(t, second.ID, "2027-02-02", 40000, true)
+	manual(t, fx.branchID, "2026-02-01", 100000, true)
+	manual(t, second.ID, "2026-02-02", 40000, true)
 	fin := testMods.finance.Service()
-	one, _ := fin.TrialBalanceAsOf(ctx(), fx.branchID, "2027-02-28")
-	both, err := fin.TrialBalanceAsOf(financeapp.WithBranchScope(ctx(), []int64{fx.branchID, second.ID}), fx.branchID, "2027-02-28")
+	one, _ := fin.TrialBalanceAsOf(ctx(), fx.branchID, "2026-02-28")
+	both, err := fin.TrialBalanceAsOf(financeapp.WithBranchScope(ctx(), []int64{fx.branchID, second.ID}), fx.branchID, "2026-02-28")
 	if err != nil {
 		t.Fatalf("all branches: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestExpenseAtomicAndCancelReason(t *testing.T) {
 	if cash == 0 || expense == 0 {
 		t.Fatalf("chart missing cash(%d)/expense(%d)", cash, expense)
 	}
-	in := financeapp.CreateExpenseInput{ExpenseAccountID: expense, PayAccountID: payable, Amount: 50000, Date: "2027-03-01", Notes: "listrik"}
+	in := financeapp.CreateExpenseInput{ExpenseAccountID: expense, PayAccountID: payable, Amount: 50000, Date: "2026-03-01", Notes: "listrik"}
 	if _, err := fin.CreateExpense(ctx(), 0, fx.branchID, in); err == nil {
 		t.Fatal("expense paid from a non-cash account was accepted")
 	}

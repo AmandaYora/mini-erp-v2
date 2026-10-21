@@ -56,6 +56,21 @@ func DateOrToday(raw string) string {
 // DATETIME scanned into a string with parseTime, or the naive DATETIME text.
 var stampLayouts = []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999", "2006-01-02 15:04:05", "2006-01-02"}
 
+// TodayWIB is today's Jakarta calendar day as YYYY-MM-DD.
+func TodayWIB() string { return NowUTC().In(Jakarta).Format("2006-01-02") }
+
+// AfterTodayWIB reports whether a YYYY-MM-DD document date lies after today's
+// Jakarta calendar day. A document that moves stock, cash or the books is
+// dated when it happens: a future date would put its journal on a day the
+// stock movement and the cash have not reached yet.
+func AfterTodayWIB(day string) bool {
+	day = strings.TrimSpace(day)
+	if len(day) > 10 {
+		day = day[:10]
+	}
+	return day > TodayWIB()
+}
+
 // ParseStampUTC reads a stored UTC instant (system stamps: created_at,
 // moved_at, completed_at...). ok is false for empty or malformed text.
 func ParseStampUTC(s string) (time.Time, bool) {

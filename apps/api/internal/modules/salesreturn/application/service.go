@@ -78,6 +78,14 @@ func (s *Service) GetByID(ctx context.Context, id int64) (*contracts.SalesReturn
 	return s.enrich(ctx, ret)
 }
 
+// ReleaseAutoOffset implements contracts.ReturnsClient for the payment module.
+func (s *Service) ReleaseAutoOffset(ctx context.Context, returnID int64) error {
+	if err := s.repo.ReleaseAutoOffset(ctx, returnID); err != nil {
+		return apperror.Internal(err)
+	}
+	return nil
+}
+
 // GetReturn resolves the payment-facing projection, or nil when missing.
 func (s *Service) GetReturn(ctx context.Context, id int64) (*contracts.Return, error) {
 	ret, err := s.repo.GetReturn(ctx, id)
@@ -450,6 +458,9 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, soID int6
 		if _, err := timeutil.ParseDateInput(strings.TrimSpace(returnDate)); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "returnDate", Message: "format tanggal harus YYYY-MM-DD"}})
 		}
+		if timeutil.AfterTodayWIB(returnDate) {
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "returnDate", Message: "tidak boleh di masa depan"}})
+		}
 	} else {
 		returnDate = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
 	}
@@ -687,6 +698,12 @@ func (s *Service) autoOffset(ctx context.Context, actorID, branchID, id int64) e
 	})
 	if err != nil {
 		return err
+	}
+	if pay.Status != "active" {
+		// A repeated confirm replays the pair by its client ref; when that
+		// pair was cancelled since, the offset was undone on purpose
+		// (ReleaseAutoOffset) and must not be mirrored again.
+		return nil
 	}
 	if ret.ReceivableReduction != pay.Amount {
 		if err := s.repo.SetReduction(ctx, ret.ID, pay.Amount); err != nil {
@@ -1003,6 +1020,18 @@ type SettlementInput struct {
 // money itself still moves through payments). Total settlements can never
 // exceed the return total.
 func (s *Service) AddSettlement(ctx context.Context, actorID, branchID, id int64, in SettlementInput) (*contracts.SalesReturn, error) {
+	// Serialized per return: two concurrent settlements would both pass the
+	// remaining-room check and together settle more than the return is owed.
+	var out *contracts.SalesReturn
+	err := doclock.Lock("sr:"+strconv.FormatInt(id, 10), func() error {
+		res, err := s.addSettlementLocked(ctx, actorID, branchID, id, in)
+		out = res
+		return err
+	})
+	return out, err
+}
+
+func (s *Service) addSettlementLocked(ctx context.Context, actorID, branchID, id int64, in SettlementInput) (*contracts.SalesReturn, error) {
 	ret, err := s.mustOwnBranch(ctx, id, branchID)
 	if err != nil {
 		return nil, err
@@ -1020,6 +1049,9 @@ func (s *Service) AddSettlement(ctx context.Context, actorID, branchID, id int64
 	if date != "" {
 		if _, err := timeutil.ParseDateInput(date); err != nil {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "date", Message: "format tanggal harus YYYY-MM-DD"}})
+		}
+		if timeutil.AfterTodayWIB(date) {
+			return nil, apperror.Validation("", []apperror.FieldError{{Field: "date", Message: "tidak boleh di masa depan"}})
 		}
 	} else {
 		date = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")

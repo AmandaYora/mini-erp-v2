@@ -319,6 +319,24 @@ func (r *Repository) SetReduction(ctx context.Context, id, amount int64) error {
 	})
 }
 
+// ReleaseAutoOffset zeroes the automatic offset and drops its memo in one
+// transaction.
+func (r *Repository) ReleaseAutoOffset(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := r.q.WithTx(tx)
+	if err := q.SetReceivableReduction(ctx, sqlc.SetReceivableReductionParams{ReceivableReduction: 0, ID: id}); err != nil {
+		return err
+	}
+	if err := q.DeleteAutoSettlements(ctx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // OrderIDsByReturns maps return id -> originating sales order id in one
 // grouped read. Unknown ids are simply absent from the result.
 func (r *Repository) OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64]int64, error) {

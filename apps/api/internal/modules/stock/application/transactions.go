@@ -116,6 +116,8 @@ func validateMeta(m *TransferMeta, interBranch bool) error {
 		m.TransferDate = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
 	} else if _, err := timeutil.ParseDateInput(strings.TrimSpace(m.TransferDate)); err != nil {
 		fields = append(fields, apperror.FieldError{Field: "transferDate", Message: "format tanggal harus YYYY-MM-DD"})
+	} else if timeutil.AfterTodayWIB(m.TransferDate) {
+		fields = append(fields, apperror.FieldError{Field: "transferDate", Message: "tidak boleh di masa depan"})
 	}
 	if m.Enforced && interBranch && m.DriverName == "" {
 		fields = append(fields, apperror.FieldError{Field: "driverName", Message: "wajib diisi untuk transfer antar cabang"})

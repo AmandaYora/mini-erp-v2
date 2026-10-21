@@ -304,8 +304,10 @@ export default function DeliveryDetailPage() {
     salesReturnId: replacementReturnId,
   });
   const driverMissing = evidenceMissing.some((m) => m.key === "driverName" || m.key === "warehouseStaffName");
-  const showConfirm = isDraft && canConfirm;
-  const showCancel = isDraft && canCancel;
+  // Siklus SJ pengganti dimiliki retur penjualan (server menolak konfirmasi/batal
+  // generik): tombolnya ada di halaman retur.
+  const showConfirm = isDraft && canConfirm && !isReplacement;
+  const showCancel = isDraft && canCancel && !isReplacement;
 
   return (
     <Page>
@@ -355,6 +357,19 @@ export default function DeliveryDetailPage() {
         <Notice tone="info" title="Surat jalan pengganti retur tukar">
           Barang pengganti dari {replacementReturnId !== null ? `Retur #${replacementReturnId}` : "retur terkait"} —
           pendapatan tidak dijurnal otomatis untuk pengiriman ini.
+          {isDraft && (
+            <>
+              {" "}Konfirmasi pengiriman dilakukan dari{" "}
+              {replacementReturnId !== null ? (
+                <Link to={`/sales-returns/${replacementReturnId}`} className="underline">
+                  halaman retur
+                </Link>
+              ) : (
+                "halaman retur"
+              )}
+              .
+            </>
+          )}
         </Notice>
       )}
       {isDraft && driverMissing && (

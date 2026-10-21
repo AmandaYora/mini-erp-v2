@@ -63,6 +63,11 @@ func normalizeEntryDate(raw, field string) (string, error) {
 	if _, err := timeutil.ParseDateInput(raw); err != nil {
 		return "", apperror.Validation("", []apperror.FieldError{{Field: field, Message: "format tanggal harus YYYY-MM-DD"}})
 	}
+	// A journal is booked for something that happened: a future date would
+	// show in every lifetime footing (dashboard balances) before its day.
+	if timeutil.AfterTodayWIB(raw) {
+		return "", apperror.Validation("", []apperror.FieldError{{Field: field, Message: "tidak boleh di masa depan"}})
+	}
 	return raw, nil
 }
 
@@ -200,6 +205,11 @@ func (s *Service) insertEntryWith(ctx context.Context, actorID, branchID int64, 
 	}
 	if debit <= 0 || debit != credit {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "lines", Message: "total debit harus sama dengan kredit"}})
+	}
+	// Every journal — manual or posted from a document — is dated on or
+	// before today: a document dated ahead waits in the queue until its day.
+	if timeutil.AfterTodayWIB(date) {
+		return nil, apperror.Conflict("Tanggal jurnal " + date[:10] + " di masa depan; dokumen dijurnal saat tanggalnya tiba")
 	}
 	if err := s.requireOpenPeriod(ctx, branchID, date); err != nil {
 		return nil, err

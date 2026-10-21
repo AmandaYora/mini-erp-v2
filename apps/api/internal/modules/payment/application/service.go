@@ -286,14 +286,10 @@ func WithReference(ref string) CreateOption {
 // walk-in payments with no party — the first allocated order, so unrelated
 // walk-in checkouts never queue behind one shared "party 0" lock.
 func lockKey(partyID int64, allocs []AllocationInput) string {
-	if partyID != 0 || len(allocs) == 0 {
-		return "party:" + strconv.FormatInt(partyID, 10)
+	if len(allocs) == 0 {
+		return contracts.LockKey(partyID, "", 0)
 	}
-	t := allocs[0].OrderType
-	if t == "" {
-		t = contracts.OrderSales
-	}
-	return "wk:" + t + "/" + strconv.FormatInt(allocs[0].OrderID, 10)
+	return contracts.LockKey(partyID, allocs[0].OrderType, allocs[0].OrderID)
 }
 
 // Create records a payment. Empty allocations auto-fill FIFO (oldest due
@@ -397,6 +393,9 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 	if strings.TrimSpace(paidAt) != "" {
 		if _, err := timeutil.ParseDateInput(strings.TrimSpace(paidAt)); err != nil {
 			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "paidAt", Message: "format tanggal harus YYYY-MM-DD"}})
+		}
+		if timeutil.AfterTodayWIB(paidAt) {
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "paidAt", Message: "tidak boleh di masa depan"}})
 		}
 	} else {
 		paidAt = timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
@@ -722,7 +721,51 @@ func (s *Service) Cancel(ctx context.Context, actorID, branchID, id int64) (*con
 	if !replayed {
 		s.reverseJournals(ctx, actorID, branchID, legIDs, first.Number)
 	}
+	if err := s.releaseAutoOffset(ctx, first); err != nil {
+		return nil, err
+	}
 	return s.GetByID(ctx, id)
+}
+
+// autoReturnOffset names the return whose confirm wrote this offset pair
+// itself (client ref offset:sr:<id> / offset:pr:<id>, on the bill leg). The
+// return mirrors the pair as its receivable/payable reduction, so cancelling
+// the pair must release that mirror too (ReleaseAutoOffset).
+func autoReturnOffset(clientRef string) (orderType string, returnID int64) {
+	for prefix, t := range map[string]string{"offset:sr:": contracts.OrderSalesReturn, "offset:pr:": contracts.OrderPurchaseReturn} {
+		if rest, ok := strings.CutPrefix(clientRef, prefix); ok {
+			if id, err := strconv.ParseInt(rest, 10, 64); err == nil && id > 0 {
+				return t, id
+			}
+		}
+	}
+	return "", 0
+}
+
+// releaseAutoOffset tells the return that its automatic offset is gone. It
+// runs on every cancel of such a pair, replays included, so a crash between
+// the cancel and the release heals on the next attempt.
+func (s *Service) releaseAutoOffset(ctx context.Context, first *contracts.Payment) error {
+	ref := first.ClientRef
+	if ref == "" && first.PairID != 0 {
+		other, err := s.repo.PairedPayment(ctx, first.PairID)
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		if other != nil {
+			ref = other.ClientRef
+		}
+	}
+	orderType, returnID := autoReturnOffset(ref)
+	switch {
+	case returnID == 0:
+		return nil
+	case orderType == contracts.OrderSalesReturn && s.salesReturns != nil:
+		return s.salesReturns.ReleaseAutoOffset(ctx, returnID)
+	case orderType == contracts.OrderPurchaseReturn && s.purchaseReturns != nil:
+		return s.purchaseReturns.ReleaseAutoOffset(ctx, returnID)
+	}
+	return nil
 }
 
 // guardCancel refuses a cancellation that would reopen a settled COD/prepaid

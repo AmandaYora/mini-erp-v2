@@ -83,6 +83,11 @@ WHERE id = sqlc.arg(id) AND replacement_delivery_status = sqlc.arg(from_status);
 -- name: SetReceivableReduction :exec
 UPDATE sales_returns SET receivable_reduction = ? WHERE id = ?;
 
+-- name: DeleteAutoSettlements :exec
+-- The automatic offset memo goes with the offset it describes (released when
+-- the offset pair is cancelled).
+DELETE FROM sales_return_settlements WHERE return_id = ? AND auto = 1;
+
 -- name: CancelledAmong :many
 SELECT id FROM sales_returns
 WHERE branch_id = ? AND status = 'cancelled' AND id IN (sqlc.slice('ids'));

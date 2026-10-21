@@ -89,14 +89,14 @@ func TestFinanceAuditAtomic(t *testing.T) {
 
 	// Manual journal.
 	release := blockAudit(t, "journals.manual")
-	if _, err := fin.Manual(ctx(), 0, fx.branchID, "2027-03-01", "uji", lines); err == nil {
+	if _, err := fin.Manual(ctx(), 0, fx.branchID, "2026-03-01", "uji", lines); err == nil {
 		t.Fatal("manual journal committed although its trail failed")
 	}
 	if n := countRows(t, `SELECT COUNT(*) FROM finance_journal_entries`); n != 0 {
 		t.Fatalf("journal rows after failed audit = %d, want 0", n)
 	}
 	release()
-	entry, err := fin.Manual(ctx(), 0, fx.branchID, "2027-03-01", "uji", lines)
+	entry, err := fin.Manual(ctx(), 0, fx.branchID, "2026-03-01", "uji", lines)
 	if err != nil {
 		t.Fatalf("manual: %v", err)
 	}
@@ -132,14 +132,14 @@ func TestFinanceAuditAtomic(t *testing.T) {
 
 	// Period close/reopen, with before/after status (F3b-8).
 	release = blockAudit(t, "fiscal_periods.close")
-	if err := fin.ClosePeriod(ctx(), 0, fx.branchID, 2027, 4); err == nil {
+	if err := fin.ClosePeriod(ctx(), 0, fx.branchID, 2026, 4); err == nil {
 		t.Fatal("period closed although its trail failed")
 	}
 	if n := countRows(t, `SELECT COUNT(*) FROM finance_periods WHERE status = 'closed'`); n != 0 {
 		t.Fatalf("closed periods after failed audit = %d", n)
 	}
 	release()
-	if err := fin.ClosePeriod(ctx(), 0, fx.branchID, 2027, 4); err != nil {
+	if err := fin.ClosePeriod(ctx(), 0, fx.branchID, 2026, 4); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	before, after, _ := lastDetail(t, "fiscal_periods.close")
@@ -147,7 +147,7 @@ func TestFinanceAuditAtomic(t *testing.T) {
 		t.Fatalf("period close detail = %s / %s", before, after)
 	}
 	release = blockAudit(t, "fiscal_periods.reopen")
-	if err := fin.ReopenPeriod(ctx(), 0, fx.branchID, 2027, 4, "koreksi audit"); err == nil {
+	if err := fin.ReopenPeriod(ctx(), 0, fx.branchID, 2026, 4, "koreksi audit"); err == nil {
 		t.Fatal("period reopened although its trail failed")
 	}
 	if n := countRows(t, `SELECT COUNT(*) FROM finance_periods WHERE status = 'closed'`); n != 1 {
@@ -166,7 +166,7 @@ func TestFinanceAuditAtomic(t *testing.T) {
 			expense = a.ID
 		}
 	}
-	in := financeapp.CreateExpenseInput{ExpenseAccountID: expense, PayAccountID: cash, Amount: 7000, Date: "2027-05-01", Notes: "listrik"}
+	in := financeapp.CreateExpenseInput{ExpenseAccountID: expense, PayAccountID: cash, Amount: 7000, Date: "2026-05-01", Notes: "listrik"}
 	release = blockAudit(t, "expenses.create")
 	if _, err := fin.CreateExpense(ctx(), 0, fx.branchID, in); err == nil {
 		t.Fatal("expense created although its trail failed")

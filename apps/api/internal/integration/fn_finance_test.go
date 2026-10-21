@@ -470,14 +470,14 @@ func TestGeneralLedgerOverviewMatchesTrialBalance(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
 	fin := testMods.finance.Service()
-	manual(t, fx.branchID, "2027-02-01", 100000, true)
-	manual(t, fx.branchID, "2027-03-05", 30000, false)
+	manual(t, fx.branchID, "2026-02-01", 100000, true)
+	manual(t, fx.branchID, "2026-03-05", 30000, false)
 
-	ov, err := fin.GeneralLedgerOverview(ctx(), fx.branchID, "2027-03-01", "2027-03-31", 1, 100)
+	ov, err := fin.GeneralLedgerOverview(ctx(), fx.branchID, "2026-03-01", "2026-03-31", 1, 100)
 	if err != nil {
 		t.Fatalf("overview: %v", err)
 	}
-	tb, err := fin.TrialBalance(ctx(), fx.branchID, 2027, 3)
+	tb, err := fin.TrialBalance(ctx(), fx.branchID, 2026, 3)
 	if err != nil {
 		t.Fatalf("trial balance: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestGeneralLedgerOverviewMatchesTrialBalance(t *testing.T) {
 	if cash == nil || cash.Opening != 100000 || cash.Closing != cash.Opening+cash.Debit-cash.Credit {
 		t.Fatalf("cash row = %+v, want opening 100.000 carried from February", cash)
 	}
-	small, _ := fin.GeneralLedgerOverview(ctx(), fx.branchID, "2027-03-01", "2027-03-31", 1, 1)
+	small, _ := fin.GeneralLedgerOverview(ctx(), fx.branchID, "2026-03-01", "2026-03-31", 1, 1)
 	if len(small.Rows) != 1 || small.Total != ov.Total {
 		t.Fatalf("pagination rows=%d total=%d want 1 and %d", len(small.Rows), small.Total, ov.Total)
 	}
