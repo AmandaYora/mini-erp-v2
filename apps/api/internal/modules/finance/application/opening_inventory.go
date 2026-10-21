@@ -366,8 +366,9 @@ type InventoryRecon struct {
 	// ledger rows are whole rupiah too, but imported legacy rows and receipts
 	// split over several locations can carry a fraction.
 	Tolerance int64 `json:"tolerance"`
-	// Pending counts documents not yet journalled; PendingValue is the ledger
-	// value they already moved (the books catch up when they are posted).
+	// Pending counts documents still waiting for a journal (ignored ones
+	// excluded); PendingValue is the ledger value they already moved (the books
+	// catch up when they are posted).
 	Pending      int   `json:"pending"`
 	PendingValue int64 `json:"pendingValue"`
 	// IgnoredValue is the ledger value of documents an accountant took out of
@@ -419,11 +420,14 @@ func (s *Service) ReconcileInventory(ctx context.Context, branchID int64) (*Inve
 	if err != nil {
 		return nil, err
 	}
-	pending := len(queue)
-	if n, err := s.pendingStockMovements(ctx, branchID); err != nil {
-		return nil, err
-	} else {
-		pending += n
+	// Pending is what still waits for a journal: the queue (which already holds
+	// the stock movements after the cutover boundary) minus the documents an
+	// accountant ignored on purpose — those are reported by their value.
+	pending := 0
+	for _, it := range queue {
+		if !it.Ignored {
+			pending++
+		}
 	}
 	pendingValue, ignoredValue, err := s.queueLedgerValue(ctx, branchID, queue)
 	if err != nil {
@@ -490,14 +494,4 @@ func (s *Service) inventoryBookBalance(ctx context.Context, branchID int64) (int
 	}
 	f := footings[a.ID]
 	return f[0] - f[1], nil
-}
-
-// pendingStockMovements counts adjustment / write-off movements without a live
-// journal yet (they move the ledger before the books).
-func (s *Service) pendingStockMovements(ctx context.Context, branchID int64) (int, error) {
-	rows, err := s.repo.UnpostedStockMovements(ctx, branchID, 0, 1)
-	if err != nil {
-		return 0, apperror.Internal(err)
-	}
-	return len(rows), nil
 }

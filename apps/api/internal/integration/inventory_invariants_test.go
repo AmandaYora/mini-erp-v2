@@ -278,8 +278,24 @@ func TestReconFailsOnUnexplainedGapDespitePendingDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recon: %v", err)
 	}
-	if !rec.Consistent || rec.PendingValue != 1000 || rec.Unexplained != 0 {
-		t.Fatalf("recon with a pending surplus = %+v, want explained (pending 1000, unexplained 0)", rec)
+	if !rec.Consistent || rec.Pending != 1 || rec.PendingValue != 1000 || rec.Unexplained != 0 {
+		t.Fatalf("recon with a pending surplus = %+v, want explained (1 pending worth 1000, unexplained 0)", rec)
+	}
+	// Ignoring it on purpose moves it from pending to ignored: it no longer
+	// counts as waiting (the restatement gate opens), and its value is still named.
+	ids := queuedStockMovements(t, fx.branchID)
+	if len(ids) != 1 {
+		t.Fatalf("queued = %v, want the surplus", ids)
+	}
+	if _, err := fin.IgnoreSource(ctx(), 0, fx.branchID, "stock_movement", ids[0], "uji: tidak dijurnal"); err != nil {
+		t.Fatalf("ignore: %v", err)
+	}
+	rec, err = fin.ReconcileInventory(ctx(), fx.branchID)
+	if err != nil {
+		t.Fatalf("recon: %v", err)
+	}
+	if !rec.Consistent || rec.Pending != 0 || rec.PendingValue != 0 || rec.IgnoredValue != 1000 || rec.Unexplained != 0 {
+		t.Fatalf("recon after ignoring = %+v, want 0 pending, ignored 1000, unexplained 0", rec)
 	}
 
 	// Drift the shipment's ledger row with no journal behind it.
