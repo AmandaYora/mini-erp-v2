@@ -258,6 +258,41 @@ func (s *Service) Reverse(ctx context.Context, actorID, branchID, entryID int64,
 	return s.reverse(ctx, actorID, branchID, entryID, reason, true)
 }
 
+// ledgerBackedSources are journals booked together with a value-only
+// cost-ledger row (ADR-0020/0023). No document re-posts them, so reversing the
+// journal alone would move Persediaan in the books but not in the ledger: the
+// correction is another revaluation/restatement, never "Balik Jurnal".
+var ledgerBackedSources = map[string]bool{
+	SourceInventoryRevaluation: true,
+	SourceCostRestatement:      true,
+	SourceOpeningSupplement:    true,
+}
+
+// refuseLedgerOnlyReversal refuses reversing a journal whose Persediaan leg has
+// a cost-ledger counterpart nothing would undo: the value-only sources above,
+// and a migration correction that touches Persediaan (its ledger side is the
+// migrated ledger itself).
+func (s *Service) refuseLedgerOnlyReversal(ctx context.Context, orig *contracts.JournalEntry) error {
+	inventory := ledgerBackedSources[orig.SourceType]
+	if !inventory && orig.SourceType == "migration_correction" {
+		acct, err := s.repo.MappingAccount(ctx, "inventory")
+		if err != nil {
+			return apperror.Internal(err)
+		}
+		for _, l := range orig.Lines {
+			if acct != nil && l.AccountID == acct.ID {
+				inventory = true
+				break
+			}
+		}
+	}
+	if inventory {
+		return apperror.Conflict("Jurnal ini dibukukan bersama nilai ledger biaya persediaan; membaliknya hanya menggeser buku. " +
+			"Koreksi lewat Revaluasi Harga Modal atau Hitung Ulang HPP")
+	}
+	return nil
+}
+
 // reverse books the mirror (dimensions copied, scope inherited) and flags the
 // original in one transaction with a CAS. requeue says whether the source
 // document returns to the posting queue (the default: it is re-posted from
@@ -278,6 +313,9 @@ func (s *Service) reverse(ctx context.Context, actorID, branchID, entryID int64,
 	}
 	if strings.TrimSpace(reason) == "" {
 		return nil, apperror.Validation("", []apperror.FieldError{{Field: "reason", Message: "wajib diisi"}})
+	}
+	if err := s.refuseLedgerOnlyReversal(ctx, orig); err != nil {
+		return nil, err
 	}
 	// The mirror carries the original's product/variant/party dimensions, so
 	// margin and counterparty reports net to zero without status filters.

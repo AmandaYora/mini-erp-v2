@@ -349,6 +349,10 @@ func TestInventoryRevaluation(t *testing.T) {
 	if legs := entryLegs(t, down.EntryID); legs["1200"] != [2]int64{0, 28000} || legs["5100"] != [2]int64{28000, 0} {
 		t.Fatalf("down legs = %v, want Cr 1200 / Dr 5100 28000", legs)
 	}
+	// ADR-0023: "Balik Jurnal" would move the books without the ledger.
+	if _, err := fin.Reverse(ctx(), 1, fx.branchID, down.EntryID, "uji balik"); err == nil {
+		t.Fatal("reversing a revaluation journal was accepted")
+	}
 	_, invTotal, err := fin.InventoryValue(ctx(), fx.branchID)
 	if err != nil || invTotal != 35000 {
 		t.Fatalf("inventory value = %d err=%v, want 35000", invTotal, err)
