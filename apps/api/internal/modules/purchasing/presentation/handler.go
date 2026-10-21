@@ -24,6 +24,7 @@ func NewHandler(svc *application.Service) *Handler {
 
 func withPayment(v map[string]any, p application.PaymentSummary) {
 	v["paidAmount"], v["outstandingAmount"], v["paymentStatus"] = p.PaidAmount, p.OutstandingAmount, p.PaymentStatus
+	v["returnOffset"] = p.ReturnOffset
 	v["effectiveDueDate"], v["isOverdue"] = p.EffectiveDueDate, p.IsOverdue
 }
 

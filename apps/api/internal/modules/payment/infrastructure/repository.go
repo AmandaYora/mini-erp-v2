@@ -107,6 +107,22 @@ func (r *Repository) PaidForOrders(ctx context.Context, orderType string, orderI
 	return out, nil
 }
 
+// OffsetForOrders sums the active offset-leg allocations per order id.
+func (r *Repository) OffsetForOrders(ctx context.Context, orderType string, orderIDs []int64) (map[int64]int64, error) {
+	out := map[int64]int64{}
+	if len(orderIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.q.SumOffsetForOrders(ctx, sqlc.SumOffsetForOrdersParams{OrderType: orderType, OrderIds: orderIDs})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.OrderID] = row.Total
+	}
+	return out, nil
+}
+
 func insertPaymentTx(ctx context.Context, q *sqlc.Queries, p *contracts.Payment, actorID int64) (int64, error) {
 	paidAt, err := parsePaidAt(p.PaidAt)
 	if err != nil {

@@ -1293,6 +1293,15 @@ func (s *Service) PaidForOrders(ctx context.Context, orderType string, ids []int
 	return paid, nil
 }
 
+// OffsetForOrders sums the active offset-leg allocations per order id.
+func (s *Service) OffsetForOrders(ctx context.Context, orderType string, ids []int64) (map[int64]int64, error) {
+	out, err := s.repo.OffsetForOrders(ctx, orderType, ids)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	return out, nil
+}
+
 // RecordForOrder records one payment in full against one order — the
 // settlement step of a delivery/receipt and the POS checkout. The party and
 // money direction come from the order, the amount defaults to the whole

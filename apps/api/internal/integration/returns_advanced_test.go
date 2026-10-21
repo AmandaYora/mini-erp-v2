@@ -5,6 +5,7 @@ import (
 
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	purchasereturnapp "mini-erp/internal/modules/purchasereturn/application"
+	purchasingcontracts "mini-erp/internal/modules/purchasing/contracts"
 	salesapp "mini-erp/internal/modules/sales/application"
 	salesreturnapp "mini-erp/internal/modules/salesreturn/application"
 	salesreturncontracts "mini-erp/internal/modules/salesreturn/contracts"
@@ -191,6 +192,19 @@ func TestPurchaseReturnDateAndOffset(t *testing.T) {
 	paid, _ := testMods.payment.Service().PaidForOrders(ctx(), paymentcontracts.OrderPurchase, []int64{poID})
 	if paid[poID] != 40000 {
 		t.Fatalf("PO credited %d, want 40000", paid[poID])
+	}
+	// Audit P5: the PO shows no money paid — the return cleared part of the
+	// bill (returnOffset), exactly as the sales side splits it (SL-03).
+	po, err := testMods.purchasing.Service().GetByID(ctx(), poID)
+	if err != nil || po == nil {
+		t.Fatalf("get PO: %v", err)
+	}
+	sums, err := testMods.purchasing.Service().PaymentSummaries(ctx(), []*purchasingcontracts.PurchaseOrder{po})
+	if err != nil {
+		t.Fatalf("summaries: %v", err)
+	}
+	if got := sums[poID]; got.PaidAmount != 0 || got.ReturnOffset != 40000 || got.OutstandingAmount != po.GrandTotal-40000 || got.PaymentStatus != "unpaid" {
+		t.Fatalf("PO summary = %+v, want paid 0, offset 40000, outstanding %d, unpaid", got, po.GrandTotal-40000)
 	}
 }
 

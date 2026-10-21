@@ -11,7 +11,11 @@ import (
 
 // PaymentSummary is the paid/outstanding picture of one order (F2a-10d).
 type PaymentSummary struct {
+	// PaidAmount is money really paid to the supplier; ReturnOffset is the
+	// part of the bill a confirmed return cleared without money moving (the
+	// sales side's SL-03 split). Outstanding subtracts both.
 	PaidAmount        int64  `json:"paidAmount"`
+	ReturnOffset      int64  `json:"returnOffset"`
 	OutstandingAmount int64  `json:"outstandingAmount"`
 	PaymentStatus     string `json:"paymentStatus"` // unpaid | partial | paid
 	EffectiveDueDate  string `json:"effectiveDueDate"`
@@ -29,17 +33,21 @@ func (s *Service) PaymentSummaries(ctx context.Context, orders []*contracts.Purc
 	for _, o := range orders {
 		ids = append(ids, o.ID)
 	}
-	var paid map[int64]int64
+	var paid, offset map[int64]int64
 	if s.dep.payments != nil {
 		var err error
 		if paid, err = s.dep.payments.PaidForOrders(ctx, paymentcontracts.OrderPurchase, ids); err != nil {
+			return nil, apperror.Internal(err)
+		}
+		if offset, err = s.dep.payments.OffsetForOrders(ctx, paymentcontracts.OrderPurchase, ids); err != nil {
 			return nil, apperror.Internal(err)
 		}
 	}
 	today := timeutil.NowUTC().In(timeutil.Jakarta).Format("2006-01-02")
 	for _, o := range orders {
 		p := paid[o.ID]
-		sum := PaymentSummary{PaidAmount: p}
+		cash := max(0, p-offset[o.ID])
+		sum := PaymentSummary{PaidAmount: cash, ReturnOffset: p - cash}
 		switch {
 		case o.Status == contracts.StatusCancelled || o.Status == contracts.StatusDraft:
 			sum.PaymentStatus = "unpaid"
@@ -51,7 +59,7 @@ func (s *Service) PaymentSummaries(ctx context.Context, orders []*contracts.Purc
 			switch {
 			case sum.OutstandingAmount == 0:
 				sum.PaymentStatus = "paid"
-			case p > 0:
+			case cash > 0:
 				sum.PaymentStatus = "partial"
 			default:
 				sum.PaymentStatus = "unpaid"

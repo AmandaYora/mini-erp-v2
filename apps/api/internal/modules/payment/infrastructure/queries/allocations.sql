@@ -20,6 +20,15 @@ JOIN payments p ON p.id = a.payment_id
 WHERE a.order_type = sqlc.arg(order_type) AND a.order_id IN (sqlc.slice('order_ids')) AND p.status = 'active'
 GROUP BY a.order_id;
 
+-- name: SumOffsetForOrders :many
+-- The part of SumPaidForOrders that moved no money: offset legs (a return
+-- set against the bill). An order's real cash payment is the difference.
+SELECT a.order_id, CAST(COALESCE(SUM(a.amount), 0) AS SIGNED) AS total FROM payment_allocations a
+JOIN payments p ON p.id = a.payment_id
+WHERE a.order_type = sqlc.arg(order_type) AND a.order_id IN (sqlc.slice('order_ids'))
+  AND p.status = 'active' AND p.method = 'offset'
+GROUP BY a.order_id;
+
 -- name: SumCreditUsedForReturn :one
 -- Saldo (uang muka) of one return already used on bills (N-41): active
 -- allocations ONTO the return made by legs that name this very return as their

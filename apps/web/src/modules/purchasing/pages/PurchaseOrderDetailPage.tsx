@@ -102,7 +102,8 @@ export default function PurchaseOrderDetailPage() {
 
   const history = useOrderHistory("purchase", orderId, {
     partyId: order?.partyId ?? 0,
-    paidAmount: order?.paidAmount ?? 0,
+    // Riwayat mencari semua alokasi aktif, termasuk offset retur.
+    paidAmount: (order?.paidAmount ?? 0) + (order?.returnOffset ?? 0),
     enabled: order !== null && order.status !== "draft",
     version: historyVersion,
   });

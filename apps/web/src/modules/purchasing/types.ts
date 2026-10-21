@@ -85,7 +85,10 @@ export interface PurchaseOrder {
   returnSummary?: "none" | "partial" | "full";
   // Ringkasan pembayaran — hanya ada di list/get (withPayment), tidak di
   // respons create/update/confirm/cancel.
+  /** Uang yang benar-benar dibayar ke pemasok (offset retur tidak termasuk). */
   paidAmount?: number;
+  /** Bagian tagihan yang dilunasi retur tanpa uang berpindah. */
+  returnOffset?: number;
   outstandingAmount?: number;
   paymentStatus?: string;
   effectiveDueDate?: string;
