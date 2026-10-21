@@ -35,15 +35,42 @@ const (
 	// corrections, adjustments legacy never posted, receipts/returns before
 	// the opening) — selisih persediaan against Persediaan.
 	corrStockUnposted = "stock_unposted"
+	// corrRevenueUnbooked: an order SJ delivered and its COGS journalled in
+	// legacy, but its revenue never booked (legacy books it when the order
+	// completes, which never happened) and below the delivery cutover, so the
+	// revamp's queue will not book it either — Dr Piutang (customer) /
+	// Cr Penjualan per product, Cr PPN Keluaran for the tax (taxLeg).
+	corrRevenueUnbooked = "revenue_unbooked"
 )
 
 type migCorrection struct {
 	kind, refType, reason    string
+	ref                      string // document number when the group needs one (revenue: the SO)
 	branch, doc              int64
+	party                    int64 // receivable leg (revenue)
 	product, variant         int64
 	movement, legacyMovement int64
+	deliveryNote             int64 // revenue: the SJ the amount belongs to
 	legacyState              int64
 	amount                   int64
+	taxLeg                   bool // revenue: the PPN Keluaran part
+}
+
+// corrAccounts are the legacy system keys a correction debits and credits
+// (before a negative amount swaps them).
+func corrAccounts(c migCorrection) (dr, cr string) {
+	switch c.kind {
+	case corrDNCancel, corrCOGSUnposted:
+		return "inventory", "cogs"
+	case corrStateNoQty:
+		return "stock_difference", "inventory"
+	case corrRevenueUnbooked:
+		if c.taxLeg {
+			return "accounts_receivable", "output_tax"
+		}
+		return "accounts_receivable", "sales_revenue"
+	}
+	return "inventory", "stock_difference" // corrStateNoValue, corrStockUnposted
 }
 
 // freezeTime is when legacy stopped: --freeze-at, else the latest record
@@ -97,9 +124,9 @@ func (s *state) migrationCorrections() {
 			bySys[a.sysKey] = a
 		}
 	}
-	need := map[string]string{corrDNCancel: "cogs", corrStateNoQty: "stock_difference", corrCOGSUnposted: "cogs", corrStockUnposted: "stock_difference", corrStateNoValue: "stock_difference"}
 	for _, c := range s.migCorr {
-		for _, key := range []string{"inventory", need[c.kind]} {
+		dr, cr := corrAccounts(c)
+		for _, key := range []string{dr, cr} {
 			if bySys[key] == nil {
 				s.find(report.Blocker, "MIG_CORR_ACCOUNT", "finance_accounts", 0, "akun ber-system_key %q tidak ada: koreksi migrasi %s tidak dapat dijurnal (jangan buat akun baru tanpa keputusan)", key, c.kind)
 				return
@@ -138,6 +165,8 @@ func (s *state) migrationCorrections() {
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), docNumber["delivery:"+strconv.FormatInt(c.doc, 10)]
 		case corrStateNoQty, corrStateNoValue:
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.product), s.productRow[c.product].Str("code")
+		case corrRevenueUnbooked: // one journal per sales order
+			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), c.ref
 		default:
 			// One journal per document; document-less movements of a branch together.
 			ref = docNumber[c.refType+":"+strconv.FormatInt(c.doc, 10)]
@@ -161,6 +190,12 @@ func (s *state) migrationCorrections() {
 		g := groups[k]
 		sort.SliceStable(g.items, func(a, b int) bool {
 			x, y := g.items[a], g.items[b]
+			if x.taxLeg != y.taxLeg {
+				return !x.taxLeg
+			}
+			if x.deliveryNote != y.deliveryNote {
+				return x.deliveryNote < y.deliveryNote
+			}
 			if x.product != y.product {
 				return x.product < y.product
 			}
@@ -175,26 +210,24 @@ func (s *state) migrationCorrections() {
 		number := fmt.Sprintf("JV-%s/%s/%05d", code, day[:4], nextJV[jvKey])
 		id := s.allocSub("finance_journal_entries", int64(i+1), 8)
 		var memo, desc string
-		var dr, cr *acct
 		switch g.kind {
 		case corrDNCancel:
-			dr, cr = bySys["inventory"], bySys["cogs"]
 			memo = fmt.Sprintf("Koreksi migrasi: SJ %s dibatalkan di legacy, HPP keluarnya tidak pernah dibalik; barang kembali ke stok (Dr Persediaan / Cr HPP)", g.ref)
 			desc = "Koreksi migrasi: HPP SJ batal " + g.ref
 		case corrStateNoQty:
-			dr, cr = bySys["stock_difference"], bySys["inventory"]
 			memo = fmt.Sprintf("Koreksi migrasi: produk %s bernilai di keadaan biaya legacy tanpa qty; nilai persediaan dinolkan (Dr selisih persediaan / Cr Persediaan)", g.ref)
 			desc = "Koreksi migrasi: persediaan tanpa qty " + g.ref
 		case corrStateNoValue:
-			dr, cr = bySys["inventory"], bySys["stock_difference"]
 			memo = fmt.Sprintf("Koreksi migrasi: produk %s ber-qty tanpa nilai di keadaan biaya legacy, padahal baris biayanya bernilai; Persediaan ditulis naik (Dr Persediaan / Cr selisih persediaan)", g.ref)
 			desc = "Koreksi migrasi: persediaan tanpa nilai " + g.ref
 		case corrCOGSUnposted:
-			dr, cr = bySys["inventory"], bySys["cogs"]
 			memo = fmt.Sprintf("Koreksi migrasi: barang SJ %s keluar/masuk tanpa jurnal HPP di legacy (%s); Persediaan disesuaikan ke ledger biaya", g.ref, g.items[0].reason)
 			desc = "Koreksi migrasi: HPP tanpa jurnal " + g.ref
+		case corrRevenueUnbooked:
+			memo = fmt.Sprintf("Koreksi migrasi: penjualan %s (%s) sudah dikirim dan HPP-nya dijurnal legacy, tetapi pendapatannya tidak pernah dijurnal (legacy menjurnal saat order selesai) dan SJ-nya di bawah batas cutover; piutang dan penjualan dibukukan (Dr Piutang / Cr Penjualan)", g.ref, g.items[0].reason)
+			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
+			desc = "Koreksi migrasi: pendapatan belum dijurnal " + g.ref
 		default:
-			dr, cr = bySys["inventory"], bySys["stock_difference"]
 			memo = fmt.Sprintf("Koreksi migrasi: %s — mutasi persediaan tanpa jurnal di legacy (%s); Persediaan disesuaikan ke ledger biaya", g.ref, g.items[0].reason)
 			desc = "Koreksi migrasi: mutasi tanpa jurnal " + g.ref
 		}
@@ -205,7 +238,8 @@ func (s *state) migrationCorrections() {
 		})
 		s.out.Explain["migration_correction_entries"]++
 		for _, c := range g.items {
-			d, cc := dr, cr
+			dk, ck := corrAccounts(c)
+			d, cc := bySys[dk], bySys[ck]
 			amt := c.amount
 			if amt < 0 { // a negative write-down reverses the legs
 				d, cc, amt = cc, d, -amt
@@ -218,17 +252,39 @@ func (s *state) migrationCorrections() {
 				a      *acct
 				dr, cr int64
 			}{{d, amt, 0}, {cc, 0, amt}} {
+				var product, legVariant, party any = c.product, variant, nil
+				if c.kind == corrRevenueUnbooked {
+					// Dimensions as the revamp's delivery journal: the customer on
+					// Piutang, the product on Penjualan, none on PPN Keluaran.
+					product, legVariant = nil, nil
+					switch {
+					case leg.a.sysKey == "accounts_receivable":
+						if c.party != 0 {
+							party = c.party
+						}
+					case !c.taxLeg:
+						product, legVariant = c.product, variant
+					}
+				}
 				s.emit("finance_journal_lines", row.Row{"id": s.nextID("finance_journal_lines"), "entry_id": id, "account_id": leg.a.newID,
-					"product_id": c.product, "variant_id": variant, "party_id": nil, "debit": leg.dr, "credit": leg.cr, "description": desc})
+					"product_id": product, "variant_id": legVariant, "party_id": party, "debit": leg.dr, "credit": leg.cr, "description": desc})
 			}
 			var mv, legacy any = nil, c.legacyState
-			if c.kind != corrStateNoQty && c.kind != corrStateNoValue {
+			switch c.kind {
+			case corrStateNoQty, corrStateNoValue:
+			case corrRevenueUnbooked:
+				legacy = c.legacyMovement // the legacy SJ (or order of a synthetic SJ)
+			default:
 				mv, legacy = c.movement, c.legacyMovement
+			}
+			var productID any = c.product
+			if c.product == 0 {
+				productID = nil
 			}
 			s.out.Explain["migration_correction_value"] += c.amount
 			s.emit("migration_corrections", row.Row{
 				"kind": c.kind, "branch_id": c.branch, "entry_id": id, "journal_number": number, "entry_date": day, "ref": g.ref,
-				"product_id": c.product, "product_code": s.productRow[c.product].Str("code"), "variant_id": variant,
+				"product_id": productID, "product_code": s.productRow[c.product].Str("code"), "variant_id": variant,
 				"stock_movement_id": mv, "legacy_id": legacy, "amount": c.amount, "debit_account": d.code, "credit_account": cc.code, "reason": c.reason,
 			})
 		}

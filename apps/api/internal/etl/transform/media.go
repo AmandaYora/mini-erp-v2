@@ -3,6 +3,7 @@ package transform
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"path"
 	"strings"
 
@@ -43,9 +44,14 @@ func (s *state) media() error {
 			"is_primary": b2i(primary), "origin": "legacy", "legacy_id": legacyID, "legacy_checksum": checksum,
 		})
 	}
+	archived := map[string]int64{}
 	for _, m := range sortedBy(s.raw["media_files"], "id_media_file") {
 		lid := m.Int("id_media_file")
 		if m.Has("archived_at") {
+			// Deleted in legacy (e.g. a replaced product image): not carried,
+			// kept in archive/raw/media_files.
+			archived[m.Str("owner_type")]++
+			s.out.Explain["media_archived"]++
 			continue
 		}
 		var owner int64
@@ -81,6 +87,13 @@ func (s *state) media() error {
 			mime = mime[:100]
 		}
 		add(ownerType, owner, m.Str("object_key"), m.Str("original_name"), mime, m.Int("size_bytes"), m.Bool("is_primary"), lid, m.Str("purpose"), m.Str("checksum"))
+	}
+	if n := s.out.Explain["media_archived"]; n > 0 {
+		var parts []string
+		for _, k := range report.SortedKeys(archived) {
+			parts = append(parts, fmt.Sprintf("%s %d", k, archived[k]))
+		}
+		s.find(report.Info, "MEDIA_ARCHIVED", "media_files", 0, "%d lampiran yang sudah dihapus (diarsip) di legacy tidak dimigrasi (%s); barisnya ada di archive/raw/media_files", n, strings.Join(parts, ", "))
 	}
 	for _, p := range s.proofs {
 		ext := strings.ToLower(path.Ext(p.key))

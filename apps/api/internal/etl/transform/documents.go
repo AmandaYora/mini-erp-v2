@@ -165,8 +165,11 @@ func (s *state) documents() error {
 	if err := s.deliveryNotes(); err != nil {
 		return err
 	}
+	s.unbookedRevenue()
+	s.completeDelivered()
 	s.goodsReceipts()
 	s.payments()
+	s.draftOrdersPaid()
 	s.transfers()
 	s.syntheticTransfers()
 	s.inclusiveTax()
@@ -370,9 +373,39 @@ func (s *state) deliveryNotes() error {
 		if dr.band == 0 {
 			through = id
 		}
+		// An order SJ legacy posted only in part because the ORDER was never
+		// completed (legacy books revenue at completion, COGS at the issue):
+		// its revenue would never reach the books (ADR-0018 D11, REVENUE_UNBOOKED).
+		if dr.st == stateIgnored && dr.reason == "legacy_partial" && dr.kind == "" {
+			oid := dr.legacy
+			if !dr.synthetic {
+				oid = dnRows[dr.legacy].Int("id_order")
+			}
+			if st := s.post[postKey{"order", oid, "sales_completed"}]; st != legacyPostedStatus && st != "ignored" &&
+				!s.journaled[[2]string{"order", strconv.FormatInt(oid, 10)}] {
+				s.revCand = append(s.revCand, revCandidate{dn: id, legacyDoc: dr.legacy, legacyOrder: oid, branch: dr.branch})
+			}
+		}
 	}
 	s.cutoverFor(docDelivery, through)
 	return nil
+}
+
+// confirmation is the confirmed_at/by of a migrated SJ. One dispatched but
+// never confirmed in legacy (still on the road at the freeze) migrates
+// confirmed: the revamp knows no in-transit state and a confirmed note always
+// carries its dispatch stamp as confirmed_at (ConfirmNote), so it takes the
+// dispatch time and is listed for operations to collect the signed copy.
+func (s *state) confirmation(d row.Row, dr *docDraft, status string) (any, any) {
+	at, by := ts(d, "confirmed_at"), s.userID(d.Int("confirmed_by"))
+	if status != "confirmed" || at != nil {
+		return at, by
+	}
+	s.out.Explain["dn_in_transit"]++
+	s.find(report.Warn, "DN_IN_TRANSIT", "delivery_notes", dr.legacy,
+		"SJ %s dikirim %s tetapi belum dikonfirmasi diterima di legacy: dimigrasi terkonfirmasi (confirmed_at = waktu kirim); kumpulkan SJ bertanda tangan",
+		d.Str("sj_number"), wibDate(timeOr(d, "dispatched_at", dr.date)))
+	return tsOr(d, "dispatched_at", dr.date), s.userID(d.Int("dispatched_by"))
 }
 
 func (s *state) emitSJ(id int64, dr *docDraft, d row.Row, items []row.Row, allocByItem map[int64][]row.Row, orderItems map[int64]row.Row) {
@@ -385,6 +418,7 @@ func (s *state) emitSJ(id int64, dr *docDraft, d row.Row, items []row.Row, alloc
 	if d.Has("archived_at") {
 		status = "cancelled"
 	}
+	confirmedAt, confirmedBy := s.confirmation(d, dr, status)
 	s.emit("delivery_notes", row.Row{
 		"id": id, "number": s.trunc("delivery_notes", lid, "number", d.Str("sj_number"), 60), "branch_id": dr.branch, "sales_order_id": oid,
 		"delivery_date": deliveryDate(dr.date), "driver_name": s.optStr("delivery_notes", lid, "driver_name", d, "driver_name", 100),
@@ -395,7 +429,7 @@ func (s *state) emitSJ(id int64, dr *docDraft, d row.Row, items []row.Row, alloc
 		"recipient_signature_missing_reason": emptyNil(d.Str("recipient_signature_missing_reason")),
 		"drop_location_note":                 emptyNil(d.Str("drop_location_note")),
 		"dispatched_at":                      ts(d, "dispatched_at"), "dispatched_by": s.userID(d.Int("dispatched_by")),
-		"confirmed_at": ts(d, "confirmed_at"), "confirmed_by": s.userID(d.Int("confirmed_by")),
+		"confirmed_at": confirmedAt, "confirmed_by": confirmedBy,
 		"status": status, "document_kind": "order", "sales_return_id": nil,
 		"notes": s.optStr("delivery_notes", lid, "notes", d, "notes", 255), "created_at": tsLocalOr(d, "created_at", dr.date),
 		"created_by": s.userID(d.Int("dispatched_by")), "client_ref": nil,
@@ -1040,6 +1074,7 @@ func (s *state) emitReplSJ(id int64, dr *docDraft, d row.Row, items []row.Row) {
 	if d.Has("archived_at") {
 		status = "cancelled"
 	}
+	confirmedAt, confirmedBy := s.confirmation(d, dr, status)
 	s.emit("delivery_notes", row.Row{
 		"id": id, "number": s.trunc("delivery_notes", lid, "number", d.Str("sj_number"), 60), "branch_id": dr.branch, "sales_order_id": meta.order,
 		"delivery_date": deliveryDate(dr.date), "driver_name": s.optStr("delivery_notes", lid, "driver_name", d, "driver_name", 100),
@@ -1050,7 +1085,7 @@ func (s *state) emitReplSJ(id int64, dr *docDraft, d row.Row, items []row.Row) {
 		"recipient_signature_missing_reason": emptyNil(d.Str("recipient_signature_missing_reason")),
 		"drop_location_note":                 emptyNil(d.Str("drop_location_note")),
 		"dispatched_at":                      ts(d, "dispatched_at"), "dispatched_by": s.userID(d.Int("dispatched_by")),
-		"confirmed_at": ts(d, "confirmed_at"), "confirmed_by": s.userID(d.Int("confirmed_by")),
+		"confirmed_at": confirmedAt, "confirmed_by": confirmedBy,
 		"status": status, "document_kind": "replacement", "sales_return_id": s.srNew[srl],
 		"notes": s.optStr("delivery_notes", lid, "notes", d, "notes", 255), "created_at": tsLocalOr(d, "created_at", dr.date),
 		"created_by": s.userID(d.Int("dispatched_by")), "client_ref": nil,

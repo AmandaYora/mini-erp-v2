@@ -22,6 +22,13 @@ type acct struct {
 	dimKind string
 }
 
+// Target text sizes: journal memo and line description are VARCHAR(500);
+// expense notes are TEXT (65.535 bytes, at most 4 bytes per character).
+const (
+	maxJournalText = 500
+	maxText        = 16383
+)
+
 var accountTypeMap = map[string]string{
 	"asset": "aset", "liability": "kewajiban", "equity": "modal", "revenue": "pendapatan", "expense": "beban",
 }
@@ -176,7 +183,7 @@ func (s *state) journals() {
 			if d == 0 && c == 0 {
 				continue
 			}
-			j := jline{acct: a, legacyAcct: l.Int("id_finance_account"), debit: d, credit: c, desc: s.optStr("finance_journal_lines", ll, "description", l, "description", 255)}
+			j := jline{acct: a, legacyAcct: l.Int("id_finance_account"), debit: d, credit: c, desc: s.optStr("finance_journal_lines", ll, "description", l, "description", maxJournalText)}
 			if p, ok := l.NInt("id_business_party"); ok {
 				if id, ok := s.id("parties", p); ok {
 					j.party = id
@@ -354,7 +361,7 @@ func (s *state) journals() {
 		id := s.journalNew[lid]
 		s.emit("finance_journal_entries", row.Row{
 			"id": id, "number": c.src.Str("journal_number"), "branch_id": c.br, "entry_date": naiveDateTime(c.wib),
-			"memo": s.trunc("finance_journal_entries", lid, "memo", strings.TrimSpace(memo), 255), "source_doc_type": "legacy_je", "source_doc_id": lid,
+			"memo": s.trunc("finance_journal_entries", lid, "memo", strings.TrimSpace(memo), maxJournalText), "source_doc_type": "legacy_je", "source_doc_id": lid,
 			"status": c.src.Str("status"), "reversed_by": rb, "created_at": fmtUTC(c.date), "created_by": s.userID(c.src.Int("posted_by")),
 			"scope": 0, "requeue": 0,
 		})
@@ -428,7 +435,7 @@ func (s *state) expenses() {
 		s.emit("business_expenses", row.Row{
 			"id": s.alloc("business_expenses", lid), "number": s.trunc("business_expenses", lid, "number", e.Str("expense_number"), 60), "branch_id": br,
 			"expense_account_id": ex.newID, "pay_account_id": pay.newID, "amount": s.money.R("business_expenses", lid, "amount", e, "amount"),
-			"expense_date": naiveDateTime(d.Format(dateFmt)), "notes": s.optStr("business_expenses", lid, "notes", e, "description", 255),
+			"expense_date": naiveDateTime(d.Format(dateFmt)), "notes": s.optStr("business_expenses", lid, "notes", e, "description", maxText),
 			"journal_entry_id": je, "status": status, "created_at": tsLocalOr(e, "created_at", d), "created_by": s.userID(e.Int("created_by")),
 			"cancel_reason": s.optStr("business_expenses", lid, "cancel_reason", e, "cancel_reason", 255), "cancelled_at": ts(e, "cancelled_at"),
 			"cancelled_by": s.userID(e.Int("cancelled_by")), "party_id": party,
