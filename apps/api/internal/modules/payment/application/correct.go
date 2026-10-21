@@ -131,6 +131,9 @@ func (s *Service) correctLocked(ctx context.Context, in CorrectInput) (*contract
 		if _, err := timeutil.ParseDateInput(in.PaidAt); err != nil {
 			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "paidAt", Message: "format tanggal harus YYYY-MM-DD"}})
 		}
+		if timeutil.AfterTodayWIB(in.PaidAt) { // ADR-0021
+			return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "paidAt", Message: "tidak boleh di masa depan"}})
+		}
 		paidAt = in.PaidAt
 	}
 	notes := in.Notes
