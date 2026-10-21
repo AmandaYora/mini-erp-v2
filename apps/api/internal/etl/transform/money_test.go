@@ -125,3 +125,56 @@ func TestTaxType(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitByQty(t *testing.T) {
+	q := func(s ...string) []*big.Rat {
+		out := make([]*big.Rat, len(s))
+		for i, v := range s {
+			out[i] = row.ParseRat(v)
+		}
+		return out
+	}
+	cases := []struct {
+		total int64
+		qtys  []*big.Rat
+		want  []int64
+	}{
+		{300001, q("20", "5"), []int64{240001, 60000}},
+		{100, q("1", "1", "1"), []int64{34, 33, 33}},
+		{-100, q("1", "1", "1"), []int64{-34, -33, -33}},
+		{10, q("0.5", "0.25", "0.25"), []int64{5, 3, 2}},
+		{7, q("0", "0"), []int64{7, 0}},
+		{0, q("3", "4"), []int64{0, 0}},
+	}
+	for _, c := range cases {
+		got := SplitByQty(c.total, c.qtys)
+		var sum int64
+		for i := range got {
+			sum += got[i]
+			if got[i] != c.want[i] {
+				t.Errorf("SplitByQty(%d, %v) = %v, want %v", c.total, c.qtys, got, c.want)
+				break
+			}
+		}
+		if sum != c.total {
+			t.Errorf("SplitByQty(%d) sums to %d", c.total, sum)
+		}
+	}
+	// Property: the parts always add back to the total.
+	rng := rand.New(rand.NewSource(11))
+	for i := 0; i < 2000; i++ {
+		n := 1 + rng.Intn(70)
+		qs := make([]*big.Rat, n)
+		for j := range qs {
+			qs[j] = big.NewRat(rng.Int63n(1_000_000)+1, 1000)
+		}
+		total := rng.Int63n(10_000_000_000)
+		var sum int64
+		for _, v := range SplitByQty(total, qs) {
+			sum += v
+		}
+		if sum != total {
+			t.Fatalf("Σ split = %d, want %d", sum, total)
+		}
+	}
+}

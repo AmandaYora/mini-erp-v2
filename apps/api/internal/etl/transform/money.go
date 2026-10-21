@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 
 	"mini-erp/internal/etl/report"
 	"mini-erp/internal/etl/row"
@@ -48,6 +49,53 @@ func (m *Rounder) Round(entity string, id int64, field string, v *big.Rat) int64
 // R is shorthand for a column of a row.
 func (m *Rounder) R(entity string, id int64, field string, r row.Row, col string) int64 {
 	return m.Round(entity, id, field, r.Rat(col))
+}
+
+// SplitByQty divides total rupiah over parts in proportion to their quantity
+// (largest remainder: Σ result == total exactly, ties go to the earlier part).
+// A zero Σ qty yields all zeros except total on the first part.
+func SplitByQty(total int64, qtys []*big.Rat) []int64 {
+	out := make([]int64, len(qtys))
+	if len(qtys) == 0 {
+		return out
+	}
+	sum := new(big.Rat)
+	for _, q := range qtys {
+		sum.Add(sum, q)
+	}
+	if sum.Sign() == 0 {
+		out[0] = total
+		return out
+	}
+	neg := total < 0
+	abs := total
+	if neg {
+		abs = -abs
+	}
+	type frac struct {
+		i   int
+		rem *big.Rat
+	}
+	fr := make([]frac, len(qtys))
+	left := abs
+	for i, q := range qtys {
+		share := new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt64(abs), q), sum)
+		fl := new(big.Int).Quo(share.Num(), share.Denom()) // shares are ≥ 0: Quo floors
+		out[i] = fl.Int64()
+		left -= out[i]
+		fr[i] = frac{i, new(big.Rat).Sub(share, new(big.Rat).SetInt(fl))}
+	}
+	sort.SliceStable(fr, func(a, b int) bool { return fr[a].rem.Cmp(fr[b].rem) > 0 })
+	for k := 0; left > 0; k = (k + 1) % len(fr) {
+		out[fr[k].i]++
+		left--
+	}
+	if neg {
+		for i := range out {
+			out[i] = -out[i]
+		}
+	}
+	return out
 }
 
 // Line is one journal line in rupiah.

@@ -317,6 +317,13 @@ func (s *state) stock() error {
 	return nil
 }
 
+// openingPool is the legacy finance opening of one (branch, product).
+type openingPool struct {
+	qty    *big.Rat
+	total  int64
+	legacy []int64
+}
+
 // costLedger migrates the HPP ledger (design V10). The revamp cost cursor is
 // MAX(stock_movement_id) per branch, so every migrated movement below that
 // cursor must carry a cost row; missing ones get an estimated row.
@@ -334,12 +341,37 @@ func (s *state) costLedger(movs []*mov) {
 		branch int64
 	}
 	rows := map[int64]*crow{}
+	openings := map[[2]int64]*openingPool{}
 	for _, c := range sortedBy(s.raw["finance_inventory_cost_movements"], "id_finance_inventory_cost_movement") {
 		lid := c.Int("id_finance_inventory_cost_movement")
 		mid, ok := c.NInt("id_inventory_movement")
 		if !ok {
-			s.find(report.Warn, "COST_NO_MOVEMENT", "finance_inventory_cost_movements", lid, "baris biaya tanpa mutasi tidak dimigrasi (TODO: mutasi pembukaan sintetis, Q-HPP-2)")
-			s.out.Explain["cost_rows_unmigrated"]++
+			total := s.money.R("finance_inventory_cost_movements", lid, "total_cost", c, "total_cost_amount")
+			qty := new(big.Rat).Abs(c.Rat("quantity_in_base_uom"))
+			switch {
+			case c.Str("movement_type") == "opening":
+				br, ok1 := s.id("branches", c.Int("id_branch"))
+				p, ok2 := s.id("products", c.Int("id_product"))
+				if !ok1 || !ok2 {
+					s.find(report.Blocker, "COST_OPENING_UNMATCHED", "finance_inventory_cost_movements", lid, "cabang/produk saldo awal biaya tidak termigrasi")
+					s.out.Explain["cost_rows_unmigrated"]++
+					continue
+				}
+				k := [2]int64{br, p}
+				if openings[k] == nil {
+					openings[k] = &openingPool{qty: new(big.Rat)}
+				}
+				o := openings[k]
+				o.qty.Add(o.qty, qty)
+				o.total += abs64(total)
+				o.legacy = append(o.legacy, lid)
+			case qty.Sign() == 0 && total == 0:
+				s.find(report.Info, "COST_NOOP", "finance_inventory_cost_movements", lid, "baris biaya tanpa mutasi bernilai nol (%s) tidak dimigrasi", c.Str("source_type"))
+				s.out.Explain["cost_rows_unmigrated"]++
+			default:
+				s.find(report.Warn, "COST_NO_MOVEMENT", "finance_inventory_cost_movements", lid, "baris biaya %s tanpa mutasi tidak dimigrasi", c.Str("movement_type"))
+				s.out.Explain["cost_rows_unmigrated"]++
+			}
 			continue
 		}
 		nid, ok := s.id("stock_movements", mid)
@@ -359,6 +391,61 @@ func (s *state) costLedger(movs []*mov) {
 			continue
 		}
 		rows[nid] = &crow{mv: x, qty: qty, total: abs64(total), real: true, date: date, branch: x.pos.branch}
+	}
+	// Opening value (Q-HPP-2). Legacy posts the finance opening as cost rows
+	// WITHOUT a movement, one per (branch, product) — its cost granularity —
+	// while the stock opening import already wrote the quantity as
+	// opening_stock movements (per variant/location). Both describe the same
+	// goods, so no synthetic stock movement is made (that would count the
+	// opening twice): the value is spread over the still-uncosted opening
+	// movements of the product, pro rata qty, as real cost rows. This only
+	// holds when the quantities agree exactly; otherwise legacy books and
+	// stock disagree and the owner decides (blocker).
+	byProduct := map[[2]int64][]*mov{}
+	for _, x := range movs {
+		if x.refType == "opening" && rows[x.newID] == nil {
+			k := [2]int64{x.pos.branch, x.pos.product}
+			byProduct[k] = append(byProduct[k], x)
+		}
+	}
+	pools := make([][2]int64, 0, len(openings))
+	for k := range openings {
+		pools = append(pools, k)
+	}
+	sort.Slice(pools, func(i, j int) bool {
+		if pools[i][0] != pools[j][0] {
+			return pools[i][0] < pools[j][0]
+		}
+		return pools[i][1] < pools[j][1]
+	})
+	for _, k := range pools {
+		o := openings[k]
+		cands := byProduct[k]
+		sort.Slice(cands, func(i, j int) bool { return cands[i].newID < cands[j].newID })
+		held := new(big.Rat)
+		qtys := make([]*big.Rat, len(cands))
+		for i, x := range cands {
+			held.Add(held, x.qty)
+			qtys[i] = x.qty
+		}
+		if len(cands) == 0 || held.Cmp(o.qty) != 0 {
+			for _, lid := range o.legacy {
+				s.find(report.Blocker, "COST_OPENING_UNMATCHED", "finance_inventory_cost_movements", lid,
+					"qty saldo awal biaya %s != Σ mutasi opening_stock produk %s (%d mutasi): perlu keputusan pemilik (Q-HPP-2)",
+					o.qty.FloatString(6), held.FloatString(6), len(cands))
+				s.out.Explain["cost_rows_unmigrated"]++
+			}
+			continue
+		}
+		for i, share := range SplitByQty(o.total, qtys) {
+			x := cands[i]
+			rows[x.newID] = &crow{mv: x, qty: new(big.Rat).Set(x.qty), total: share, real: true, date: x.when, branch: x.pos.branch}
+		}
+		s.out.Explain["opening_cost_split_extra"] += int64(len(cands) - len(o.legacy))
+		for _, lid := range o.legacy {
+			s.find(report.Info, "COST_OPENING_SPLIT", "finance_inventory_cost_movements", lid,
+				"nilai saldo awal Rp%d produk dibagi ke %d mutasi opening_stock (qty %s)", o.total, len(cands), o.qty.FloatString(6))
+		}
 	}
 	maxCost := map[int64]int64{}
 	for nid, r := range rows {

@@ -129,7 +129,12 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
 7. Perlakuan data legacy yang kini ditangani ETL (muncul di `findings.csv`): pindah-lokasi
    tanpa dokumen jadi transfer sintetis `TRF-<cabang>/MIG/<id>` (TRF_SYNTH); kode varian
    dipakai-ulang setelah arsip diberi sufiks `~<id>` (VARIANT_CODE_DEDUPE); jurnal yang
-   semua barisnya Rp0 tidak dimigrasi (JRN_ZERO_VALUE).
+   semua barisnya Rp0 tidak dimigrasi (JRN_ZERO_VALUE). Saldo awal biaya HPP legacy (baris biaya `opening`
+   tanpa mutasi, satu per cabang x produk) **tidak** membuat mutasi stok baru: nilainya dibagi pro-rata qty ke
+   mutasi `opening_stock` produk itu yang belum berbiaya, sebagai baris biaya asli (COST_OPENING_SPLIT); saldo stok
+   tidak berubah. Bila qty biaya pembukaan != Σ qty mutasi `opening_stock` produk, transform berhenti
+   (COST_OPENING_UNMATCHED, blocker): legacy keuangan dan stok tidak sepakat, keputusan pemilik (Q-HPP-2).
+   Baris biaya tanpa mutasi bernilai nol (koreksi `manual_correction` legacy) dilewati (COST_NOOP).
 8. **Keputusan pemilik/akuntan** sebelum cutover nyata: tanggal saldo awal
    (`--opening-date`; gladi memakai 2026-01-01), perlakuan jurnal inklusif pajak dan
    selisih Rp1 (lihat `adjustments.csv`).

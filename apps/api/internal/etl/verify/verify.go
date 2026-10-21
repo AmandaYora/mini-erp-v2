@@ -283,8 +283,8 @@ func (v *verifier) counts() {
 		{"V-01t", "transfer stok (+kelompok pasangan lokasi)", "SELECT COUNT(*) FROM {stock_transfers} WHERE {co} = :c", "SELECT COUNT(*) FROM stock_transfers", e["transfer_groups_extra"]},
 		{"V-01u", "item transfer", "SELECT COUNT(*) FROM {stock_transfer_items} i JOIN {stock_transfers} t ON t.id_stock_transfer=i.id_stock_transfer WHERE t.{co} = :c", "SELECT COUNT(*) FROM stock_transfer_items", e["synthetic_transfer_items"]},
 		{"V-01v", "mutasi stok (-digabung +koreksi)", "SELECT COUNT(*) FROM {inventory_movements} WHERE " + byBranch, "SELECT COUNT(*) FROM stock_movements", e["correction_movements"] - e["movements_merged_extra"]},
-		{"V-01w", "baris biaya HPP (+estimasi -tak termigrasi -digabung)", "SELECT COUNT(*) FROM {finance_inventory_cost_movements} WHERE {co} = :c",
-			"SELECT COUNT(*) FROM finance_inventory_cost_movements", e["estimated_cost_rows"] - e["cost_rows_unmigrated"] - e["cost_rows_merged_extra"]},
+		{"V-01w", "baris biaya HPP (+estimasi -tak termigrasi -digabung +saldo awal dibagi per mutasi)", "SELECT COUNT(*) FROM {finance_inventory_cost_movements} WHERE {co} = :c",
+			"SELECT COUNT(*) FROM finance_inventory_cost_movements", e["estimated_cost_rows"] - e["cost_rows_unmigrated"] - e["cost_rows_merged_extra"] + e["opening_cost_split_extra"]},
 		{"V-01x", "jurnal tahun berjalan + saldo awal",
 			"SELECT COUNT(*) FROM {finance_journal_entries} WHERE {co} = :c AND status IN ('posted','reversed') AND DATE(DATE_ADD(journal_date, INTERVAL 7 HOUR)) >= :open AND EXISTS (SELECT 1 FROM {finance_journal_lines} zl WHERE zl.id_finance_journal_entry={finance_journal_entries}.id_finance_journal_entry AND (ROUND(zl.debit_amount) <> 0 OR ROUND(zl.credit_amount) <> 0))",
 			"SELECT COUNT(*) FROM finance_journal_entries", e["opening_entries"]},
@@ -626,10 +626,13 @@ func (v *verifier) journalShape() {
 // ---------------------------------------------------------------- V-14
 
 func (v *verifier) costLedger() {
-	v.grouped("V-14", "Σ biaya HPP bertanda per cabang x produk (baris asli, tanpa estimasi)",
+	// Opening rows without a movement count too: the transform spreads their
+	// value over the product's opening_stock movements (Q-HPP-2), so per
+	// (branch, product) the sums must still agree.
+	v.grouped("V-14", "Σ biaya HPP bertanda per cabang x produk (baris asli + saldo awal, tanpa estimasi)",
 		`SELECT b.code, p.product_code, SUM(CASE WHEN c.movement_type IN ('in','opening') THEN ROUND(c.total_cost_amount) ELSE -ROUND(c.total_cost_amount) END)
 		   FROM {finance_inventory_cost_movements} c JOIN {branches} b ON b.id_branch=c.id_branch JOIN {products} p ON p.id_product=c.id_product
-		  WHERE c.{co} = :c AND c.id_inventory_movement IS NOT NULL GROUP BY 1,2`,
+		  WHERE c.{co} = :c AND (c.id_inventory_movement IS NOT NULL OR c.movement_type = 'opening') GROUP BY 1,2`,
 		`SELECT b.code, p.code, SUM(CASE c.direction WHEN 'in' THEN c.total_cost ELSE -c.total_cost END) FROM finance_inventory_cost_movements c
 		   JOIN branches b ON b.id=c.branch_id JOIN products p ON p.id=c.product_id WHERE c.is_estimated = 0 GROUP BY 1,2`, nil)
 	v.targetZero("V-14b", "mutasi di bawah kursor HPP tanpa baris biaya",
