@@ -179,10 +179,13 @@ type PaymentClient interface {
 
 // OrderPaymentInfo summarises the cash payments of one order. Methods are the
 // distinct payment methods in payment order; PayerIDs the distinct users who
-// recorded those payments (resolve names through the user contract).
+// recorded those payments (resolve names through the user contract);
+// LastPayerID the user who recorded the most recent one (the receipt's
+// cashier, as legacy printed it).
 type OrderPaymentInfo struct {
-	Methods  []string
-	PayerIDs []int64
+	Methods     []string
+	PayerIDs    []int64
+	LastPayerID int64
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

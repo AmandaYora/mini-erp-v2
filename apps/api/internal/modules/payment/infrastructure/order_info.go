@@ -23,8 +23,11 @@ func (r *Repository) PaymentInfoByOrders(ctx context.Context, orderType string, 
 		if !containsString(info.Methods, row.Method) {
 			info.Methods = append(info.Methods, row.Method)
 		}
-		if row.CreatedBy.Valid && row.CreatedBy.Int64 > 0 && !containsInt64(info.PayerIDs, row.CreatedBy.Int64) {
-			info.PayerIDs = append(info.PayerIDs, row.CreatedBy.Int64)
+		if row.CreatedBy.Valid && row.CreatedBy.Int64 > 0 {
+			if !containsInt64(info.PayerIDs, row.CreatedBy.Int64) {
+				info.PayerIDs = append(info.PayerIDs, row.CreatedBy.Int64)
+			}
+			info.LastPayerID = row.CreatedBy.Int64 // rows come in payment id order
 		}
 		out[row.OrderID] = info
 	}

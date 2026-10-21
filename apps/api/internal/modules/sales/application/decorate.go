@@ -59,6 +59,7 @@ func (s *Service) decorateUsers(ctx context.Context, orders []*contracts.SalesOr
 type paymentLabels struct {
 	methods map[int64]string // "Tunai, Transfer"
 	payers  map[int64]string // names of the users who recorded the payments
+	cashier map[int64]string // the user who recorded the latest payment
 }
 
 var methodLabels = map[string]string{
@@ -71,7 +72,7 @@ var methodLabels = map[string]string{
 // orders: one grouped payment read + one batch name read. Best-effort — a
 // failure leaves the labels empty rather than failing the page.
 func (s *Service) paymentLabelsFor(ctx context.Context, ids []int64) paymentLabels {
-	out := paymentLabels{methods: map[int64]string{}, payers: map[int64]string{}}
+	out := paymentLabels{methods: map[int64]string{}, payers: map[int64]string{}, cashier: map[int64]string{}}
 	if s.dep.payments == nil || len(ids) == 0 {
 		return out
 	}
@@ -109,13 +110,15 @@ func (s *Service) paymentLabelsFor(ctx context.Context, ids []int64) paymentLabe
 			}
 		}
 		out.payers[id] = strings.Join(ps, ", ")
+		out.cashier[id] = names[in.LastPayerID]
 	}
 	return out
 }
 
 // DecorateDetail adds the readable extras of a detail read: user names and the
-// cashier (the user who recorded the payment, falling back to the order's
-// creator for a POS sale not yet paid — SL-10). Two grouped reads at most.
+// cashier (the user who recorded the latest payment, as the legacy receipt
+// printed it, falling back to the order's creator for a POS sale not yet
+// paid — SL-10). Two grouped reads at most.
 func (s *Service) DecorateDetail(ctx context.Context, orders []*contracts.SalesOrder) error {
 	if err := s.decorateUsers(ctx, orders); err != nil {
 		return err
@@ -126,7 +129,7 @@ func (s *Service) DecorateDetail(ctx context.Context, orders []*contracts.SalesO
 	}
 	labels := s.paymentLabelsFor(ctx, ids)
 	for _, o := range orders {
-		o.CashierName = labels.payers[o.ID]
+		o.CashierName = labels.cashier[o.ID]
 		if o.CashierName == "" && o.Channel == contracts.ChannelPOS {
 			o.CashierName = o.CreatedByName
 		}

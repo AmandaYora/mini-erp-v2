@@ -275,10 +275,10 @@ export default function PosThermalReceiptPage() {
           {s.discount !== null ? (
             <div className="thermal-row"><span>Diskon</span><span>{formatIDR(s.discount)}</span></div>
           ) : null}
-          {/* PPN di POS (K-03) tidak ada di sistem lama: struk ber-PPN merinci DPP dan tarifnya. */}
+          {/* PPN di POS (K-03) tidak ada di sistem lama: struk ber-PPN merinci DPP dan tarifnya. DPP = TOTAL tercetak − PPN, jadi tetap menjumlah saat diskon disembunyikan. */}
           {s.tax !== null ? (
             <>
-              <div className="thermal-row"><span>DPP</span><span>{formatIDR(o.grandTotal - s.tax)}</span></div>
+              <div className="thermal-row"><span>DPP</span><span>{formatIDR(s.total - s.tax)}</span></div>
               <div className="thermal-row"><span>{o.taxRate > 0 ? `PPN ${o.taxRate}%` : "PPN"}</span><span>{formatIDR(s.tax)}</span></div>
             </>
           ) : null}
