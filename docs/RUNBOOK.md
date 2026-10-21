@@ -118,6 +118,10 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
 5. **Media**: lampiran ada di S3 (`object_key` = path relatif). Unduh tiap `object_key`
    dari `media_files` ke folder yang meniru key (GET saja), lalu `--media-src`/`--media-dst`.
    Hati-hati: daftar key dari `mysql` Windows berakhiran `\r` — buang sebelum dipakai.
+   Kunci yang diunduh = `media_files.object_key` **ditambah** `payments.proof_file_path` (bukti transfer;
+   di ETL berjenis `payment_proof`, `legacy_id` negatif). Tanpa yang kedua, fase media melaporkan ±282
+   `missing_source` yang sebenarnya ada di S3 (gladi 2026-10-21: 4.078 objek, 0 hilang). Unduh di server
+   lama dengan kredensialnya sendiri (GET saja, `nice`), salurkan ke mesin gladi, hapus folder sementara.
 6. `etl rehearse --company-id N --opening-date YYYY-MM-DD --workdir DIR --media-src ...
    --media-dst ...` dengan `ETL_LEGACY_DSN`/`ETL_TARGET_DSN`. Jalankan **dua kali** dan
    bandingkan dengan `--compare-with` (hash keluaran harus sama); `load --resume` harus
