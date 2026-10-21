@@ -158,6 +158,10 @@ type BranchOption struct {
 	Code   string `json:"code"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
+	// Address / City: the session branch only (GET /auth/me) — printed
+	// documents head with the branch and fall back to its address.
+	Address string `json:"address,omitempty"`
+	City    string `json:"city,omitempty"`
 }
 
 // LoginResult is the login response payload.
@@ -545,7 +549,7 @@ func (s *Service) Me(ctx context.Context, sess *contracts.Session) (map[string]a
 		if b, err := s.branches.GetByID(ctx, sess.BranchID); err != nil {
 			return nil, appErr(err)
 		} else if b != nil {
-			branch = BranchOption{ID: b.ID, Code: b.Code, Name: b.Name, Status: b.Status}
+			branch = BranchOption{ID: b.ID, Code: b.Code, Name: b.Name, Status: b.Status, Address: b.Address, City: b.City}
 		}
 	}
 	profile, err := s.company.GetProfile(ctx)

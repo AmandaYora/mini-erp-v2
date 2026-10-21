@@ -124,6 +124,9 @@ Sumber lengkap: [`docs/plan/redesain-ui/PLAN.md`](../docs/plan/redesain-ui/PLAN.
   `usePageCrumb(nomor)`.
 - **Kepadatan** (Ringkas/Standar/Lega) lewat `data-density` di `<html>`; pilihan di menu akun.
 - **Cetak**: halaman `/print/*` tidak berubah (kertas fisik); `LEGACY_UA_CSS` memulihkan default browser.
+  Nota, surat jalan, bukti pembayaran, dan struk POS dicetak sama dengan sistem lama (identitas perusahaan,
+  ADR-0018 D12): rumus angka di `modules/print/lib/*`, format tanggal/terbilang di `modules/print/document.ts`
+  (bukan `shared/lib/format`). Mengubah isi dokumen pelanggan = keputusan pemilik, bukan perbaikan UI.
 - **Penjaga**: `npm run ui:ratchet` (angka pola lama per modul tidak boleh naik, plus **audit token** nol toleransi:
   hex/`rgb()`/`oklch()`/kelas palet Tailwind seperti `text-white` di mana pun di `src` selain `theme/` dan
   `modules/print`; pengecualian sah diberi `ui-ratchet-ignore` + alasan), ESLint melarang impor primitif dari modul.

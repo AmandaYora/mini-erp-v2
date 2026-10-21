@@ -9,7 +9,6 @@ import {
   canSwitchToNet,
   defaultPaymentAmount,
   printButtonLabel,
-  salesDocumentTitle,
 } from "@/modules/payment/lib/order-billing";
 import type { OrderBillingSource } from "@/modules/payment/lib/order-billing";
 
@@ -82,13 +81,6 @@ describe("aksi order", () => {
 });
 
 describe("judul cetak", () => {
-  it("Tagihan / Nota (Sebagian) / Nota", () => {
-    expect(salesDocumentTitle(billingView(base))).toBe("Tagihan");
-    expect(salesDocumentTitle(billingView({ ...base, paidAmount: 10, outstandingAmount: 90, paymentStatus: "partial" }))).toBe("Nota (Sebagian)");
-    expect(salesDocumentTitle(billingView({ ...base, paidAmount: 100000, outstandingAmount: 0, paymentStatus: "paid" }))).toBe("Nota");
-    expect(salesDocumentTitle(billingView({ status: "confirmed", grandTotal: 1 }))).toBe("Nota");
-  });
-
   it("label tombol dan nominal awal", () => {
     expect(printButtonLabel(billingView(base))).toBe("Cetak Tagihan");
     expect(printButtonLabel(billingView({ ...base, outstandingAmount: 0, paymentStatus: "paid" }))).toBe("Cetak Nota");

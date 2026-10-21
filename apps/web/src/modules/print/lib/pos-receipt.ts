@@ -1,102 +1,81 @@
-// Baris pembayaran struk POS dari pembayaran TERSIMPAN (bukan state klien):
-// cetak ulang memberi angka yang sama. Backend mengembalikan amountTendered
-// dan change (turunan) pada paymentView; tunai diterima hanya untuk metode cash.
+// Logika murni struk POS (paritas pos-thermal-receipt-print-page.tsx sistem
+// lama). Pembayaran dibaca dari riwayat TERSIMPAN order (bukan state klien),
+// jadi cetak ulang memberi angka yang sama:
+// - No Bayar / Tanggal / tunai diterima dari pembayaran terakhir;
+// - Metode = gabungan metode semua pembayaran ("Tempo" bila belum dibayar & bertempo);
+// - cap LUNAS / PIUTANG dari sisa tagihan riil;
+// - baris barang bruto + baris "Diskon"; angka ringkasan dari lib/sales-document.
 
-import { methodLabel } from "@/modules/payment/types";
+import { printMethodLabel } from "@/modules/print/document";
+import { documentTotals, type DocOrder } from "@/modules/print/lib/sales-document";
 
 export interface ReceiptPayment {
+  id: number;
+  number: string;
   method: string;
+  paidAt: string;
+  status: string;
   amount: number;
+  /** Uang tunai diserahkan (hanya cash); 0 = tidak dicatat. */
   amountTendered: number;
-  change: number;
 }
 
-export interface ReceiptPaymentLines {
-  paid: number | null;
-  /** Hanya tunai dengan uang diterima tercatat. */
+/** Pembayaran sah order, urut waktu bayar lalu id. */
+export function receiptPayments<P extends ReceiptPayment>(history: P[]): P[] {
+  const t = (p: P) => {
+    // Server mengirim "YYYY-MM-DD hh:mm:ss"; ganti spasi agar terurai di semua mesin JS.
+    const raw = p.paidAt.includes(" ") && !p.paidAt.includes("T") ? p.paidAt.replace(" ", "T") : p.paidAt;
+    const v = new Date(raw).getTime();
+    return Number.isNaN(v) ? 0 : v;
+  };
+  return history.filter((p) => p.status !== "cancelled").sort((a, b) => t(a) - t(b) || a.id - b.id);
+}
+
+export interface ReceiptSummary {
+  statusLabel: "LUNAS" | "PIUTANG";
+  paymentNumber: string;
+  receiptDate: string;
+  methods: string;
+  subtotal: number;
+  /** null = baris Diskon tidak dicetak. */
+  discount: number | null;
+  tax: number | null;
+  total: number;
+  paid: number;
+  /** null = baris Tunai/Kembalian tidak dicetak. */
   tendered: number | null;
   change: number | null;
+  /** null = baris Sisa tidak dicetak. */
   outstanding: number | null;
-  method: string;
 }
 
-export function receiptPaymentLines(
-  payment: ReceiptPayment | null,
-  orderTotal: number,
-  paymentTerms: string,
-): ReceiptPaymentLines {
-  if (payment === null) {
-    return {
-      paid: null,
-      tendered: null,
-      change: null,
-      outstanding: null,
-      method: paymentTerms === "net" ? "Tempo" : "-",
-    };
-  }
-  const isCash = payment.method === "cash";
-  const hasTendered = isCash && payment.amountTendered > 0;
-  const outstanding = Math.max(0, orderTotal - payment.amount);
-  return {
-    paid: payment.amount,
-    tendered: hasTendered ? payment.amountTendered : null,
-    // Kembalian dari server; bila kosong turunkan dari selisih (tidak pernah negatif).
-    change: hasTendered ? (payment.change > 0 ? payment.change : Math.max(0, payment.amountTendered - payment.amount)) : null,
-    outstanding: outstanding > 0 ? outstanding : null,
-    method: methodLabel(payment.method),
-  };
-}
-
-interface ReceiptLine {
-  qty: number;
-  unitPrice: number;
-  lineTotal: number;
-}
-
-interface ReceiptOrder<L extends ReceiptLine> {
-  subtotal: number;
-  discountTotal: number;
-  grandTotal: number;
-  items: L[];
-}
-
-export interface ReceiptView<L extends ReceiptLine, P extends ReceiptPayment | null> {
-  subtotal: number;
-  /** null = baris diskon tidak dicetak. */
-  discount: number | null;
-  total: number;
-  /** Jumlah baris yang dicetak: bruto bila diskon disembunyikan. */
-  lineAmount: (line: L) => number;
-  payment: P;
-}
-
-/**
- * Angka struk menurut pilihan "Sembunyikan diskon" (SL-05, paritas legacy):
- * harga penuh per baris, tanpa baris diskon; total dan pembayaran yang
- * melunasi naik sebesar diskon sehingga sisa tagihan tetap riil.
- */
-export function receiptView<L extends ReceiptLine, P extends ReceiptPayment | null>(
-  order: ReceiptOrder<L>,
-  payment: P,
+export function receiptSummary(
+  order: DocOrder & { orderDate: string; paymentTerms: string },
+  payments: ReceiptPayment[],
   hideDiscount: boolean,
-): ReceiptView<L, P> {
-  const gross = (l: L) => Math.round(l.qty * l.unitPrice);
-  if (!hideDiscount) {
-    return {
-      subtotal: order.subtotal,
-      discount: order.discountTotal > 0 ? order.discountTotal : null,
-      total: order.grandTotal,
-      lineAmount: (l) => l.lineTotal,
-      payment,
-    };
-  }
-  const raise = order.discountTotal > 0 ? order.discountTotal : 0;
-  const settled = payment !== null && payment.amount >= order.grandTotal;
+): ReceiptSummary {
+  const t = documentTotals(order, hideDiscount);
+  const latest = payments.length > 0 ? payments[payments.length - 1] : null;
+  const tendered = latest !== null && latest.method === "cash" && latest.amountTendered > 0 ? latest.amountTendered : null;
+  const methods =
+    payments.length > 0
+      ? Array.from(new Set(payments.map((p) => printMethodLabel(p.method)))).join(", ")
+      : order.paymentTerms === "net"
+        ? "Tempo"
+        : "-";
   return {
-    subtotal: order.items.reduce((s, l) => s + gross(l), 0),
-    discount: null,
-    total: order.grandTotal + raise,
-    lineAmount: gross,
-    payment: (settled && payment !== null ? { ...payment, amount: payment.amount + raise } : payment) as P,
+    statusLabel: t.realOutstanding <= 0 ? "LUNAS" : "PIUTANG",
+    paymentNumber: latest?.number ?? "-",
+    receiptDate: latest?.paidAt ?? order.orderDate,
+    methods,
+    subtotal: t.grossSubtotal,
+    discount: t.discount,
+    tax: t.tax,
+    total: t.total,
+    paid: t.paid ?? 0,
+    tendered,
+    // Kembalian terhadap total yang tercetak (bruto saat diskon disembunyikan).
+    change: tendered !== null ? Math.max(0, tendered - t.total) : null,
+    outstanding: t.outstanding > 0 ? t.outstanding : null,
   };
 }

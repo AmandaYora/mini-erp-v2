@@ -1,10 +1,12 @@
-// Logika murni isi nota/faktur penjualan (paritas legacy sales-document-print):
-// judul menurut status bayar, baris Sudah Dibayar/Sisa Tagihan, jatuh tempo
-// "-" bila lunas atau tanpa tempo, dan opsi sembunyikan diskon (harga penuh,
-// kolom diskon "-", jumlah naik ke bruto; total tagihan tetap yang riil).
-
-import { billingView, salesDocumentTitle } from "@/modules/payment/lib/order-billing";
-import type { OrderBillingSource } from "@/modules/payment/lib/order-billing";
+// Logika murni angka nota/faktur & struk penjualan — sama persis dengan
+// sales-print-shared.tsx sistem lama (identitas dokumen ke pelanggan):
+// - harga satuan tercetak = harga penuh sebelum diskon; harga member tercetak
+//   dengan harga katalognya dan selisihnya sebagai diskon;
+// - kolom Disc = nominal diskon baris; "Jumlah (Rp)" = bruto (harga penuh x qty);
+// - "sembunyikan diskon": baris diskon hilang, total & pembayaran naik ke harga
+//   penuh, sisa tagihan tetap riil (order belum dibayar = harga penuh terutang);
+// - judul menurut sisa tagihan: Nota Penjualan Lunas / Tagihan - Bayar
+//   Sebagian / Tagihan Penjualan.
 
 export const HIDE_DISCOUNT_PARAM = "hideDiscount";
 
@@ -21,74 +23,132 @@ export function withHideDiscountParam(params: URLSearchParams, hide: boolean): U
 
 export interface DocLine {
   qty: number;
+  /** Harga satuan sebelum diskon baris (harga member untuk baris member). */
   unitPrice: number;
   discountPct: number;
+  /** Diskon nominal untuk seluruh baris (bukan per unit). */
   discountNominal: number;
+  /** Total baris dari server: setelah diskon, termasuk pajak bila pajak di luar harga. */
   lineTotal: number;
+  pricingSource?: string;
+  /** Harga katalog saat order dibuat. */
+  basePrice?: number;
 }
 
-export interface DocOrder extends OrderBillingSource {
-  subtotal: number;
+export interface DocOrder {
+  grandTotal: number;
   discountTotal: number;
   taxTotal: number;
-  grandTotal: number;
   dueDate: string;
+  paymentTerms?: string;
+  paidAmount?: number;
+  outstandingAmount?: number;
+  paymentStatus?: string;
+  effectiveDueDate?: string;
   items: DocLine[];
 }
 
-export function documentTitle(o: OrderBillingSource): string {
-  return salesDocumentTitle(billingView(o));
+/** Harga satuan tercetak: harga katalog bila harga member lebih murah darinya. */
+export function linePrintUnitPrice(l: DocLine): number {
+  const base = l.basePrice ?? 0;
+  if (l.pricingSource === "member_rule" && base > l.unitPrice) return base;
+  return l.unitPrice;
 }
 
-/** Harga bruto satu baris = qty x harga satuan (bulat rupiah). */
-export function grossLine(l: DocLine): number {
-  return Math.round(l.qty * l.unitPrice);
+/** Bruto tercetak satu baris = harga satuan tercetak x qty (rupiah bulat). */
+export function linePrintSubtotal(l: DocLine): number {
+  return Math.round(l.qty * linePrintUnitPrice(l));
+}
+
+/** Diskon satu baris: diskon baris (persen + nominal) + selisih harga member. */
+export function lineDiscountTotal(l: DocLine): number {
+  const gross = Math.round(l.qty * l.unitPrice);
+  const lineDiscount = Math.round((gross * l.discountPct) / 100) + l.discountNominal;
+  const memberDiscount = linePrintSubtotal(l) - gross;
+  return Math.max(0, lineDiscount + memberDiscount);
+}
+
+/** "Jumlah (Rp)" / Subtotal struk: bruto seluruh baris. */
+export function orderPrintSubtotal(o: DocOrder): number {
+  return o.items.reduce((sum, l) => sum + linePrintSubtotal(l), 0);
+}
+
+/** Diskon tercetak: jumlah diskon baris, atau diskon order bila tak ada di baris. */
+export function orderPrintDiscount(o: DocOrder): number {
+  const lines = o.items.reduce((sum, l) => sum + lineDiscountTotal(l), 0);
+  return lines > 0 ? lines : o.discountTotal;
 }
 
 export function hasLineDiscount(items: DocLine[]): boolean {
-  return items.some((l) => l.discountNominal > 0 || l.discountPct > 0);
+  return items.some((l) => lineDiscountTotal(l) > 0);
 }
 
-/** Teks kolom diskon; "-" bila tak ada atau disembunyikan. */
-export function discountCell(l: DocLine, hide: boolean, fmtMoney: (n: number) => string, fmtNum: (n: number) => string): string {
-  if (hide) return "-";
-  if (l.discountNominal > 0) return fmtMoney(l.discountNominal);
-  if (l.discountPct > 0) return `${fmtNum(l.discountPct)}%`;
-  return "-";
-}
-
-/** Jumlah baris yang dicetak: bruto bila diskon disembunyikan, selain itu netto server. */
-export function lineAmount(l: DocLine, hide: boolean): number {
-  return hide ? grossLine(l) : l.lineTotal;
+/** Kolom "Harga Jual": total baris, atau harga penuhnya bila diskon disembunyikan. */
+export function lineSellingAmount(l: DocLine, hideDiscount: boolean): number {
+  return hideDiscount ? l.lineTotal + lineDiscountTotal(l) : l.lineTotal;
 }
 
 export interface DocTotals {
-  subtotal: number;
-  /** null = baris diskon tidak dicetak. */
+  /** Baris "Jumlah (Rp)": selalu bruto. */
+  grossSubtotal: number;
+  /** null = baris Diskon tidak dicetak. */
   discount: number | null;
+  /** null = baris Pajak tidak dicetak. */
   tax: number | null;
+  /** Total tercetak (naik ke harga penuh bila diskon disembunyikan). */
   total: number;
+  /** null = baris Sudah Dibayar tidak dicetak (belum ada pembayaran). */
   paid: number | null;
-  outstanding: number | null;
+  outstanding: number;
+  /** Nilai riil (untuk judul & jatuh tempo), tak terpengaruh opsi cetak. */
+  realPaid: number;
+  realOutstanding: number;
 }
 
 export function documentTotals(o: DocOrder, hideDiscount: boolean): DocTotals {
-  const b = billingView(o);
-  const subtotal = hideDiscount ? o.items.reduce((sum, l) => sum + grossLine(l), 0) : o.subtotal;
+  const realPaid = Math.max(0, o.paidAmount ?? 0);
+  const realOutstanding = Math.max(0, o.outstandingAmount ?? o.grandTotal - realPaid);
+  const printDiscount = orderPrintDiscount(o);
+  const tax = o.taxTotal > 0 ? o.taxTotal : null;
+  if (!hideDiscount) {
+    return {
+      grossSubtotal: orderPrintSubtotal(o),
+      discount: printDiscount > 0 ? printDiscount : null,
+      tax,
+      total: o.grandTotal,
+      paid: realPaid > 0 ? realPaid : null,
+      outstanding: realOutstanding,
+      realPaid,
+      realOutstanding,
+    };
+  }
+  const total = o.grandTotal + printDiscount;
+  const paid = realPaid > 0 ? realPaid + printDiscount : 0;
+  // Retur yang mengurangi tagihan tidak tampil di nota; sisa tetap mengikuti server.
+  const returnReduction = Math.max(0, o.grandTotal - realPaid - realOutstanding);
   return {
-    subtotal,
-    discount: !hideDiscount && o.discountTotal > 0 ? o.discountTotal : null,
-    tax: o.taxTotal > 0 ? o.taxTotal : null,
-    total: o.grandTotal,
-    paid: b.available && b.paid > 0 ? b.paid : null,
-    outstanding: b.available && o.status !== "draft" && o.status !== "cancelled" ? b.outstanding : null,
+    grossSubtotal: orderPrintSubtotal(o),
+    discount: null,
+    tax,
+    total,
+    paid: realPaid > 0 ? paid : null,
+    outstanding: Math.max(0, total - paid - returnReduction),
+    realPaid,
+    realOutstanding,
   };
 }
 
-/** Jatuh tempo cetak: "-" bila lunas atau order tidak bertempo. */
-export function dueDateCell(o: OrderBillingSource & { dueDate: string }): string | null {
-  const b = billingView(o);
-  if (b.available && b.status === "paid") return null;
-  const due = b.dueDate !== "" ? b.dueDate : o.paymentTerms === "net" ? o.dueDate : "";
+/** Judul nota menurut sisa tagihan riil (sistem lama getSalesDocumentTitle). */
+export function salesDocumentTitle(t: Pick<DocTotals, "realPaid" | "realOutstanding">): string {
+  if (t.realOutstanding <= 0) return "Nota Penjualan Lunas";
+  if (t.realPaid > 0) return "Tagihan - Bayar Sebagian";
+  return "Tagihan Penjualan";
+}
+
+/** Tgl. Jtp tercetak: hanya selagi masih ada sisa tagihan dan order punya jatuh tempo. */
+export function dueDateCell(o: DocOrder): string | null {
+  const { realOutstanding } = documentTotals(o, false);
+  if (realOutstanding <= 0) return null;
+  const due = o.dueDate.trim() !== "" ? o.dueDate : (o.effectiveDueDate ?? "").slice(0, 10);
   return due.trim() === "" ? null : due;
 }

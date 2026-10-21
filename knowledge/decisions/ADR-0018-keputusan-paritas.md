@@ -1,8 +1,8 @@
-# ADR-0018: Keputusan pemilik untuk program penyempurnaan paritas (D1–D11)
+# ADR-0018: Keputusan pemilik untuk program penyempurnaan paritas (D1–D12)
 
 ## Status
 Accepted (2026-10-18). Rencana: `docs/plan/penyempurnaan-paritas/PLAN.md` §1. Temuan:
-`docs/ANALISIS-PARITAS-2026-10-16.md` §5. Revisi 2026-10-21: D8 ditambahkan (temuan e2e K1); D9–D10 diputuskan pemilik (cutover); D11 perlakuan koreksi akuntansi migrasi.
+`docs/ANALISIS-PARITAS-2026-10-16.md` §5. Revisi 2026-10-21: D8 ditambahkan (temuan e2e K1); D9–D10 diputuskan pemilik (cutover); D11 perlakuan koreksi akuntansi migrasi; D12 desain dokumen cetak pelanggan.
 
 ## Context
 Audit paritas independen menemukan beberapa perbedaan dari sistem legacy yang bukan bug,
@@ -26,6 +26,7 @@ dan dapat diubah dengan menerbitkan revisi ADR ini.
 | D9 | Tanggal saldo awal migrasi (`--opening-date`) | **Diputuskan pemilik 2026-10-21** | **2026-07-01**, mengikuti saldo awal sistem lama (`JRN/2026/00001` dan stok awal hasil impor Excel 30 Juni 2026). Jurnal sebelum tanggal itu diringkas menjadi saldo awal; aslinya diarsip ETL. Gladi 2026-10-21: dengan 1 Jan, readiness menandai stok awal Rp304,5 M "belum dijurnal" dan selisih buku−ledger Rp276,7 M; dengan 1 Jul selisih turun menjadi Rp27,8 M (sedang ditelusuri). |
 | D10 | Cara pindah | **Diputuskan pemilik 2026-10-21** | **Cutover langsung**, tanpa parallel-run: freeze legacy → dump final → ETL → verify → restore ke elcodelabs → go/no-go (RUNBOOK §5c). Legacy tetap read-only sebagai jalur balik (RUNBOOK §5). Domain `minierp.my.id` baru dialihkan setelah UAT dan data terbukti termigrasi benar. Stok awal hasil impor massal (3.985 produk qty tepat 100) dikoreksi pemilik lewat stock opname, bukan oleh ETL. |
 | D11 | Kesalahan akuntansi warisan legacy saat migrasi | Default dipakai (pemilik meminta "ideal & profesional"); **mohon tinjauan akuntan** | Dikoreksi **terbuka**, bukan disembunyikan, dengan jurnal koreksi migrasi bertanggal freeze (periode terbuka; periode tertutup tidak dibuka ulang). Memo menyebut dokumen asal; daftar per baris di `report/migration_corrections.csv`. Rinciannya: (a) HPP SJ batal yang tidak pernah dibalik legacy (±Rp172,3 jt, 50 SJ) → Dr Persediaan / Cr HPP per SJ; (b) persediaan legacy qty 0 bernilai (Rp26,25 jt) → Dr beban selisih persediaan / Cr Persediaan; (c) pembulatan ke rupiah utuh (ADR-0005) tidak dikoreksi, hanya diringkas; (d) dokumen yang belum dijurnal legacy (±225) dan sisa posisi negatif diselesaikan oleh v2 sendiri pada hari-H (close-day posting → `costrebuild` → readiness tanpa *failed*), sebagai langkah wajib RUNBOOK §5c. Target go-live: buku Persediaan = ledger biaya. |
+| D12 | Desain dokumen cetak untuk pelanggan | **Diputuskan pemilik 2026-10-21** | Nota/tagihan, surat jalan, bukti pembayaran, dan struk POS dicetak **sama dengan sistem lama**, karena sudah menjadi identitas perusahaan di mata pelanggan. Yang disamakan: logo, judul, label, urutan kolom, rumus angka (harga penuh + kolom Disc, "Jumlah (Rp)" bruto, opsi sembunyikan diskon), terbilang, dan kaki dokumen. Pengecualian, hanya pada hal yang tidak ada di sistem lama: struk ber-PPN merinci DPP dan PPN (K-03); bukti pembayaran yang dialokasi ke beberapa order memakai tabel alokasi; dokumen batal diberi cap batal; opsi kertas struk 58mm. Surat transfer barang dan label QR (dokumen internal) tetap desain v2. Penjaga: `modules/print/pages/print-pages.test.tsx` dan uji `modules/print/lib/*`. |
 
 ## Consequences
 - Tugas terdampak mengerjakan *default* di atas; bila pemilik menjawab lain, tugas dibuka ulang

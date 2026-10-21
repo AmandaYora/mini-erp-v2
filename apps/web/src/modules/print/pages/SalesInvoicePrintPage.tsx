@@ -1,17 +1,26 @@
-// Faktur / Nota Penjualan — A4 landscape + kertas kontinu (Tahap E3).
+// Nota / Tagihan Penjualan — A4 landscape + kertas kontinu.
 //
-// Data: salesService.get (orderView sudah membawa ship-to C2 + nomor faktur
-// pajak C3). Uang integer rupiah; terbilang dari modul ini.
+// Dokumen yang dipegang pelanggan: isi & tata letak SAMA dengan
+// sales-document-print-page.tsx sistem lama (identitas perusahaan). Angka dari
+// lib/sales-document (rumus legacy), format tanggal/terbilang dari document.ts.
+// Data: salesService.get (orderView membawa ship-to, kontak pelanggan, faktur
+// pajak, pembuat order, ringkasan bayar).
 
 import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { formatDate, formatDateTime, formatIDR, formatNumber } from "@/shared/lib/format";
+import { formatIDR, formatNumber } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { PrintLayout } from "@/modules/print/components/PrintLayout";
-import { BankAccountsBlock, Letterhead } from "@/modules/print/components/Letterhead";
-import { resolveShipToContact, terbilangRupiah } from "@/modules/print/document";
+import { Letterhead } from "@/modules/print/components/Letterhead";
+import {
+  formatDocDateTime,
+  formatLongDate,
+  printItemName,
+  resolveShipToContact,
+  terbilangRupiah,
+} from "@/modules/print/document";
 import {
   readHideLetterhead,
   readPaperMode,
@@ -24,16 +33,21 @@ import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import { fetchSalesOrderForPrint, type SalesOrder } from "@/modules/print/services/print-fetch";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import {
-  discountCell,
-  documentTitle,
   documentTotals,
   dueDateCell,
   hasLineDiscount,
-  lineAmount,
+  lineDiscountTotal,
+  linePrintUnitPrice,
+  lineSellingAmount,
+  orderPrintDiscount,
   readHideDiscount,
+  salesDocumentTitle,
   withHideDiscountParam,
 } from "@/modules/print/lib/sales-document";
 import { continuousInvoiceStyles, invoiceStyles } from "@/modules/print/styles";
+
+/** Baris minimal tabel nota A4 (form tampak penuh); kertas kontinu tanpa pengisi. */
+const NOTA_MIN_ROWS = 6;
 
 export default function SalesInvoicePrintPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,7 +56,7 @@ export default function SalesInvoicePrintPage() {
   const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
 
   const orderId = Number(id);
-  // Catatan cetak: hanya tercetak, tidak disimpan ke order (paritas legacy).
+  // Catatan bebas sebelum cetak — hanya tercetak, tidak pernah disimpan ke order.
   const [printNotes, setPrintNotes] = useState("");
 
   const { data: order, loading, error } = useAsyncData(
@@ -54,7 +68,7 @@ export default function SalesInvoicePrintPage() {
         return await fetchSalesOrderForPrint(orderId);
       } catch (err) {
         const msg = toApiError(err).message;
-        toast.danger("Gagal memuat faktur", msg);
+        toast.danger("Gagal memuat nota", msg);
         throw err;
       }
     },
@@ -62,37 +76,36 @@ export default function SalesInvoicePrintPage() {
   );
 
   if (loading || profileLoading) {
-    return <div style={{ padding: "2rem" }}>Memuat faktur…</div>;
+    return <div style={{ padding: "2rem" }}>Memuat dokumen…</div>;
   }
   if (error !== null || order === null) {
-    return (
-      <div style={{ padding: "2rem" }}>{error ?? "Order tidak ditemukan."}</div>
-    );
+    return <div style={{ padding: "2rem" }}>{error ?? "Order tidak ditemukan."}</div>;
   }
 
-  const paperMode: PrintPaperMode = readPaperMode(
-    searchParams,
-    paper.isDefault ? "continuous" : "a4",
-  );
+  const paperMode: PrintPaperMode = readPaperMode(searchParams, paper.isDefault ? "continuous" : "a4");
   const isContinuous = paperMode === "continuous";
-  const fillerRows = isContinuous ? 0 : Math.max(0, 6 - order.items.length);
-  const hideLetterhead = readHideLetterhead(searchParams, !paper.showLetterhead);
-  const showStatic = !isContinuous || !hideLetterhead;
+  // Kertas kontinu: JANGAN isi baris kosong — tinggi form fisik (5,5") pas-pasan.
+  const fillerRows = isContinuous ? 0 : Math.max(0, NOTA_MIN_ROWS - order.items.length);
+  // Kop/daftar jual disembunyikan bila form kontinu sudah preprinted (default dari
+  // Pengaturan, bisa ditimpa per cetak).
+  const hideStoreStatic = readHideLetterhead(searchParams, !paper.showLetterhead);
+  const showStoreStatic = !isContinuous || !hideStoreStatic;
   const hideDiscount = readHideDiscount(searchParams);
-  const showDiscountCol = !hideDiscount && hasLineDiscount(order.items);
+  const printDiscount = orderPrintDiscount(order);
   const totals = documentTotals(order, hideDiscount);
+  // Kolom Disc hanya bila ada baris yang punya diskonnya sendiri.
+  const showDiscColumn = hasLineDiscount(order.items) && !hideDiscount;
   const dueDate = dueDateCell(order);
-  const termLabel =
-    order.paymentTerms === "net" ? "Tempo" : order.paymentTerms === "prepaid" ? "Prabayar" : "Tunai";
-
-  const shipToRecipient = order.shipToRecipient.trim();
   const contact = resolveShipToContact({
     shipToAddress: order.shipToAddress,
     shipToPhone: order.shipToPhone,
-    fallbackAddress: null,
-    fallbackPhone: null,
+    fallbackAddress: order.partyAddress,
+    fallbackPhone: order.partyPhone,
   });
-  const customerLine = order.partyName.trim() !== "" ? order.partyName : "-";
+  const customerName = order.partyId > 0 && order.partyName.trim() !== "" ? order.partyName : "Pelanggan umum";
+  // Staff = pembuat order; USER = akun yang sedang mencetak.
+  const staffName = order.createdByName?.trim() || "-";
+  const userName = user?.fullName?.trim() || "-";
 
   return (
     <PrintLayout
@@ -101,69 +114,54 @@ export default function SalesInvoicePrintPage() {
       paperMode={paperMode}
       onPaperModeChange={(m) => setSearchParams(withPaperModeParam(searchParams, m), { replace: true })}
       letterheadToggle={{
-        hidden: hideLetterhead,
-        onChange: (hidden) =>
-          setSearchParams(withHideLetterheadParam(searchParams, hidden), { replace: true }),
+        hidden: hideStoreStatic,
+        onChange: (hidden) => setSearchParams(withHideLetterheadParam(searchParams, hidden), { replace: true }),
       }}
       notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
       mainClassName={isContinuous ? "nota-page continuous" : "nota-page"}
       extraToolbar={
         <>
-          <label className="print-toolbar-option">
-            <input
-              type="checkbox"
-              checked={hideDiscount}
-              onChange={(e) =>
-                setSearchParams(withHideDiscountParam(searchParams, e.target.checked), { replace: true })
-              }
-            />
-            <span>Sembunyikan diskon</span>
-          </label>
-          <label className="print-toolbar-option">
-            <span>Notes (hanya tercetak)</span>
-            <input
-              type="text"
+          {printDiscount > 0 ? (
+            <label className="print-toolbar-option">
+              <input
+                type="checkbox"
+                checked={hideDiscount}
+                onChange={(e) => setSearchParams(withHideDiscountParam(searchParams, e.target.checked), { replace: true })}
+              />
+              <span>Sembunyikan diskon (harga penuh)</span>
+            </label>
+          ) : null}
+          <label className="print-toolbar-option" style={{ alignItems: "flex-start" }}>
+            <span>Notes (opsional, hanya tampil di hasil cetak — tidak disimpan):</span>
+            <textarea
+              rows={2}
               value={printNotes}
-              maxLength={200}
               onChange={(e) => setPrintNotes(e.target.value)}
-              aria-label="Notes hanya tercetak"
+              placeholder="Tulis catatan tambahan untuk nota ini..."
             />
           </label>
         </>
       }
     >
       <div className="nota-head">
-        {showStatic ? <Letterhead identity={identity} /> : <div />}
-        <div>
-          <div className="nota-title">{documentTitle(order)}</div>
-          <div className="nota-meta">{order.number}</div>
-        </div>
+        {showStoreStatic ? <Letterhead identity={identity} /> : <div />}
+        <div className="nota-title">{salesDocumentTitle(totals)}</div>
       </div>
 
       <div className="nota-parties">
         <div className="nota-kv">
-          <span className="lbl">Pelanggan</span><span>:</span><span>{customerLine}</span>
-          {shipToRecipient !== "" && shipToRecipient !== customerLine ? (
-            <>
-              <span className="lbl">Penerima</span><span>:</span><span>{shipToRecipient}</span>
-            </>
-          ) : null}
-          {order.shipToLabel.trim() !== "" ? (
-            <>
-              <span className="lbl">Label Kirim</span><span>:</span><span>{order.shipToLabel}</span>
-            </>
-          ) : null}
-          <span className="lbl">Alamat</span><span>:</span><span>{contact.address}</span>
+          <span className="lbl">Nama</span><span>:</span><span>{customerName}</span>
           <span className="lbl">No HP</span><span>:</span><span>{contact.phone}</span>
+          <span className="lbl">Alamat</span><span>:</span><span>{contact.address}</span>
         </div>
         <div className="nota-kv">
-          <span className="lbl">Tanggal</span><span>:</span><span>{formatDate(order.orderDate)}</span>
-          <span className="lbl">Tgl. Jtp</span><span>:</span><span>{dueDate !== null ? formatDate(dueDate) : "-"}</span>
-          <span className="lbl">Termin</span><span>:</span><span>{termLabel}</span>
+          <span className="lbl">No Nota</span><span>:</span><span>{order.number}</span>
+          <span className="lbl">Tanggal</span><span>:</span><span>{formatLongDate(order.orderDate)}</span>
+          <span className="lbl">Tgl. Jtp</span><span>:</span><span>{dueDate !== null ? formatLongDate(dueDate) : "-"}</span>
+          <span className="lbl">Staff</span><span>:</span><span>{staffName}</span>
           {order.taxInvoiceNumber.trim() !== "" ? (
             <>
               <span className="lbl">Faktur Pajak</span><span>:</span><span>{order.taxInvoiceNumber}</span>
-              <span className="lbl">Tgl Pajak</span><span>:</span><span>{formatDate(order.taxInvoiceDate)}</span>
             </>
           ) : null}
         </div>
@@ -172,12 +170,12 @@ export default function SalesInvoicePrintPage() {
       <table className="doc-table nota-table">
         <colgroup>
           <col style={{ width: "4%" }} />
-          <col style={{ width: "8%" }} />
-          <col style={{ width: "8%" }} />
+          <col style={{ width: "7%" }} />
+          <col style={{ width: "9%" }} />
           <col />
-          <col style={{ width: "15%" }} />
-          {showDiscountCol ? <col style={{ width: "11%" }} /> : null}
-          <col style={{ width: "16%" }} />
+          <col style={{ width: "13%" }} />
+          {showDiscColumn ? <col style={{ width: "10%" }} /> : null}
+          <col style={{ width: "13%" }} />
         </colgroup>
         <thead>
           <tr>
@@ -186,7 +184,7 @@ export default function SalesInvoicePrintPage() {
             <th>Satuan</th>
             <th>Produk</th>
             <th>Harga Satuan</th>
-            {showDiscountCol ? <th>Disc</th> : null}
+            {showDiscColumn ? <th>Disc</th> : null}
             <th>Harga Jual</th>
           </tr>
         </thead>
@@ -197,16 +195,12 @@ export default function SalesInvoicePrintPage() {
               <td className="t-r">{formatNumber(item.qty)}</td>
               <td className="t-c">{item.uom}</td>
               <td>
-                {item.productName}
-                {item.productCode !== "" ? (
-                  <div style={{ fontSize: "0.8em", color: "#4b5563" }}>{item.productCode}</div>
-                ) : null}
+                {printItemName(item)}
+                {item.note.trim() !== "" ? <div style={{ fontSize: "8pt", color: "#555" }}>{item.note}</div> : null}
               </td>
-              <td className="t-r">{formatIDR(item.unitPrice)}</td>
-              {showDiscountCol ? (
-                <td className="t-c">{discountCell(item, hideDiscount, formatIDR, formatNumber)}</td>
-              ) : null}
-              <td className="t-r">{formatIDR(lineAmount(item, hideDiscount))}</td>
+              <td className="t-r">{formatIDR(linePrintUnitPrice(item))}</td>
+              {showDiscColumn ? <td className="t-r">{formatIDR(lineDiscountTotal(item))}</td> : null}
+              <td className="t-r">{formatIDR(lineSellingAmount(item, hideDiscount))}</td>
             </tr>
           ))}
           {Array.from({ length: fillerRows }).map((_, index) => (
@@ -216,91 +210,51 @@ export default function SalesInvoicePrintPage() {
               <td />
               <td />
               <td />
-              {showDiscountCol ? <td /> : null}
+              {showDiscColumn ? <td /> : null}
               <td />
             </tr>
           ))}
         </tbody>
       </table>
 
-      {printNotes.trim() !== "" ? <div className="nota-terbilang">Notes: {printNotes.trim()}</div> : null}
-
       <div className="nota-sumbar">
-        <div className="nota-terbilang">
-          Terbilang: {terbilangRupiah(order.grandTotal)}
-        </div>
+        <span className="nota-terbilang">terbilang : {terbilangRupiah(totals.total)}</span>
         <table className="nota-paysum">
           <tbody>
-            <tr>
-              <td>Subtotal</td>
-              <td>{formatIDR(totals.subtotal)}</td>
-            </tr>
-            {totals.discount !== null ? (
-              <tr>
-                <td>Diskon</td>
-                <td>{formatIDR(totals.discount)}</td>
-              </tr>
-            ) : null}
-            {totals.tax !== null ? (
-              <tr>
-                <td>PPN</td>
-                <td>{formatIDR(totals.tax)}</td>
-              </tr>
-            ) : null}
-            <tr className="bold">
-              <td>Total</td>
-              <td>{formatIDR(totals.total)}</td>
-            </tr>
-            {totals.paid !== null ? (
-              <tr>
-                <td>Sudah Dibayar</td>
-                <td>{formatIDR(totals.paid)}</td>
-              </tr>
-            ) : null}
-            {totals.outstanding !== null ? (
-              <tr className="bold">
-                <td>Sisa Tagihan</td>
-                <td>{formatIDR(totals.outstanding)}</td>
-              </tr>
-            ) : null}
+            <tr><td>Jumlah (Rp)</td><td>{formatIDR(totals.grossSubtotal)}</td></tr>
+            {totals.discount !== null ? <tr><td>Diskon</td><td>{formatIDR(totals.discount)}</td></tr> : null}
+            {totals.tax !== null ? <tr><td>Pajak</td><td>{formatIDR(totals.tax)}</td></tr> : null}
+            <tr><td>Total</td><td>{formatIDR(totals.total)}</td></tr>
+            {totals.paid !== null ? <tr><td>Sudah Dibayar</td><td>{formatIDR(totals.paid)}</td></tr> : null}
+            <tr className="bold"><td>Sisa Tagihan</td><td>{formatIDR(totals.outstanding)}</td></tr>
           </tbody>
         </table>
       </div>
 
       <div className="nota-foot">
+        <div style={{ whiteSpace: "pre-wrap" }}>{printNotes}</div>
         <div className="nota-buyer">
           <div>Pembeli</div>
-          <div className="nota-buyer-line">( .................... )</div>
+          <div className="nota-buyer-line">(................)</div>
+          {identity.returnNote !== "" ? <div style={{ fontSize: "8pt" }}>{identity.returnNote}</div> : null}
         </div>
         <div className="nota-sell">
-          {showStatic && identity.sellingPoints.length > 0 ? (
+          {showStoreStatic && identity.sellingPoints.length > 0 ? (
             <>
-              <div className="nota-sell-title">MENJUAL:</div>
+              <div className="nota-sell-title">{identity.name.toUpperCase()} MENJUAL:</div>
               <ul>
-                {identity.sellingPoints.map((point) => (
-                  <li key={point}>{point}</li>
+                {identity.sellingPoints.map((point, index) => (
+                  <li key={`sell-${index}`}>{point}</li>
                 ))}
               </ul>
             </>
-          ) : null}
-          {identity.returnNote !== "" ? (
-            <div style={{ marginTop: "6px" }}>{identity.returnNote}</div>
-          ) : null}
-        </div>
-        <div>
-          {showStatic && identity.bankAccounts.length > 0 ? (
-            <BankAccountsBlock accounts={identity.bankAccounts} />
           ) : null}
         </div>
       </div>
 
       <div className="nota-footbar">
-        <span>Dicetak: {formatDateTime(new Date().toISOString())}</span>
-        <span>
-          {identity.cityLine !== "" ? `${identity.cityLine}, ` : ""}
-          {formatDate(order.orderDate)}
-        </span>
-        <span>USER : {user?.fullName?.trim() !== "" ? user?.fullName : "-"}</span>
+        <span>Dicetak: {formatDocDateTime(new Date().toISOString())}</span>
+        <span>USER : {userName}</span>
       </div>
     </PrintLayout>
   );

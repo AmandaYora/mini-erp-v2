@@ -95,7 +95,7 @@ func (s *Service) enrich(ctx context.Context, o *contracts.SalesOrder) (*contrac
 		return nil, apperror.Internal(err)
 	}
 	if p != nil {
-		o.PartyName = p.Name
+		o.PartyName, o.PartyPhone, o.PartyAddress = p.Name, p.Phone, p.Address
 	} else if o.PartyID == 0 {
 		o.PartyName = "Tunai"
 	}

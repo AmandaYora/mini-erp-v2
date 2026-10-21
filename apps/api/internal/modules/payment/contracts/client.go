@@ -49,12 +49,15 @@ type Payment struct {
 	PartyID   int64
 	PartyName string
 	PartyType string
-	Direction string
-	Amount    int64
-	Method    string
-	PaidAt    string
-	Notes     string
-	Status    string
+	// PartyPhone / PartyAddress: the party's contact, detail read only (receipts).
+	PartyPhone   string
+	PartyAddress string
+	Direction    string
+	Amount       int64
+	Method       string
+	PaidAt       string
+	Notes        string
+	Status       string
 	// ClientRef makes creation idempotent (unique per branch).
 	ClientRef string
 	// AmountTendered is the cash handed over (cash only); change = tendered - amount.

@@ -18,6 +18,9 @@ export interface AuthBranch {
   code: string;
   name: string;
   status: string;
+  /** Alamat & kota cabang sesi (GET /auth/me) — kop dokumen cetak. */
+  address?: string;
+  city?: string;
   /** Penanda default dari GET /branches/my-access (J6, legacy F-05.3). */
   isDefault?: boolean;
 }

@@ -36,6 +36,7 @@ func paymentView(p *contracts.Payment) map[string]any {
 	return map[string]any{
 		"id": p.ID, "number": p.Number, "branchId": p.BranchID,
 		"partyId": p.PartyID, "partyName": p.PartyName, "partyType": p.PartyType,
+		"partyPhone": p.PartyPhone, "partyAddress": p.PartyAddress,
 		"direction": p.Direction, "amount": p.Amount, "method": p.Method,
 		"paidAt": p.PaidAt, "notes": p.Notes, "status": p.Status,
 		"clientRef": p.ClientRef, "reference": p.Reference,

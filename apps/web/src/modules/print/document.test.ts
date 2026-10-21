@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDocDate,
+  formatLongDate,
   formatPhoneGroup,
   formatPhoneLine,
   groupPhonesByLabel,
+  printItemName,
+  printMethodLabel,
   resolveIdentity,
   resolveShipToContact,
   terbilangRupiah,
@@ -70,8 +74,49 @@ describe("terbilangRupiah", () => {
     expect(terbilangRupiah(1500000)).toBe("satu juta lima ratus ribu rupiah");
   });
 
-  it("menolak nol/negatif", () => {
-    expect(terbilangRupiah(0)).toBe("-");
-    expect(terbilangRupiah(-5)).toBe("-");
+  it("sama dengan sistem lama: nol, negatif, miliar/triliun, pembulatan", () => {
+    expect(terbilangRupiah(0)).toBe("nol rupiah");
+    expect(terbilangRupiah(-5)).toBe("minus lima rupiah");
+    expect(terbilangRupiah(2_500_000_000)).toBe("dua miliar lima ratus juta rupiah");
+    expect(terbilangRupiah(1_000_000_000_000)).toBe("satu triliun rupiah");
+    expect(terbilangRupiah(1999.6)).toBe("dua ribu rupiah");
+    expect(terbilangRupiah(Number.NaN)).toBe("nol rupiah");
+  });
+});
+
+describe("nama barang tercetak", () => {
+  it("varian nyata ditambahkan; varian bawaan tersembunyi tidak", () => {
+    expect(printItemName({ productName: "Cat Picolux", productCode: "CAT-1", variantName: "BROWN 923", variantCode: "CAT-1-923" })).toBe(
+      "Cat Picolux - BROWN 923",
+    );
+    expect(printItemName({ productName: "Paku", productCode: "PK", variantName: "Paku", variantCode: "PK" })).toBe("Paku");
+    expect(printItemName({ productName: "Paku", productCode: "PK", variantName: "Lama", variantCode: "PK" })).toBe("Paku");
+    expect(printItemName({ productName: "Paku", variantName: "" })).toBe("Paku");
+  });
+});
+
+describe("format tanggal dokumen (sistem lama)", () => {
+  it("tanggal panjang & ringkas", () => {
+    expect(formatLongDate("2026-06-24")).toBe("24 Juni 2026");
+    expect(formatDocDate("2026-06-04")).toBe("04 Jun 2026");
+    expect(formatLongDate("")).toBe("-");
+    expect(formatLongDate("bukan tanggal")).toBe("-");
+  });
+
+  it("label metode bayar istilah lama", () => {
+    expect(printMethodLabel("cash")).toBe("Tunai");
+    expect(printMethodLabel("transfer")).toBe("Transfer Bank");
+    expect(printMethodLabel("check")).toBe("Cek / Giro");
+  });
+});
+
+describe("kop: cadangan alamat & kota cabang", () => {
+  it("profil dokumen menang; kosong -> cabang sesi", () => {
+    const fromBranch = resolveIdentity({}, { branchAddress: "Jl. Blora 1", branchCity: "Blora", companyCity: "Semarang" });
+    expect(fromBranch.addressLine).toBe("Jl. Blora 1");
+    expect(fromBranch.cityLine).toBe("Blora");
+    const fromProfile = resolveIdentity({ addressLine: "Jl. Profil", cityLine: "Cepu" }, { branchAddress: "Jl. Blora 1", branchCity: "Blora" });
+    expect(fromProfile.addressLine).toBe("Jl. Profil");
+    expect(fromProfile.cityLine).toBe("Cepu");
   });
 });

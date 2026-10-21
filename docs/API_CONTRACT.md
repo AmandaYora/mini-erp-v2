@@ -125,7 +125,7 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/auth/login` | Login (public, rate-limit) → access+refresh JWT, cabang otomatis/default/pilih |
 | `POST` | `/api/v1/auth/refresh` | Rotasi refresh token (replay = seluruh sesi dicabut) |
 | `POST` | `/api/v1/auth/logout` | Cabut sesi pemanggil |
-| `GET` | `/api/v1/auth/me` | Identitas + cabang aktif + permission segar + profil perusahaan |
+| `GET` | `/api/v1/auth/me` | Identitas + cabang aktif (`branch.address`/`branch.city` untuk kop dokumen cetak) + permission segar + profil perusahaan |
 | `POST` | `/api/v1/auth/switch-branch` | Pindah cabang aktif (cabang nonaktif = 403 berpesan) |
 | `POST` | `/api/v1/auth/switch-role` | Pindah role aktif milik sendiri |
 | `GET` | `/api/v1/users` | Daftar pengguna (`page`, `limit` terjaga, `search` per kata, `status`); tiap baris memuat `roles[{id,name}]`, `branches[{id,name,isDefault}]`, `displayTitle`, `lastLoginAt` (`null` = belum pernah login) dalam jumlah query konstan (U-01) |
@@ -232,7 +232,7 @@ Endpoint yang sudah ada hari ini:
 | `GET` | `/api/v1/sales-orders/export` | Ekspor daftar SO sesuai filter (`format=xlsx|pdf`, termasuk `paymentStatus`). xlsx 3 sheet streaming (keyset 500/halaman): **Ringkasan** (jumlah/nilai/retur/total bersih/DPP/pajak/dibayar/sisa/jatuh tempo/penjualan bersih; margin kotor hanya untuk `finance.view` dan bila `from`+`to` terisi), **Daftar Order** (28 kolom: dibayar, sisa, metode, kasir, dibuat oleh, penanggung jawab, sopir, plat, faktur pajak, DPP, status finansial …), **Detail Item**; PDF 12 kolom |
 | `GET` | `/api/v1/sales-orders/by-client-ref/{ref}/state` | Posisi keranjang POS (`client_ref`) agar dapat dilanjutkan dari `nextStep` |
 | `POST` | `/api/v1/sales-orders` | Buat draf SO (harga dari server: member/ katalog). Payload opsional: `assignedUserId` (penanggung jawab, harus pengguna aktif), alamat kirim sekali pakai `shipToLabel/shipToRecipient/shipToPhone/shipToAddress` (dipakai bila `shipToAddressId`=0; alamat wajib bila ada rincian; walk-in boleh; disalin ke order, tidak ke buku alamat), `notes` (juga dari POS) |
-| `GET` | `/api/v1/sales-orders/{id}` | Detail SO (ringkasan bayar bersih-retur seperti daftar, nama pembuat/penanggung jawab/penyetuju kredit, `cashierName` = pencatat pembayaran, cadangan pembuat order POS) |
+| `GET` | `/api/v1/sales-orders/{id}` | Detail SO (ringkasan bayar bersih-retur seperti daftar, nama pembuat/penanggung jawab/penyetuju kredit, `cashierName` = pencatat pembayaran, cadangan pembuat order POS; `partyPhone`/`partyAddress` = kontak pelanggan untuk dokumen cetak tanpa alamat kirim) |
 | `PUT` | `/api/v1/sales-orders/{id}` | Ubah draf SO (hitung ulang) |
 | `POST` | `/api/v1/sales-orders/{id}/confirm` | Konfirmasi SO (stok bergerak saat delivery) |
 | `POST` | `/api/v1/sales-orders/{id}/cancel` | Batalkan SO |
@@ -250,9 +250,9 @@ Endpoint yang sudah ada hari ini:
 | `POST` | `/api/v1/deliveries/{id}/cancel` | Batalkan draf (terkonfirmasi via retur L6) |
 | `POST` | `/api/v1/deliveries/{id}/proof` | Unggah bukti kirim (gambar ≤5MB), multipart `file` + `purpose` = `delivery_signed_document` (scan/foto SJ fisik bertanda tangan; wajib untuk konfirmasi bila `delivery_require_evidence` aktif) atau `delivery_location_photo` (opsional, default) (DL-01) |
 | `GET` | `/api/v1/deliveries/{id}/proofs` | Daftar bukti kirim; tiap berkas memuat `purpose` |
-| `GET` | `/api/v1/payments` | Daftar pembayaran cabang |
+| `GET` | `/api/v1/payments` | Daftar pembayaran cabang; tiap baris membawa `allocations` (order + nominal), dimuat dalam jumlah query tetap |
 | `POST` | `/api/v1/payments` | Catat pembayaran (alokasi eksplisit atau FIFO otomatis; refund via tipe `sales_return`/`purchase_return` — arah berbalik, satu pembayaran satu arah; partyId 0 = walk-in tunai POS, alokasi wajib eksplisit) |
-| `GET` | `/api/v1/payments/{id}` | Detail pembayaran |
+| `GET` | `/api/v1/payments/{id}` | Detail pembayaran (`partyPhone`/`partyAddress` = kontak pihak untuk bukti pembayaran) |
 | `POST` | `/api/v1/payments/{id}/cancel` | Batalkan pembayaran (saldo terbuka lagi) |
 | `GET` | `/api/v1/payments/party-balances` | Saldo tagihan satu pihak (live) |
 | `GET` | `/api/v1/payments/open-parties` | Daftar semua pihak berpiutang/berhutang (PY-01). Query `side` (`receivable` default / `payable`), `search` (nama/kode/HP), `page`, `limit`. `data` = `{items:[{partyId,code,name,side,orderCount,oldestDate,outstanding}],total,totalOutstanding,page,limit,totalPages}` + `meta`; tertua dulu; dihitung dari order terbuka dikurangi alokasi (tanpa retur); terisolasi cabang sesi |

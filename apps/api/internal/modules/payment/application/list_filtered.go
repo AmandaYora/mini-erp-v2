@@ -15,8 +15,8 @@ type ListFilter = infrastructure.ListFilter
 
 // ListFiltered lists payments with the full F3a-5 filter set (search by
 // number/notes/reference/party, method, direction, paid-date range,
-// order allocation, party, status) and decorates every row with the party name
-// from one batch read. Count uses the identical where.
+// order allocation, party, status) and decorates every row with its
+// allocations and party name (enrichBatch). Count uses the identical where.
 func (s *Service) ListFiltered(ctx context.Context, branchID int64, f ListFilter, page, limit int) (*ListResult, error) {
 	if err := listquery.ValidateEnum("direction", f.Direction, "in", "out"); err != nil {
 		return nil, err
@@ -45,19 +45,15 @@ func (s *Service) ListFiltered(ctx context.Context, branchID int64, f ListFilter
 	if payments == nil {
 		payments = []*contracts.Payment{}
 	}
-	ids := make([]int64, 0, len(payments))
-	for _, p := range payments {
-		ids = append(ids, p.PartyID)
-	}
-	names, err := s.parties.NamesByIDs(ctx, ids)
-	if err != nil {
+	// Allocations, order numbers and party names in a constant number of
+	// reads: every row carries what it paid, never an empty allocation list
+	// that reads like an unallocated payment.
+	if payments, err = s.enrichBatch(ctx, payments); err != nil {
 		return nil, err
 	}
 	for _, p := range payments {
 		if p.PartyID == 0 {
 			p.PartyName = "Tunai"
-		} else {
-			p.PartyName = names[p.PartyID]
 		}
 	}
 	return &ListResult{Payments: payments, Total: total}, nil

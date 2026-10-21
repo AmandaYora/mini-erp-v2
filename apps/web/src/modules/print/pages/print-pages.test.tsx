@@ -1,13 +1,23 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveIdentity } from "@/modules/print/document";
 import { CONTINUOUS_PAPER_DEFAULTS, resolvePaperProfile } from "@/modules/print/paper";
 
+// Dokumen yang dipegang pelanggan harus tercetak sama dengan sistem lama
+// (identitas perusahaan): judul, label, urutan kolom, dan kaki dokumen.
+
 const profileState = {
   profile: { continuousNota: { ...CONTINUOUS_PAPER_DEFAULTS } },
   paper: resolvePaperProfile(undefined),
-  identity: resolveIdentity({ continuousNota: { ...CONTINUOUS_PAPER_DEFAULTS } }, { companyName: "Toko Uji", companyCity: "Jakarta" }),
+  identity: resolveIdentity(
+    {
+      continuousNota: { ...CONTINUOUS_PAPER_DEFAULTS },
+      sellingPoints: ["Semen", "Cat"],
+      returnNote: "Barang yang sudah dibeli tidak dapat dikembalikan.",
+    },
+    { companyName: "Toko Uji", companyCity: "Jakarta" },
+  ),
   corrupt: false,
   warning: null as string | null,
   loading: false,
@@ -18,23 +28,31 @@ vi.mock("@/modules/print/hooks/usePrintProfile", () => ({
 }));
 
 const fetchSales = vi.fn();
-const fetchPayment = vi.fn();
+const fetchReceipt = vi.fn();
 const fetchAlloc = vi.fn();
+const fetchPos = vi.fn();
+const fetchDelivery = vi.fn();
 vi.mock("@/modules/print/services/print-fetch", () => ({
   fetchSalesOrderForPrint: (...a: unknown[]) => fetchSales(...a),
-  fetchPaymentForPrint: (...a: unknown[]) => fetchPayment(...a),
+  fetchPaymentReceipt: (...a: unknown[]) => fetchReceipt(...a),
   fetchAllocationBilling: (...a: unknown[]) => fetchAlloc(...a),
+  fetchPosReceipt: (...a: unknown[]) => fetchPos(...a),
+  fetchDeliveryPrint: (...a: unknown[]) => fetchDelivery(...a),
 }));
 
 import SalesInvoicePrintPage from "@/modules/print/pages/SalesInvoicePrintPage";
 import PaymentReceiptPrintPage from "@/modules/print/pages/PaymentReceiptPrintPage";
 import PosThermalReceiptPage from "@/modules/print/pages/PosThermalReceiptPage";
+import DeliveryNotePrintPage from "@/modules/print/pages/DeliveryNotePrintPage";
 
 function order(over: Record<string, unknown> = {}) {
   return {
     id: 5,
     number: "SO-0005",
+    partyId: 7,
     partyName: "Budi",
+    partyPhone: "0811-111",
+    partyAddress: "Jl. Pelanggan 2",
     orderDate: "2026-10-01",
     dueDate: "2026-11-01",
     paymentTerms: "net",
@@ -46,7 +64,8 @@ function order(over: Record<string, unknown> = {}) {
     shipToPhone: "",
     taxInvoiceNumber: "",
     taxInvoiceDate: "",
-    subtotal: 200000,
+    taxRate: 0,
+    subtotal: 180000,
     discountTotal: 20000,
     taxTotal: 0,
     grandTotal: 180000,
@@ -55,17 +74,25 @@ function order(over: Record<string, unknown> = {}) {
     paymentStatus: "partial",
     effectiveDueDate: "2026-11-01",
     isOverdue: false,
+    createdByName: "Sari Admin",
     items: [
       {
         id: 1,
-        productCode: "P-1",
+        productId: 11,
+        variantId: 110,
+        productCode: "SMN-1",
         productName: "Semen",
+        variantName: "Semen",
+        variantCode: "SMN-1",
         uom: "sak",
         qty: 2,
         unitPrice: 100000,
         discountPct: 0,
         discountNominal: 20000,
         lineTotal: 180000,
+        pricingSource: "catalog",
+        basePrice: 100000,
+        note: "",
       },
     ],
     ...over,
@@ -91,32 +118,51 @@ beforeEach(() => {
   profileState.warning = null;
 });
 
-describe("nota penjualan", () => {
-  it("judul Nota (Sebagian), Sudah Dibayar dan Sisa Tagihan tercetak", async () => {
+describe("nota penjualan (sama dengan sistem lama)", () => {
+  it("judul, label pihak, kolom, ringkasan, dan kaki dokumen", async () => {
     fetchSales.mockResolvedValue(order());
-    renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
-    expect(await screen.findByText("Nota (Sebagian)")).toBeTruthy();
+    const { container } = renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
+    expect(await screen.findByText("Tagihan - Bayar Sebagian")).toBeTruthy();
+    // Pihak: Nama / No HP / Alamat dari pelanggan bila tanpa alamat kirim.
+    expect(screen.getByText("Nama")).toBeTruthy();
+    expect(screen.getByText("0811-111")).toBeTruthy();
+    expect(screen.getByText("Jl. Pelanggan 2")).toBeTruthy();
+    expect(screen.getByText("No Nota")).toBeTruthy();
+    expect(screen.getByText("Staff")).toBeTruthy();
+    expect(screen.getByText("Sari Admin")).toBeTruthy();
+    expect(screen.getByText("01 Oktober 2026")).toBeTruthy();
+    expect(screen.getByText("01 November 2026")).toBeTruthy();
+    const heads = Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent);
+    expect(heads).toEqual(["No", "Qty", "Satuan", "Produk", "Harga Satuan", "Disc", "Harga Jual"]);
+    // Varian bawaan tidak tercetak ("Semen", bukan "Semen - Semen").
+    expect(container.querySelector("tbody tr td:nth-child(4)")?.textContent).toBe("Semen");
+    expect(container.querySelector("tbody tr td:nth-child(6)")?.textContent).toMatch(/^Rp\s20\.000$/);
+    expect(screen.getByText("Jumlah (Rp)")).toBeTruthy();
     expect(screen.getByText("Sudah Dibayar")).toBeTruthy();
     expect(screen.getByText("Sisa Tagihan")).toBeTruthy();
-    expect(screen.getByText("Disc")).toBeTruthy();
+    expect(screen.queryByText("PPN")).toBeNull();
+    expect(screen.getByText(/^terbilang : seratus delapan puluh ribu rupiah$/)).toBeTruthy();
+    expect(screen.getByText("TOKO UJI MENJUAL:")).toBeTruthy();
+    expect(screen.getByText("Barang yang sudah dibeli tidak dapat dikembalikan.")).toBeTruthy();
+    expect(screen.getByText("(................)")).toBeTruthy();
+    // Sistem lama tidak mencetak blok rekening di nota.
+    expect(screen.queryByText("REKENING TRANSFER MELALUI:")).toBeNull();
   });
 
-  it("lunas: judul Nota, jatuh tempo '-', tanpa baris sisa berisi nominal sisa", async () => {
-    fetchSales.mockResolvedValue(
-      order({ paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid" }),
-    );
+  it("lunas: Nota Penjualan Lunas dan Tgl. Jtp '-'", async () => {
+    fetchSales.mockResolvedValue(order({ paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid" }));
     renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
-    expect(await screen.findByText("Nota")).toBeTruthy();
-    expect(screen.queryByText("Tagihan")).toBeNull();
+    expect(await screen.findByText("Nota Penjualan Lunas")).toBeTruthy();
+    expect(screen.queryByText("01 November 2026")).toBeNull();
   });
 
-  it("sembunyikan diskon: kolom Disc hilang dan jumlah baris bruto", async () => {
+  it("sembunyikan diskon: kolom Disc hilang, harga penuh, total naik", async () => {
     fetchSales.mockResolvedValue(order());
     renderAt("/print/sales/5?hideDiscount=1", "/print/sales/:id", <SalesInvoicePrintPage />);
-    await screen.findByText("Nota (Sebagian)");
+    await screen.findByText("Tagihan - Bayar Sebagian");
     expect(screen.queryByText("Disc")).toBeNull();
-    // Bruto 2 x 100.000 = 200.000 muncul sebagai jumlah baris.
-    expect(screen.getAllByText(/200\.000/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Diskon")).toBeNull();
+    expect(screen.getByText(/^terbilang : dua ratus ribu rupiah$/)).toBeTruthy();
   });
 
   it("peringatan profil gagal dimuat tampil (tidak ditelan)", async () => {
@@ -128,76 +174,191 @@ describe("nota penjualan", () => {
   });
 });
 
-describe("kwitansi", () => {
-  it("tanpa blok tanda tangan (BR-30), terbilang tetap ada", async () => {
-    fetchPayment.mockResolvedValue({
-      id: 9,
-      number: "PAY-9",
-      partyName: "Budi",
-      partyType: "customer",
-      direction: "in",
-      amount: 50000,
-      method: "cash",
-      paidAt: "2026-10-02",
+describe("surat jalan (sama dengan sistem lama)", () => {
+  function note(over: Record<string, unknown> = {}) {
+    return {
+      id: 3,
+      number: "SJ-0003",
+      salesOrderId: 5,
+      orderNumber: "SO-0005",
+      deliveryDate: "2026-10-03",
+      status: "confirmed",
+      driverName: "Joko",
+      vehiclePlate: "",
+      warehouseStaffName: "",
+      recipientName: "",
+      dropLocationNote: "",
       notes: "",
-      status: "active",
-      reference: "",
-      amountTendered: 60000,
-      change: 10000,
-      allocations: [{ orderType: "sales", orderId: 5, orderNumber: "SO-0005", amount: 50000 }],
-    });
-    fetchAlloc.mockResolvedValue({ "sales:5": { total: 180000, paid: 50000, outstanding: 130000 } });
-    const { container } = renderAt("/print/payments/9", "/print/payments/:id", <PaymentReceiptPrintPage />);
-    await waitFor(() => expect(screen.getByText(/Terbilang:/)).toBeTruthy());
-    expect(container.querySelector(".kwitansi-sign")).toBeNull();
-    expect(screen.queryByText("( .................... )")).toBeNull();
-    expect(screen.getByText("Tunai diterima")).toBeTruthy();
-    expect(screen.getByText("Kembalian")).toBeTruthy();
-    expect(screen.getByText(/Sisa Tagihan/)).toBeTruthy();
+      items: [{ id: 1, productId: 11, variantId: 110, locationId: 1, uom: "sak", uomFactor: 1, qty: 2, qtyBase: 2 }],
+      ...over,
+    };
+  }
+
+  it("STATUS = status bayar order; Staff; tanda tangan; tembusan karbon", async () => {
+    fetchDelivery.mockResolvedValue({ note: note(), order: order() });
+    const { container } = renderAt("/print/delivery/3", "/print/delivery/:id", <DeliveryNotePrintPage />);
+    expect(await screen.findByText("SURAT JALAN")).toBeTruthy();
+    expect(screen.getByText("STATUS : Bayar Sebagian")).toBeTruthy();
+    expect(screen.getByText("Staff")).toBeTruthy();
+    expect(screen.getByText("Sari Admin")).toBeTruthy();
+    expect(screen.getByText("03 Oktober 2026")).toBeTruthy();
+    expect(screen.getByText("Jl. Pelanggan 2")).toBeTruthy();
+    // Kendaraan hanya bila ada pelat.
+    expect(screen.queryByText("Kendaraan")).toBeNull();
+    const heads = Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent);
+    expect(heads).toEqual(["No", "Qty", "Satuan", "Produk", "Keterangan"]);
+    expect(screen.getByText("Petugas Gudang")).toBeTruthy();
+    expect(screen.getByText("—")).toBeTruthy();
+    expect(screen.getByText("PUTIH : SOPIR MERAH : PELANGGAN", { normalizer: (t) => t.replace(/\s+/g, " ").trim() })).toBeTruthy();
+    expect(screen.queryByText("REKENING TRANSFER MELALUI:")).toBeNull();
+  });
+
+  it("varian nyata tercetak; surat jalan batal ditandai DIBATALKAN", async () => {
+    const o = order();
+    o.items[0] = { ...o.items[0], variantName: "50 KG", variantCode: "SMN-1-50" };
+    fetchDelivery.mockResolvedValue({ note: note({ status: "cancelled", vehiclePlate: "K 1234 AB" }), order: o });
+    renderAt("/print/delivery/3", "/print/delivery/:id", <DeliveryNotePrintPage />);
+    expect(await screen.findByText("Semen - 50 KG")).toBeTruthy();
+    expect(screen.getByText("STATUS : DIBATALKAN")).toBeTruthy();
+    expect(screen.getByText("K 1234 AB")).toBeTruthy();
   });
 });
 
-describe("struk termal POS (SL-05, SL-10)", () => {
-  const posOrder = (over: Record<string, unknown> = {}) =>
-    order({ channel: "pos", paymentTerms: "cod", grandTotal: 180000, cashierName: "Tono Kasir", ...over });
+describe("bukti pembayaran (sama dengan sistem lama)", () => {
+  const payment = {
+    id: 9,
+    number: "PAY-9",
+    partyId: 7,
+    partyName: "Budi",
+    partyType: "customer",
+    partyPhone: "0811-111",
+    partyAddress: "Jl. Pelanggan 2",
+    direction: "in",
+    amount: 50000,
+    method: "transfer",
+    paidAt: "2026-10-02T09:00:00+07:00",
+    notes: "",
+    status: "active",
+    reference: "",
+    amountTendered: 0,
+    change: 0,
+    allocations: [{ orderType: "sales", orderId: 5, orderNumber: "SO-0005", amount: 50000 }],
+  };
 
-  it("kasir = pencatat pembayaran dari server, bukan pengguna yang mencetak", async () => {
-    fetchSales.mockResolvedValue(posOrder());
-    renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
-    expect(await screen.findByText("Tono Kasir")).toBeTruthy();
+  it("judul, pihak, rincian, dan ringkasan setelah pembayaran ini", async () => {
+    fetchReceipt.mockResolvedValue({
+      payment,
+      order: { number: "SO-0005", total: 180000 },
+      history: [
+        { ...payment, id: 8, number: "PAY-8", amount: 30000, paidAt: "2026-10-01T09:00:00+07:00", allocations: [{ ...payment.allocations[0], amount: 30000 }] },
+        payment,
+      ],
+    });
+    const { container } = renderAt("/print/payments/9", "/print/payments/:id", <PaymentReceiptPrintPage />);
+    expect(await screen.findByText("Bukti Pembayaran Customer")).toBeTruthy();
+    expect(screen.getByText("Diterima Dari")).toBeTruthy();
+    expect(screen.getByText("0811-111")).toBeTruthy();
+    expect(screen.getByText("SO-0005")).toBeTruthy();
+    expect(screen.getByText("Transfer Bank")).toBeTruthy();
+    expect(screen.getByText("Ada Sisa")).toBeTruthy();
+    const rows = Array.from(container.querySelectorAll(".kwitansi-summary tr")).map((tr) => tr.textContent?.replace(/\s+/g, " "));
+    expect(rows).toEqual([
+      "Total TagihanRp 180.000",
+      "Jumlah Pembayaran IniRp 50.000",
+      "Total Terbayar Setelah IniRp 80.000",
+      "Sisa Setelah PembayaranRp 100.000",
+    ]);
+    expect(screen.getByText(/Bukti pembayaran ini dicatat dari sistem/)).toBeTruthy();
+    // Sistem lama: tanpa tanda tangan (BR-30) dan tanpa terbilang.
+    expect(container.querySelector(".kwitansi-sign")).toBeNull();
+    expect(screen.queryByText(/Terbilang/i)).toBeNull();
   });
 
-  it("diskon tampil bawaan; ?hideDiscount=1 menghilangkan baris diskon dan memakai harga penuh", async () => {
-    fetchSales.mockResolvedValue(posOrder());
-    const first = renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
-    await screen.findByText("Tono Kasir");
-    expect(screen.getAllByText("Diskon").length).toBeGreaterThan(0);
-    first.unmount();
+  it("pembayaran batal ditandai Dibatalkan", async () => {
+    fetchReceipt.mockResolvedValue({ payment: { ...payment, status: "cancelled" }, order: null, history: [] });
+    renderAt("/print/payments/9", "/print/payments/:id", <PaymentReceiptPrintPage />);
+    expect(await screen.findByText("Dibatalkan")).toBeTruthy();
+  });
+
+  it("alokasi ke beberapa order: tabel alokasi menggantikan ringkasan satu order", async () => {
+    fetchReceipt.mockResolvedValue({
+      payment: {
+        ...payment,
+        allocations: [
+          { orderType: "sales", orderId: 5, orderNumber: "SO-0005", amount: 20000 },
+          { orderType: "sales", orderId: 6, orderNumber: "SO-0006", amount: 30000 },
+        ],
+      },
+      order: null,
+      history: [],
+    });
+    fetchAlloc.mockResolvedValue({ "sales:5": { total: 180000, paid: 20000, outstanding: 160000 } });
+    renderAt("/print/payments/9", "/print/payments/:id", <PaymentReceiptPrintPage />);
+    expect(await screen.findByText("Sisa Tagihan (saat cetak)")).toBeTruthy();
+    expect(screen.getByText("SO-0005, SO-0006")).toBeTruthy();
+    expect(screen.queryByText("Total Terbayar Setelah Ini")).toBeNull();
+  });
+});
+
+describe("struk termal POS (sama dengan sistem lama)", () => {
+  const posOrder = (over: Record<string, unknown> = {}) =>
+    order({ channel: "pos", paymentTerms: "cod", paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid", cashierName: "Tono Kasir", ...over });
+  const cashPayment = {
+    id: 9,
+    number: "PAY-9",
+    method: "cash",
+    paidAt: "2026-10-01T10:00:00+07:00",
+    status: "active",
+    amount: 180000,
+    amountTendered: 200000,
+    allocations: [],
+  };
+
+  it("cap LUNAS, No Bayar, kasir dari server, baris bruto + diskon (tidak dobel)", async () => {
+    fetchPos.mockResolvedValue({ order: posOrder(), payments: [cashPayment] });
+    renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
+    expect(await screen.findByText("Tono Kasir")).toBeTruthy();
+    expect(screen.getByText("LUNAS")).toBeTruthy();
+    expect(screen.getByText("PAY-9")).toBeTruthy();
+    // Baris barang: 2 sak x Rp 100.000 = Rp 200.000, lalu Diskon -Rp 20.000.
+    expect(screen.getByText(/2 sak x Rp\s100\.000/)).toBeTruthy();
+    expect(screen.getByText(/-Rp\s20\.000/)).toBeTruthy();
+    // "Tunai" = baris uang diterima dan metode bayar.
+    expect(screen.getAllByText("Tunai")).toHaveLength(2);
+    expect(screen.getByText("Kembalian")).toBeTruthy();
+  });
+
+  it("piutang tanpa pembayaran: PIUTANG, No Bayar '-', metode Tempo", async () => {
+    fetchPos.mockResolvedValue({
+      order: posOrder({ paymentTerms: "net", paidAmount: 0, outstandingAmount: 180000, paymentStatus: "unpaid" }),
+      payments: [],
+    });
+    renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
+    expect(await screen.findByText("PIUTANG")).toBeTruthy();
+    expect(screen.getByText("Tempo")).toBeTruthy();
+    expect(screen.getByText("Sisa")).toBeTruthy();
+  });
+
+  it("?hideDiscount=1 menghilangkan baris diskon dan memakai harga penuh", async () => {
+    fetchPos.mockResolvedValue({ order: posOrder(), payments: [cashPayment] });
     renderAt("/print/pos/5?hideDiscount=1", "/print/pos/:orderId", <PosThermalReceiptPage />);
     await screen.findByText("Tono Kasir");
     expect(screen.queryByText("Diskon")).toBeNull();
-    expect(screen.getAllByText(/200\.000/).length).toBeGreaterThan(0);
+    const box = screen.getByLabelText("Sembunyikan diskon (harga penuh)") as HTMLInputElement;
+    expect(box.checked).toBe(true);
   });
 
-  it("order ber-PPN: struk menampilkan DPP dan PPN; tanpa pajak baris itu tidak ada (K-03)", async () => {
-    fetchSales.mockResolvedValue(posOrder({ taxTotal: 18000, taxRate: 11, grandTotal: 198000 }));
+  it("order ber-PPN (K-03): struk merinci DPP dan PPN; tanpa pajak baris itu tidak ada", async () => {
+    fetchPos.mockResolvedValue({ order: posOrder({ taxTotal: 18000, taxRate: 11, grandTotal: 198000 }), payments: [cashPayment] });
     const first = renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
     await screen.findByText("Tono Kasir");
     expect(screen.getByText("DPP")).toBeTruthy();
     expect(screen.getByText("PPN 11%")).toBeTruthy();
-    expect(screen.getAllByText(/180\.000/).length).toBeGreaterThan(0);
     first.unmount();
-    fetchSales.mockResolvedValue(posOrder());
+    fetchPos.mockResolvedValue({ order: posOrder(), payments: [cashPayment] });
     renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
     await screen.findByText("Tono Kasir");
     expect(screen.queryByText("DPP")).toBeNull();
     expect(screen.queryByText(/^PPN/)).toBeNull();
-  });
-
-  it("toolbar punya toggle Sembunyikan diskon yang dicentang dari tautan", async () => {
-    fetchSales.mockResolvedValue(posOrder());
-    renderAt("/print/pos/5?hideDiscount=1", "/print/pos/:orderId", <PosThermalReceiptPage />);
-    const box = (await screen.findByLabelText("Sembunyikan diskon")) as HTMLInputElement;
-    expect(box.checked).toBe(true);
   });
 });

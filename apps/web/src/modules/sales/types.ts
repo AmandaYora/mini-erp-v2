@@ -54,6 +54,9 @@ export interface SalesOrder {
   branchId: number;
   partyId: number;
   partyName: string;
+  /** Kontak pelanggan sendiri — hanya di detail (GET /sales-orders/{id}); cadangan cetak tanpa alamat kirim. */
+  partyPhone?: string;
+  partyAddress?: string;
   channel: string;
   memberCode: string;
   orderDate: string;

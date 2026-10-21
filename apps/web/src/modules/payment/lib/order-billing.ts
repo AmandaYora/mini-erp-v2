@@ -106,14 +106,6 @@ export function canSwitchToNet(o: OrderBillingSource): boolean {
   );
 }
 
-/** Judul cetak SO dari status bayar (paritas legacy: Nota / Nota (Sebagian) / Tagihan). */
-export function salesDocumentTitle(b: BillingView): "Nota" | "Nota (Sebagian)" | "Tagihan" {
-  if (!b.available) return "Nota";
-  if (b.status === "paid") return "Nota";
-  if (b.paid > 0) return "Nota (Sebagian)";
-  return "Tagihan";
-}
-
 /** Judul tombol cetak di detail SO. */
 export function printButtonLabel(b: BillingView): "Cetak Nota" | "Cetak Tagihan" {
   return b.available && b.outstanding > 0 ? "Cetak Tagihan" : "Cetak Nota";

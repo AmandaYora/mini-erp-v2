@@ -16,6 +16,9 @@ export interface Payment {
   partyId: number;
   partyName: string;
   partyType: string;
+  /** Kontak pihak — hanya di detail (GET /payments/{id}), untuk bukti pembayaran. */
+  partyPhone?: string;
+  partyAddress?: string;
   direction: string;
   amount: number;
   method: string;

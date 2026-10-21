@@ -41,6 +41,7 @@ func orderView(o *contracts.SalesOrder) map[string]any {
 	return map[string]any{
 		"id": o.ID, "number": o.Number, "branchId": o.BranchID,
 		"partyId": o.PartyID, "partyName": o.PartyName,
+		"partyPhone": o.PartyPhone, "partyAddress": o.PartyAddress,
 		"channel": o.Channel, "memberCode": o.MemberCode,
 		"orderDate": o.OrderDate, "dueDate": o.DueDate, "paymentTerms": o.PaymentTerms,
 		"taxType": o.TaxType, "taxRate": o.TaxRate,

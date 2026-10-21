@@ -105,7 +105,7 @@ func (s *Service) enrich(ctx context.Context, p *contracts.Payment) (*contracts.
 		return nil, apperror.Internal(err)
 	}
 	if party != nil {
-		p.PartyName = party.Name
+		p.PartyName, p.PartyPhone, p.PartyAddress = party.Name, party.Phone, party.Address
 	}
 	return p, nil
 }

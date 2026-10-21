@@ -217,6 +217,10 @@ export function receiptStyles(): string {
   .kwitansi-sign .box { text-align: center; }
   .kwitansi-sign .line { border-top: 1px solid #111; margin-top: 56px; padding-top: 3px; font-weight: 700; }
   .kwitansi-note { border-top: 1px dashed #9ca3af; margin-top: 18px; padding-top: 10px; color: #374151; font-size: 10pt; }
+  .kwitansi-summary { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
+  .kwitansi-summary td { border: 1px solid #d1d5db; padding: 7px 8px; }
+  .kwitansi-summary td.num { text-align: right; }
+  .kwitansi-summary .grand-total { font-weight: 800; background: #f3f4f6; }
   .kwitansi-status { display: inline-block; border: 1px solid #111827; border-radius: 999px; padding: 3px 10px; font-weight: 800; font-size: 9.5pt; text-transform: uppercase; }
   @media screen and (max-width: 720px) {
     .kwitansi-head, .kwitansi-grid, .kwitansi-sign { display: grid; grid-template-columns: 1fr; }
@@ -248,6 +252,9 @@ export function continuousReceiptStyles(
   .kwitansi-page.continuous .kwitansi-alloc { font-size: 8pt; margin: 9px 0; }
   .kwitansi-page.continuous .kwitansi-sign { font-size: 8pt; margin-top: 10px; }
   .kwitansi-page.continuous .kwitansi-note { font-size: 7.5pt; margin-top: 9px; padding-top: 7px; }
+  .kwitansi-page.continuous .kwitansi-summary { font-size: 8pt; }
+  .kwitansi-page.continuous .kwitansi-summary td { padding: 3.5px 7px; }
+  .kwitansi-page.continuous .kwitansi-status { font-size: 8pt; }
   `;
 }
 
@@ -281,6 +288,7 @@ export function thermalStyles(widthMm: ThermalWidth): string {
   .thermal-phone { font-size: 10px; }
   .thermal-separator { border-top: 1px dashed #000; margin: 6px 0; }
   .thermal-row { display: flex; gap: 8px; justify-content: space-between; }
+  .thermal-row span:first-child { min-width: 0; }
   .thermal-row span:last-child { flex: 0 0 auto; text-align: right; white-space: nowrap; }
   .thermal-item { margin: 6px 0; }
   .thermal-item-name { font-weight: 700; overflow-wrap: anywhere; }

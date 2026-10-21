@@ -64,11 +64,15 @@ const (
 
 // SalesOrder is the full document with lines and names.
 type SalesOrder struct {
-	ID            int64
-	Number        string
-	BranchID      int64
-	PartyID       int64
-	PartyName     string
+	ID        int64
+	Number    string
+	BranchID  int64
+	PartyID   int64
+	PartyName string
+	// PartyPhone / PartyAddress are the customer's own contact, filled by the
+	// detail read only (printed documents fall back to them without a ship-to).
+	PartyPhone    string
+	PartyAddress  string
 	Channel       string
 	MemberCode    string
 	OrderDate     string

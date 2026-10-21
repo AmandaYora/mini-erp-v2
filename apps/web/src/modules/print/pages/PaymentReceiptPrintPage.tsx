@@ -1,51 +1,55 @@
-// Kwitansi Pembayaran — A4 + kertas kontinu (Tahap E4).
+// Bukti Pembayaran — A4 + kertas kontinu.
 //
-// Data: paymentService.get (paymentView + alokasi order). Nominal + terbilang
-// + alokasi per order tercetak. Paritas legacy (BR-30): kwitansi TANPA blok
-// tanda tangan (disengaja); terbilang dipertahankan.
+// Dokumen yang dipegang pelanggan/pemasok: isi & tata letak SAMA dengan
+// payment-receipt-print-page.tsx sistem lama (identitas perusahaan), tanpa
+// blok tanda tangan (BR-30). Pembayaran v2 bisa dialokasi ke beberapa order
+// (tidak ada di sistem lama): satu order -> ringkasan tagihan legacy; beberapa
+// order -> tabel alokasi menggantikan ringkasan itu.
 
 import { useParams, useSearchParams } from "react-router-dom";
-import { formatDate, formatDateTime, formatIDR } from "@/shared/lib/format";
+import { formatIDR } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
+import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { PrintLayout } from "@/modules/print/components/PrintLayout";
-import { terbilangRupiah } from "@/modules/print/document";
-import {
-  readPaperMode,
-  withPaperModeParam,
-  type PrintPaperMode,
-} from "@/modules/print/paper";
+import { formatDocDate, formatDocDateTime, printMethodLabel } from "@/modules/print/document";
+import { readPaperMode, withPaperModeParam, type PrintPaperMode } from "@/modules/print/paper";
 import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import {
   fetchAllocationBilling,
-  fetchPaymentForPrint,
+  fetchPaymentReceipt,
   type AllocationBilling,
-  type Payment,
+  type PaymentReceiptData,
 } from "@/modules/print/services/print-fetch";
+import { receiptOrderRef, receiptPartySide, receiptSummary } from "@/modules/print/lib/payment-receipt";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
-import { directionLabel, methodLabel, orderTypeLabel } from "@/modules/payment/types";
+import { orderTypeLabel } from "@/modules/payment/types";
 import { continuousReceiptStyles, receiptStyles } from "@/modules/print/styles";
 
 export default function PaymentReceiptPrintPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
+  const company = useAuthStore((s) => s.company);
+  const branch = useAuthStore((s) => s.branch);
+  const { paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
 
   const paymentId = Number(id);
 
-  const { data: bundle, loading, error } = useAsyncData(
-    async (): Promise<{ payment: Payment; billing: Record<string, AllocationBilling> }> => {
+  const { data, loading, error } = useAsyncData(
+    async (): Promise<PaymentReceiptData & { billing: Record<string, AllocationBilling> }> => {
       if (!Number.isInteger(paymentId) || paymentId <= 0) {
         throw new Error("ID pembayaran tidak valid.");
       }
       try {
-        const p = await fetchPaymentForPrint(paymentId);
-        // Ringkasan tagihan per order dialokasi: best-effort, tak menggagalkan cetak.
-        return { payment: p, billing: await fetchAllocationBilling(p.allocations) };
+        const receipt = await fetchPaymentReceipt(paymentId);
+        // Tabel alokasi (multi order) — ringkasan tagihan per order, best-effort.
+        const billing =
+          receipt.payment.allocations.length > 1 ? await fetchAllocationBilling(receipt.payment.allocations) : {};
+        return { ...receipt, billing };
       } catch (err) {
         const msg = toApiError(err).message;
-        toast.danger("Gagal memuat kwitansi", msg);
+        toast.danger("Gagal memuat bukti pembayaran", msg);
         throw err;
       }
     },
@@ -53,28 +57,31 @@ export default function PaymentReceiptPrintPage() {
   );
 
   if (loading || profileLoading) {
-    return <div style={{ padding: "2rem" }}>Memuat kwitansi…</div>;
+    return <div style={{ padding: "2rem" }}>Memuat bukti pembayaran...</div>;
   }
-  const payment: Payment | null = bundle?.payment ?? null;
-  const billing = bundle?.billing ?? {};
-  if (error !== null || payment === null) {
-    return (
-      <div style={{ padding: "2rem" }}>{error ?? "Pembayaran tidak ditemukan."}</div>
-    );
+  if (error !== null || data === null) {
+    return <div style={{ padding: "2rem" }}>{error ?? "Pembayaran tidak ditemukan."}</div>;
   }
 
-  const paperMode: PrintPaperMode = readPaperMode(
-    searchParams,
-    paper.isDefault ? "continuous" : "a4",
-  );
+  const { payment, order, history, billing } = data;
+  const paperMode: PrintPaperMode = readPaperMode(searchParams, paper.isDefault ? "continuous" : "a4");
   const isContinuous = paperMode === "continuous";
-  // Kwitansi memakai header class-based (kop perusahaan teks) — tidak ada
-  // blok kop bergambar, jadi toggle preprinted tidak ditawarkan di sini.
 
-  const incoming = payment.direction.toLowerCase() === "in";
-  const title = incoming ? "Kwitansi Penerimaan" : "Kwitansi Pembayaran";
-  const partyRole = incoming ? "Diterima Dari" : "Dibayarkan Kepada";
-  const partyName = payment.partyName.trim() !== "" ? payment.partyName : "-";
+  const ref = receiptOrderRef(payment);
+  const side = receiptPartySide(ref?.orderType, payment.partyType, payment.direction);
+  const isCustomer = side === "customer";
+  const summary = ref !== null && order !== null ? receiptSummary(payment, ref, order.total, history) : null;
+  const cancelled = payment.status === "cancelled";
+  const statusText = cancelled ? "Dibatalkan" : summary !== null ? (summary.outstandingAfter <= 0 ? "Lunas" : "Ada Sisa") : null;
+  const partyName =
+    payment.partyId > 0 && payment.partyName.trim() !== ""
+      ? payment.partyName
+      : isCustomer
+        ? "Pelanggan umum"
+        : "Supplier";
+  const orderNumber =
+    order?.number ?? (payment.allocations.length > 0 ? payment.allocations.map((a) => a.orderNumber).join(", ") : "-");
+  const companyName = company?.name?.trim() || "Mini ERP";
 
   return (
     <PrintLayout
@@ -82,58 +89,52 @@ export default function PaymentReceiptPrintPage() {
       continuousCss={isContinuous ? continuousReceiptStyles(paper) : null}
       paperMode={paperMode}
       onPaperModeChange={(m) => setSearchParams(withPaperModeParam(searchParams, m), { replace: true })}
+      // Kepala bukti pembayaran berupa teks (tanpa kop bergambar): tak ada toggle preprinted.
       letterheadToggle={null}
       notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
       mainClassName={isContinuous ? "kwitansi-page continuous" : "kwitansi-page"}
     >
       <div className="kwitansi-head">
         <div>
-          <h1 className="kwitansi-title">{title}</h1>
-          <div className="kwitansi-company">{identity.name}</div>
-          {identity.addressLine !== "" ? (
-            <div className="kwitansi-muted">{identity.addressLine}</div>
+          <h1 className="kwitansi-title">{isCustomer ? "Bukti Pembayaran Customer" : "Bukti Pembayaran Supplier"}</h1>
+          <div className="kwitansi-company">{companyName}</div>
+          {branch !== null ? (
+            <div className="kwitansi-muted">
+              {branch.name}
+              {branch.address?.trim() ? ` - ${branch.address.trim()}` : ""}
+            </div>
           ) : null}
         </div>
         <div className="kwitansi-meta">
           <div><strong>No. Dokumen:</strong> {payment.number}</div>
-          <div><strong>Tanggal:</strong> {formatDate(payment.paidAt)}</div>
-          <div>
-            <span className="kwitansi-status">
-              {payment.status === "cancelled" ? "Dibatalkan" : directionLabel(payment.direction)}
-            </span>
-          </div>
+          <div><strong>Tanggal:</strong> {formatDocDate(payment.paidAt)}</div>
+          {statusText !== null ? (
+            <div><span className="kwitansi-status">{statusText}</span></div>
+          ) : null}
         </div>
       </div>
 
       <section className="kwitansi-grid">
         <div className="kwitansi-box">
-          <h2>{partyRole}</h2>
+          <h2>{isCustomer ? "Diterima Dari" : "Dibayarkan Kepada"}</h2>
           <div className="kwitansi-kv">
             <span>Nama</span><strong>{partyName}</strong>
-            <span>Jenis</span><span>{payment.partyType || "-"}</span>
+            <span>No. HP</span><span>{payment.partyPhone?.trim() || "-"}</span>
+            <span>Alamat</span><span>{payment.partyAddress?.trim() || "-"}</span>
           </div>
         </div>
         <div className="kwitansi-box">
           <h2>Rincian Pembayaran</h2>
           <div className="kwitansi-kv">
-            <span>Metode</span><span>{methodLabel(payment.method)}</span>
-            <span>Tanggal</span><span>{formatDateTime(payment.paidAt)}</span>
-            {payment.method === "cash" && payment.amountTendered > 0 ? (
-              <>
-                <span>Tunai diterima</span><span>{formatIDR(payment.amountTendered)}</span>
-                <span>Kembalian</span><span>{formatIDR(payment.change)}</span>
-              </>
-            ) : null}
-            {payment.reference.trim() !== "" ? (
-              <>
-                <span>Referensi</span><span>{payment.reference}</span>
-              </>
-            ) : null}
+            <span>No. Order</span><strong>{orderNumber}</strong>
+            <span>Tanggal</span><span>{formatDocDateTime(payment.paidAt)}</span>
+            <span>Metode</span><span>{printMethodLabel(payment.method)}</span>
+            <span>Referensi</span><span>{payment.reference.trim() || "-"}</span>
           </div>
         </div>
       </section>
 
-      {payment.allocations.length > 0 ? (
+      {payment.allocations.length > 1 ? (
         <table className="kwitansi-alloc">
           <thead>
             <tr>
@@ -161,18 +162,30 @@ export default function PaymentReceiptPrintPage() {
         </table>
       ) : null}
 
-      <div className="kwitansi-amount">
-        <div>
-          <strong>Jumlah: {formatIDR(payment.amount)}</strong>
-        </div>
-        <div className="terbilang">Terbilang: {terbilangRupiah(payment.amount)}</div>
-      </div>
+      <table className="kwitansi-summary">
+        <tbody>
+          {summary !== null ? (
+            <tr><td>Total Tagihan</td><td className="num">{formatIDR(summary.totalAmount)}</td></tr>
+          ) : null}
+          <tr className="grand-total"><td>Jumlah Pembayaran Ini</td><td className="num">{formatIDR(payment.amount)}</td></tr>
+          {summary !== null ? (
+            <>
+              <tr><td>Total Terbayar Setelah Ini</td><td className="num">{formatIDR(summary.paidUntilThis)}</td></tr>
+              <tr className="grand-total"><td>Sisa Setelah Pembayaran</td><td className="num">{formatIDR(summary.outstandingAfter)}</td></tr>
+            </>
+          ) : null}
+        </tbody>
+      </table>
 
       {payment.notes.trim() !== "" ? (
         <div className="kwitansi-note">
           <strong>Catatan:</strong> {payment.notes}
         </div>
       ) : null}
+
+      <div className="kwitansi-note">
+        Bukti pembayaran ini dicatat dari sistem dan diverifikasi melalui nomor pembayaran, metode, referensi, serta audit transaksi.
+      </div>
     </PrintLayout>
   );
 }

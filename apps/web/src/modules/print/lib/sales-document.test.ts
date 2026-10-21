@@ -1,82 +1,137 @@
 import { describe, expect, it } from "vitest";
 import {
-  discountCell,
-  documentTitle,
   documentTotals,
   dueDateCell,
-  lineAmount,
+  hasLineDiscount,
+  lineDiscountTotal,
+  linePrintSubtotal,
+  linePrintUnitPrice,
+  lineSellingAmount,
+  orderPrintDiscount,
+  orderPrintSubtotal,
   readHideDiscount,
+  salesDocumentTitle,
   withHideDiscountParam,
+  type DocLine,
+  type DocOrder,
 } from "@/modules/print/lib/sales-document";
-import type { DocOrder } from "@/modules/print/lib/sales-document";
 
-const money = (n: number) => `Rp${n}`;
-const num = (n: number) => String(n);
+// Angka diharapkan dihitung dengan rumus sales-print-shared.tsx sistem lama.
 
-const order: DocOrder = {
-  status: "confirmed",
-  grandTotal: 180000,
-  paymentTerms: "net",
-  paidAmount: 50000,
-  outstandingAmount: 130000,
-  paymentStatus: "partial",
-  effectiveDueDate: "2026-11-01",
-  isOverdue: false,
-  dueDate: "2026-11-01",
-  subtotal: 200000,
-  discountTotal: 20000,
-  taxTotal: 0,
-  items: [
-    { qty: 2, unitPrice: 100000, discountPct: 0, discountNominal: 20000, lineTotal: 180000 },
-  ],
-};
+const discounted: DocLine = { qty: 2, unitPrice: 100000, discountPct: 0, discountNominal: 20000, lineTotal: 180000 };
+const plain: DocLine = { qty: 3, unitPrice: 10000, discountPct: 0, discountNominal: 0, lineTotal: 30000 };
 
-describe("judul dan total nota", () => {
-  it("judul menurut status bayar", () => {
-    expect(documentTitle(order)).toBe("Nota (Sebagian)");
-    expect(documentTitle({ ...order, paidAmount: 0, outstandingAmount: 180000, paymentStatus: "unpaid" })).toBe("Tagihan");
-    expect(documentTitle({ ...order, paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid" })).toBe("Nota");
+function order(over: Partial<DocOrder> = {}): DocOrder {
+  return {
+    grandTotal: 210000,
+    discountTotal: 20000,
+    taxTotal: 0,
+    dueDate: "2026-11-01",
+    paymentTerms: "net",
+    paidAmount: 50000,
+    outstandingAmount: 160000,
+    paymentStatus: "partial",
+    items: [discounted, plain],
+    ...over,
+  };
+}
+
+describe("harga & diskon per baris (legacy)", () => {
+  it("harga satuan tercetak = harga penuh; diskon nominal + persen", () => {
+    expect(linePrintUnitPrice(discounted)).toBe(100000);
+    expect(linePrintSubtotal(discounted)).toBe(200000);
+    expect(lineDiscountTotal(discounted)).toBe(20000);
+    const pct: DocLine = { qty: 4, unitPrice: 25000, discountPct: 10, discountNominal: 5000, lineTotal: 85000 };
+    expect(lineDiscountTotal(pct)).toBe(15000);
+    expect(lineDiscountTotal(plain)).toBe(0);
   });
 
-  it("total normal: diskon tampil, dibayar & sisa riil", () => {
-    expect(documentTotals(order, false)).toEqual({
-      subtotal: 200000,
-      discount: 20000,
-      tax: null,
-      total: 180000,
-      paid: 50000,
-      outstanding: 130000,
-    });
+  it("harga member tercetak dengan harga katalognya; selisihnya diskon", () => {
+    const member: DocLine = {
+      qty: 2,
+      unitPrice: 90000,
+      discountPct: 0,
+      discountNominal: 0,
+      lineTotal: 180000,
+      pricingSource: "member_rule",
+      basePrice: 100000,
+    };
+    expect(linePrintUnitPrice(member)).toBe(100000);
+    expect(linePrintSubtotal(member)).toBe(200000);
+    expect(lineDiscountTotal(member)).toBe(20000);
+    // Katalog lebih murah dari harga member (aturan markup): tidak dianggap diskon.
+    expect(linePrintUnitPrice({ ...member, basePrice: 80000 })).toBe(90000);
+    // Harga manual tidak pernah memakai harga katalog.
+    expect(linePrintUnitPrice({ ...member, pricingSource: "manual" })).toBe(90000);
   });
 
-  it("sembunyikan diskon: jumlah naik ke bruto, baris diskon hilang, total dan sisa tetap riil", () => {
-    const t = documentTotals(order, true);
-    expect(t.discount).toBeNull();
-    expect(t.subtotal).toBe(200000);
-    expect(t.total).toBe(180000);
-    expect(t.outstanding).toBe(130000);
-    expect(lineAmount(order.items[0], true)).toBe(200000);
-    expect(lineAmount(order.items[0], false)).toBe(180000);
-    expect(discountCell(order.items[0], true, money, num)).toBe("-");
-    expect(discountCell(order.items[0], false, money, num)).toBe("Rp20000");
+  it("Harga Jual = total baris; harga penuh bila diskon disembunyikan", () => {
+    expect(lineSellingAmount(discounted, false)).toBe(180000);
+    expect(lineSellingAmount(discounted, true)).toBe(200000);
+    expect(hasLineDiscount([plain])).toBe(false);
+    expect(hasLineDiscount([plain, discounted])).toBe(true);
   });
 
-  it("tanpa paid: baris Sudah Dibayar tidak dicetak", () => {
-    expect(documentTotals({ ...order, paidAmount: 0, outstandingAmount: 180000, paymentStatus: "unpaid" }, false).paid).toBeNull();
-  });
-
-  it("jatuh tempo: '-' (null) bila lunas atau tanpa tempo", () => {
-    expect(dueDateCell(order)).toBe("2026-11-01");
-    expect(dueDateCell({ ...order, paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid" })).toBeNull();
-    expect(dueDateCell({ ...order, paymentTerms: "cod", effectiveDueDate: "", dueDate: "" })).toBeNull();
+  it("diskon order tanpa diskon baris tetap tercetak di ringkasan", () => {
+    expect(orderPrintDiscount(order({ items: [plain], discountTotal: 7000 }))).toBe(7000);
+    expect(orderPrintSubtotal(order())).toBe(230000);
   });
 });
 
-describe("param sembunyikan diskon", () => {
-  it("baca dan tulis", () => {
-    expect(readHideDiscount(new URLSearchParams("hideDiscount=1"))).toBe(true);
-    expect(readHideDiscount(new URLSearchParams(""))).toBe(false);
-    expect(withHideDiscountParam(new URLSearchParams("a=1"), true).toString()).toBe("a=1&hideDiscount=1");
-    expect(withHideDiscountParam(new URLSearchParams("hideDiscount=1"), false).toString()).toBe("");
+describe("ringkasan & judul (legacy)", () => {
+  it("bayar sebagian: Jumlah bruto, Diskon, Total, Sudah Dibayar, Sisa", () => {
+    const t = documentTotals(order(), false);
+    expect(t).toMatchObject({
+      grossSubtotal: 230000,
+      discount: 20000,
+      tax: null,
+      total: 210000,
+      paid: 50000,
+      outstanding: 160000,
+    });
+    expect(salesDocumentTitle(t)).toBe("Tagihan - Bayar Sebagian");
+  });
+
+  it("judul Tagihan Penjualan / Nota Penjualan Lunas", () => {
+    expect(salesDocumentTitle(documentTotals(order({ paidAmount: 0, outstandingAmount: 210000 }), false))).toBe(
+      "Tagihan Penjualan",
+    );
+    expect(salesDocumentTitle(documentTotals(order({ paidAmount: 210000, outstandingAmount: 0 }), false))).toBe(
+      "Nota Penjualan Lunas",
+    );
+  });
+
+  it("sembunyikan diskon: total & dibayar naik ke harga penuh, sisa tetap riil", () => {
+    const t = documentTotals(order(), true);
+    expect(t).toMatchObject({ discount: null, total: 230000, paid: 70000, outstanding: 160000 });
+    // Belum dibayar: harga penuh yang terutang (perilaku sistem lama).
+    const unpaid = documentTotals(order({ paidAmount: 0, outstandingAmount: 210000 }), true);
+    expect(unpaid).toMatchObject({ paid: null, total: 230000, outstanding: 230000 });
+  });
+
+  it("retur yang mengurangi tagihan: sisa mengikuti server", () => {
+    // Tagihan 210.000, retur 30.000, dibayar 50.000 -> sisa server 130.000.
+    const o = order({ outstandingAmount: 130000 });
+    expect(documentTotals(o, false).outstanding).toBe(130000);
+    expect(documentTotals(o, true).outstanding).toBe(130000);
+  });
+
+  it("baris Pajak hanya bila ada pajak", () => {
+    expect(documentTotals(order({ taxTotal: 23100 }), false).tax).toBe(23100);
+  });
+});
+
+describe("jatuh tempo & parameter", () => {
+  it("Tgl. Jtp hanya selagi ada sisa tagihan", () => {
+    expect(dueDateCell(order())).toBe("2026-11-01");
+    expect(dueDateCell(order({ paidAmount: 210000, outstandingAmount: 0 }))).toBeNull();
+    expect(dueDateCell(order({ dueDate: "", effectiveDueDate: "2026-10-30" }))).toBe("2026-10-30");
+    expect(dueDateCell(order({ dueDate: "" }))).toBeNull();
+  });
+
+  it("parameter hideDiscount", () => {
+    const p = withHideDiscountParam(new URLSearchParams("paper=a4"), true);
+    expect(readHideDiscount(p)).toBe(true);
+    expect(readHideDiscount(withHideDiscountParam(p, false))).toBe(false);
   });
 });

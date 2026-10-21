@@ -27,6 +27,10 @@ test.describe.serial("E08 cetak", () => {
     await loginAs(page, "admin");
     const errors = collectErrors(page);
     await page.goto(`/print/sales/${so.id}`);
+    // Judul & label sama dengan nota sistem lama (ADR-0018 D12); order sudah dilunasi di beforeAll.
+    await expect(page.getByText("Nota Penjualan Lunas")).toBeVisible();
+    await expect(page.getByText("Jumlah (Rp)")).toBeVisible();
+    await expect(page.locator('img[alt="Logo"]').first()).toBeVisible();
     await expect(page.getByText(so.number).first()).toBeVisible();
     await expect(page.getByText(p1.name).first()).toBeVisible();
     await expect(page.getByText(/19\.500/).first()).toBeVisible();
@@ -36,6 +40,7 @@ test.describe.serial("E08 cetak", () => {
   test("surat jalan memuat nomor SJ dan barang", async ({ page }) => {
     await loginAs(page, "admin");
     await page.goto(`/print/deliveries/${delivery.id}`);
+    await expect(page.getByText("STATUS : Lunas")).toBeVisible();
     await expect(page.getByText(delivery.number).first()).toBeVisible();
     await expect(page.getByText(p2.name).first()).toBeVisible();
   });
@@ -63,6 +68,8 @@ test.describe.serial("E08 cetak", () => {
   test("kwitansi pembayaran memuat nomor dan nominal", async ({ page }) => {
     await loginAs(page, "admin");
     await page.goto(`/print/payments/${payment.id}`);
+    await expect(page.getByText("Bukti Pembayaran Customer")).toBeVisible();
+    await expect(page.getByText("Sisa Setelah Pembayaran")).toBeVisible();
     await expect(page.getByText(payment.number).first()).toBeVisible();
     await expect(page.getByText(/19\.500/).first()).toBeVisible();
   });
@@ -75,6 +82,7 @@ test.describe.serial("E08 cetak", () => {
     expect(pos.grandTotal).toBe(5500 + 3000);
     await loginAs(page, "admin");
     await page.goto(`/print/pos/${pos.id}`);
+    await expect(page.getByText("LUNAS", { exact: true })).toBeVisible();
     await expect(page.getByText(pos.number).first()).toBeVisible();
     await expect(page.getByText(/8\.500/).first()).toBeVisible();
   });

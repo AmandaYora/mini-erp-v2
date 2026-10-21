@@ -44,6 +44,7 @@ export function printProfileWarning(err: ApiError): string {
  */
 export function usePrintProfile(): PrintProfileState {
   const company = useAuthStore((s) => s.company);
+  const branch = useAuthStore((s) => s.branch);
   const [raw, setRaw] = useState<string | undefined>(undefined);
   const [corrupt, setCorrupt] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
@@ -81,6 +82,8 @@ export function usePrintProfile(): PrintProfileState {
     identity: resolveIdentity(profile, {
       companyName: company?.name,
       companyCity: company?.city,
+      branchAddress: branch?.address,
+      branchCity: branch?.city,
     }),
     corrupt,
     warning,
