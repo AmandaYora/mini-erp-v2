@@ -274,11 +274,13 @@ func normalizeMode(mode string, replacementCount int) (string, error) {
 
 // soAggregate indexes SO lines per (product, variant) for matching.
 type soAggregate struct {
-	uoms    map[string]float64 // uom -> factor
-	price   map[string]int64   // uom -> snapshot unit price (last wins)
-	pct     map[string]float64 // uom -> discount pct (same line as price)
-	nominal map[string]int64   // uom -> summed discount nominal
-	soQty   map[string]float64 // uom -> summed SO qty (prorate base)
+	uoms map[string]float64 // uom -> factor
+	// econ holds, per UOM, the source lines' STORED economics (gross, net,
+	// tax base and tax per line — each line's own discount, taxable flag and
+	// rate). A return line takes its quantity share of them, so it gives back
+	// exactly what the order billed: an exempt line returns no tax, duplicate
+	// lines average by quantity, never "last line wins".
+	econ    map[string]*money.LineEconomics
 	qtyBase float64
 	tracked bool // false: service line, no stock
 }
@@ -289,15 +291,16 @@ func aggregateSO(so *salescontracts.SalesOrder) map[string]*soAggregate {
 		key := lineKey(l.ProductID, l.VariantID)
 		agg, ok := soAgg[key]
 		if !ok {
-			agg = &soAggregate{uoms: map[string]float64{}, price: map[string]int64{},
-				pct: map[string]float64{}, nominal: map[string]int64{}, soQty: map[string]float64{}}
+			agg = &soAggregate{uoms: map[string]float64{}, econ: map[string]*money.LineEconomics{}}
 			soAgg[key] = agg
 		}
 		agg.uoms[l.UOM] = l.UOMFactor
-		agg.price[l.UOM] = l.UnitPrice
-		agg.pct[l.UOM] = l.DiscountPct
-		agg.nominal[l.UOM] += l.DiscountNominal
-		agg.soQty[l.UOM] += l.Qty
+		e := agg.econ[l.UOM]
+		if e == nil {
+			e = &money.LineEconomics{}
+			agg.econ[l.UOM] = e
+		}
+		e.Add(l.Qty, l.UnitPrice, l.DiscountPct, l.DiscountNominal, l.TaxBase, l.TaxAmount)
 		agg.qtyBase += l.QtyBase
 		agg.tracked = agg.tracked || l.StockTracked
 	}
@@ -408,14 +411,15 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 		if !known {
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "varian sudah diarsipkan"}})
 		}
-		unitPrice := agg.price[uom]
-		// D1: value follows the source line economics — discount pro-rates
-		// in, tax flips with it. Lines that cannot match a source line are
-		// rejected above; never fall back to live catalog prices (that would
-		// refund today's price instead of the price actually paid).
-		nominalPart := money.Prorate(agg.nominal[uom], line.Qty, agg.soQty[uom])
-		net, base, tax, _ := money.LineAmounts(line.Qty, unitPrice, agg.pct[uom], nominalPart, so.TaxType, so.TaxRate).Split()
-		gross := money.Round(line.Qty * float64(unitPrice))
+		// D1: value follows the source line economics — its stored discount
+		// and tax split (taxable flag, rate) pro-rate in. Lines that cannot
+		// match a source line are rejected above; never fall back to live
+		// catalog prices (that would refund today's price instead of the price
+		// actually paid).
+		econ := agg.econ[uom]
+		gross, net, base, tax := econ.Part(line.Qty)
+		unitPrice, pct := econ.UnitPrice(), econ.DiscountPct()
+		nominalPart := max(0, gross-net-money.Round(float64(gross)*pct/100))
 		lineTotal := base + tax
 		subtotal += base
 		discountTotal += gross - net
@@ -423,7 +427,7 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 		items = append(items, &contracts.Item{
 			ProductID: line.ProductID, VariantID: line.VariantID, LocationID: locationID, Condition: cond,
 			UOM: uom, UOMFactor: factor, Qty: line.Qty, QtyBase: qtyBase,
-			UnitPrice: unitPrice, DiscountPct: agg.pct[uom], DiscountNominal: nominalPart,
+			UnitPrice: unitPrice, DiscountPct: pct, DiscountNominal: nominalPart,
 			TaxBase: base, TaxAmount: tax, LineTotal: lineTotal,
 		})
 	}
