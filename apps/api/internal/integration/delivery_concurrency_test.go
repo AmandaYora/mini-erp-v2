@@ -296,3 +296,27 @@ func TestDeliveryEvidenceRequired(t *testing.T) {
 		t.Fatalf("pos handover needs no evidence: %v", err)
 	}
 }
+
+// The list page carries what each row shows: the order number and the lines
+// (the list once returned bare headers — "Order jual" read "–", "Baris" 0).
+func TestDeliveryListShowsOrderAndLines(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	soID := sellFixture(t, ctx(), fx, 10)
+	n, err := draftNote(t, fx, soID, 4)
+	if err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+	var number string
+	if err := testMods.db.QueryRow(`SELECT number FROM sales_orders WHERE id = ?`, soID).Scan(&number); err != nil {
+		t.Fatalf("order number: %v", err)
+	}
+	listed, err := testMods.delivery.Service().ListFiltered(ctx(), fx.branchID, deliveryapp.ListFilter{}, 1, 20)
+	if err != nil || len(listed.Notes) != 1 {
+		t.Fatalf("list = %+v, %v", listed, err)
+	}
+	got := listed.Notes[0]
+	if got.ID != n.ID || got.OrderNumber != number || len(got.Items) != 1 || got.Items[0].Qty != 4 {
+		t.Fatalf("listed note = id %d order %q items %d; want id %d order %q 1 line of 4", got.ID, got.OrderNumber, len(got.Items), n.ID, number)
+	}
+}

@@ -124,8 +124,8 @@ func TestDirectDeliveryLifecycleWithoutOrder(t *testing.T) {
 		t.Fatalf("OpenDirectSummary = %+v, %v", sum, err)
 	}
 	listed, err := svc.ListFiltered(ctx(), fx.branchID, deliveryapp.ListFilter{Unordered: true}, 1, 10)
-	if err != nil || listed.Total != 1 {
-		t.Fatalf("list unordered = %v, %v", listed, err)
+	if err != nil || listed.Total != 1 || listed.Notes[0].PartyName != "Customer Uji" || len(listed.Notes[0].Items) == 0 {
+		t.Fatalf("list unordered = %+v, %v", listed, err)
 	}
 
 	// Finance (F-01/F-02): queued as awaiting order, not journallable, not
