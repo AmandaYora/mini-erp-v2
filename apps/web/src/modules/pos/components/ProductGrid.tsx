@@ -1,13 +1,18 @@
+import { memo, useEffect, useRef } from "react";
 import { ScanQrCode } from "lucide-react";
 import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { Notice } from "@/shared/components/feedback/notice";
-import { Skeleton } from "@/shared/components/ui";
+import { Button, Skeleton } from "@/shared/components/ui";
 import { formatIDR } from "@/shared/lib/format";
 import { cn } from "@/shared/lib/cn";
 import { PosCategoryDrilldown } from "@/modules/pos/components/PosCategoryDrilldown";
 import type { PosCartApi } from "@/modules/pos/hooks/use-pos-cart";
 import type { PosCatalogApi } from "@/modules/pos/hooks/use-pos-catalog";
-import type { PosProductOption } from "@/modules/pos/types";
+import type { PosProductListItem } from "@/modules/pos/types";
+
+// Mulai memuat halaman berikutnya ±600 px sebelum dasar kisi terlihat.
+const PRELOAD_MARGIN = "0px 0px 600px 0px";
+const GRID = "grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3";
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -16,27 +21,27 @@ function initials(name: string): string {
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }
 
-function Tile({
+// memo + onAdd stabil (bukan closure per tile): ubah keranjang hanya me-render tile yang berubah,
+// bukan ratusan tile hasil infinite scroll.
+const Tile = memo(function Tile({
   product,
   inCart,
   short,
   busy,
-  disabled,
   onAdd,
 }: {
-  product: PosProductOption;
+  product: PosProductListItem;
   inCart: number;
   short: boolean;
   busy: boolean;
-  disabled: boolean;
-  onAdd: () => void;
+  onAdd: (productId: number) => unknown;
 }) {
   return (
     <button
       type="button"
       aria-label={`Tambah ${product.name}`}
-      disabled={disabled || busy}
-      onClick={onAdd}
+      disabled={busy}
+      onClick={() => void onAdd(product.id)}
       className={cn(
         "relative flex min-h-34 touch-manipulation flex-col items-stretch gap-1.5 rounded-xl border border-border bg-card p-3 text-left shadow-[var(--shadow-card)] transition-[transform,background-color] duration-100 select-none active:scale-[0.98] active:bg-accent disabled:opacity-50",
         inCart > 0 && "border-primary ring-1 ring-primary",
@@ -66,11 +71,18 @@ function Tile({
       </span>
     </button>
   );
+});
+
+function statusText(catalog: PosCatalogApi): string {
+  if (catalog.loadingMore) return "Memuat produk berikutnya…";
+  if (catalog.page <= 1) return "";
+  if (!catalog.hasMore) return "Semua produk ditampilkan";
+  return `${catalog.lastPageCount} produk lagi dimuat`;
 }
 
 /** Panel kiri Mode Kasir: kategori, input pindai (QR label / barcode pabrik, wedge), dan kisi tile produk. */
 export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCatalogApi }) {
-  const { productOptions, searching } = catalog;
+  const { items, loadingFirst, loadingMore, hasMore, error, loadMore, generation } = catalog;
   const qtyByProduct = new Map<number, number>();
   const shortProducts = new Set<number>();
   for (const l of pos.cart) {
@@ -78,6 +90,31 @@ export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCat
     const st = pos.holds.lineState[`${l.productId}:${l.variantId}`];
     if (st && (st.shortfall > 0 || st.error)) shortProducts.add(l.productId);
   }
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Kata kunci/kategori baru (halaman 1 diterapkan): kembali ke atas kisi.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [generation]);
+
+  // Sentinel di bawah kisi mendekati layar -> muat halaman berikutnya. Observer dibuat ulang tiap
+  // jumlah item berubah: callback awalnya memeriksa ulang posisi sentinel, sehingga layar besar
+  // dengan halaman pendek terus memuat sampai penuh atau katalog habis.
+  useEffect(() => {
+    const root = scrollRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel || !hasMore || error !== null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore();
+      },
+      { root, rootMargin: PRELOAD_MARGIN },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [items.length, hasMore, error, generation, loadMore]);
 
   return (
     <section aria-label="Produk" className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -109,40 +146,65 @@ export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCat
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
         {pos.scanNotice && (
           <div className="mb-3">
             <Notice tone="warning" title={pos.scanNotice} />
           </div>
         )}
-        {searching && productOptions.length === 0 ? (
-          <div role="status" aria-label="Memuat produk" className="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3">
+        {loadingFirst && items.length === 0 ? (
+          <div role="status" aria-label="Memuat produk" className={GRID}>
             {Array.from({ length: 12 }, (_, i) => (
               <Skeleton key={i} className="h-34 rounded-xl" />
             ))}
           </div>
-        ) : productOptions.length === 0 ? (
+        ) : items.length === 0 ? (
           <EmptyState title="Tidak ada hasil" description="Coba kata kunci atau kategori lain, atau pindai QR produknya." />
         ) : (
-          <div
-            className={cn(
-              "grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3 transition-opacity",
-              searching && "opacity-60",
-            )}
-          >
-            {productOptions.map((p) => (
-              <Tile
-                key={p.id}
-                product={p}
-                inCart={qtyByProduct.get(p.id) ?? 0}
-                short={shortProducts.has(p.id)}
-                busy={pos.addingId === p.id}
-                disabled={false}
-                onAdd={() => void pos.addProductById(p.id)}
-              />
-            ))}
-          </div>
+          <>
+            <div
+              aria-busy={loadingFirst || loadingMore}
+              className={cn(GRID, "transition-opacity", loadingFirst && "opacity-60")}
+            >
+              {items.map((p) => (
+                <Tile
+                  key={p.id}
+                  product={p}
+                  inCart={qtyByProduct.get(p.id) ?? 0}
+                  short={shortProducts.has(p.id)}
+                  busy={pos.addingId === p.id}
+                  onAdd={pos.addProductById}
+                />
+              ))}
+              {loadingMore &&
+                Array.from({ length: 4 }, (_, i) => <Skeleton key={`more-${i}`} aria-hidden className="h-34 rounded-xl" />)}
+            </div>
+            <div ref={sentinelRef} aria-hidden className="h-px" />
+            <div className="flex justify-center pt-4 pb-2">
+              {error !== null ? (
+                <Notice tone="warning" title="Produk berikutnya gagal dimuat" className="w-full max-w-md">
+                  <p>{error}</p>
+                  <Button variant="secondary" className="mt-2 h-11 px-5" onClick={catalog.retry}>
+                    Coba lagi
+                  </Button>
+                </Notice>
+              ) : hasMore ? (
+                !loadingMore && (
+                  <Button variant="secondary" className="h-11 px-5" disabled={loadingFirst} onClick={loadMore}>
+                    Muat lagi
+                  </Button>
+                )
+              ) : (
+                !loadingFirst && (
+                  <p className="text-sm text-muted-foreground">Semua produk ditampilkan ({items.length})</p>
+                )
+              )}
+            </div>
+          </>
         )}
+        <p role="status" className="sr-only">
+          {statusText(catalog)}
+        </p>
       </div>
     </section>
   );

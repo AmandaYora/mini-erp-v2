@@ -1,6 +1,6 @@
 // Tipe POS — cerminan kunci backend yang sudah diverifikasi (semua camelCase):
-// - GET /api/v1/products/search-options → {id, code, name, sellingPrice}
-//   (product/presentation/handler.go: SearchOptions).
+// - GET /api/v1/products?status=active&page=&limit= → PosProductListItem[] + meta
+//   (product/presentation/handler.go: List).
 // - POST /api/v1/stock/scan-product {barcode} → {product:{id,code,name},
 //   variant:{id,code,name}, balances:[...]} (stock/application/service.go: Scan).
 // - POST /sales-orders {channel, partyId, items, paymentTerms} → orderView
@@ -14,13 +14,6 @@ export type PayMethod = "cash" | "transfer";
 
 /** Mode checkout: bayar sekarang (lunas) atau Bayar Nanti (piutang, termin net). */
 export type CheckoutMode = "pay_now" | "pay_later";
-
-export interface PosProductOption {
-  id: number;
-  code: string;
-  name: string;
-  sellingPrice: number;
-}
 
 export interface PosProductVariant {
   id: number;

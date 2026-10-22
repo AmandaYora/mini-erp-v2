@@ -1,8 +1,8 @@
 // Service POS — HANYA via helper http-client (apiGet/apiPage/apiPost).
 // Mandiri di dalam modul pos (tanpa impor service modul lain). Rute +
 // permission backend yang dipakai:
-// - GET /api/v1/products/search-options?q= (products.view)
-// - GET /api/v1/products?search=&categoryId=&status=&page=&limit= (products.view — katalog per kategori)
+// - GET /api/v1/products?search=&categoryId=&status=&page=&limit= (products.view — katalog
+//   "Semua" & per kategori, dimuat per halaman saat di-scroll)
 // - GET /api/v1/product-categories (products.view — drilldown kategori)
 // - GET /api/v1/products/:id (products.view — untuk varian/satuan/harga)
 // - POST /api/v1/stock/scan-product {barcode} (stock.view)
@@ -38,31 +38,31 @@ import type {
   PosPaymentPayload,
   PosProductDetail,
   PosProductListItem,
-  PosProductOption,
   PricingQuote,
   ScanResult,
   StockSuggestion,
 } from "@/modules/pos/types";
 
 export const posService = {
-  /** Katalog per kategori untuk drilldown (status aktif, 20/baris halaman). */
-  searchProducts: (q?: string) =>
-    apiGet<PosProductOption[]>("/api/v1/products/search-options", {
-      q: q?.trim() ? q.trim() : undefined,
-    }),
-
   /** Daftar kategori aktif untuk drilldown katalog. */
   categories: () => apiGet<PosCategory[]>("/api/v1/product-categories"),
 
-  /** Produk per kategori + pencarian teks (satu halaman katalog). */
-  products: (params: { search?: string; categoryId?: number | null; page?: number; limit?: number }) =>
-    apiPage<PosProductListItem>("/api/v1/products", {
-      search: params.search?.trim() ? params.search.trim() : undefined,
-      categoryId: params.categoryId ?? undefined,
-      status: "active",
-      page: params.page ?? 1,
-      limit: params.limit ?? 20,
-    }),
+  /** Satu halaman katalog aktif: semua (categoryId null) atau per kategori + pencarian teks. */
+  products: (
+    params: { search?: string; categoryId?: number | null; page?: number; limit?: number },
+    signal?: AbortSignal,
+  ) =>
+    apiPage<PosProductListItem>(
+      "/api/v1/products",
+      {
+        search: params.search?.trim() ? params.search.trim() : undefined,
+        categoryId: params.categoryId ?? undefined,
+        status: "active",
+        page: params.page ?? 1,
+        limit: params.limit ?? 20,
+      },
+      signal,
+    ),
 
   /** Detail produk untuk varian default, satuan jual, dan harga katalog. */
   productDetail: (id: number) =>

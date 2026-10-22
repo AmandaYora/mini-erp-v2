@@ -8,10 +8,28 @@ vi.mock("@/shared/services/http-client", () => ({
   toApiError: (e: unknown) => e,
 }));
 
-import { findPosPayment } from "@/modules/pos/services/pos.service";
+import { findPosPayment, posService } from "@/modules/pos/services/pos.service";
 
 beforeEach(() => {
   apiPage.mockReset();
+});
+
+describe("posService.products (katalog berhalaman)", () => {
+  it("Semua: tanpa categoryId, status aktif, halaman & limit diteruskan, signal ikut", async () => {
+    apiPage.mockResolvedValue({ items: [], meta: { page: 2, limit: 48, total: 0, totalPages: 0 } });
+    const ctrl = new AbortController();
+    await posService.products({ search: "  baut ", categoryId: null, page: 2, limit: 48 }, ctrl.signal);
+    const [url, params, signal] = apiPage.mock.calls[0];
+    expect(url).toBe("/api/v1/products");
+    expect(params).toEqual({ search: "baut", categoryId: undefined, status: "active", page: 2, limit: 48 });
+    expect(signal).toBe(ctrl.signal);
+  });
+
+  it("per kategori: categoryId terkirim, kata kunci kosong tidak dikirim", async () => {
+    apiPage.mockResolvedValue({ items: [], meta: {} });
+    await posService.products({ search: " ", categoryId: 7, page: 1, limit: 48 });
+    expect(apiPage.mock.calls[0][1]).toEqual({ search: undefined, categoryId: 7, status: "active", page: 1, limit: 48 });
+  });
 });
 
 describe("findPosPayment", () => {
