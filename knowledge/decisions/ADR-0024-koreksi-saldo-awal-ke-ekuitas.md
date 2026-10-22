@@ -47,21 +47,33 @@ v2 dipakai, bukan untung-rugi usaha.
    - Setiap baris tercatat di `report/adjustments.csv` (aturan `opening_stock_correction`), dan
      ringkasannya di temuan `OPENING_STOCK_RECLASS`.
    - V-11 menghitungnya kembali di akun asal, sehingga tetap membuktikan saldo legacy utuh.
-4. **ETL, jurnal koreksi migrasi (ADR-0018 D11).** Kaki laba rugi (HPP, Selisih Stok, Penjualan)
-   dibukukan ke 3100, kecuali reklasifikasi HPP order batal (`cancelled_order_cogs`). Kedua kaki
-   reklasifikasi itu akun laba rugi, sehingga nettonya nol. Persediaan, piutang, hutang, kas, dan
-   PPN tetap seperti sebelumnya.
+4. **ETL, jurnal koreksi migrasi (ADR-0018 D11).** Penempatannya menurut jenis kesalahannya:
+   - **Koreksi atas satu transaksi** dibukukan ke laba rugi **pada tanggal dokumen asalnya**, bila
+     tanggal itu berada di antara tanggal saldo awal dan freeze dan periodenya tidak ditutup legacy.
+     Jenisnya: HPP SJ batal yang tidak pernah dibalik, HPP SJ tanpa jurnal, pendapatan SJ yang tidak
+     pernah dijurnal (tanggal SJ terakhir order), dan reklasifikasi HPP order batal. Pasangannya,
+     HPP atau pendapatan dokumen itu, sudah ada di laba bulan tersebut, jadi koreksinya ikut di sana
+     dan laba tiap bulan menjadi benar.
+   - **Koreksi penilaian dan saldo**, serta koreksi transaksi yang tanggal asalnya sebelum saldo awal
+     atau di periode tertutup, dibukukan pada tanggal freeze dengan kaki laba rugi ke 3100. Jenisnya:
+     nilai persediaan tanpa qty/tanpa nilai, penilaian ulang harga modal, mutasi stok tanpa jurnal,
+     dan hutang PO. Reklasifikasi HPP order batal tetap di laba rugi (nettonya nol).
+   - Persediaan, piutang, hutang, kas, dan PPN tidak berubah. Temuan `MIG_CORR_DATED` menghitung
+     jurnal yang bertanggal dokumen asalnya.
 
 ## Consequences
-- Laba bulanan dan laba hari migrasi hanya memuat usaha. Gladi atas snapshot produksi 22 Okt:
-  - laba Juli +Rp0,57 M, Agustus +Rp0,43 M, September +Rp0,57 M;
-  - koreksi migrasi Rp0 terhadap laba;
-  - 3100 bersaldo debit Rp24,41 M;
+- Laba bulanan dan laba hari migrasi hanya memuat usaha. Gladi atas snapshot produksi 22 Okt
+  (freeze 02:30 WIB, sesudah posting hari-H):
+  - laba Juli +Rp0,57 M, Agustus +Rp0,48 M, September +Rp0,60 M, Oktober s.d. 22 Okt +Rp0,41 M;
+  - laba hari migrasi Rp0;
+  - 89 jurnal koreksi transaksi bertanggal dokumen asalnya;
+  - 3100 bersaldo debit Rp24,69 M;
   - verify 92 pemeriksaan lulus.
 - Kehilangan stok sungguhan di masa legacy (bila ada) ikut masuk 3100. Daftar per baris tersedia
   untuk ditinjau akuntan, dan baris yang memang beban dapat dipindah dengan jurnal manual.
 - Ke depan, opname biasa tetap ke 5100. Pilihan *koreksi saldo awal* hanya untuk membetulkan stok
   awal. Pemakaiannya dibatasi izin dan teraudit, sehingga laba tidak bisa "dibersihkan" diam-diam.
-- Pendapatan 14 order yang tidak pernah dijurnal legacy (`revenue_unbooked`) menjadi piutang lawan
-  3100, bukan penjualan bulan freeze. Alternatifnya, menjurnalnya di bulan SJ-nya, menyentuh bulan
-  yang mungkin sudah dilaporkan pajaknya. Keputusan itu diserahkan ke akuntan.
+- Koreksi yang bertanggal dokumen asalnya mengubah laba (dan PPN Keluaran pendapatan yang belum
+  dijurnal) bulan lalu di v2 dibanding laporan legacy bulan itu. Bila laporan pajak bulan itu sudah
+  disampaikan, akuntan menilai perlunya pembetulan. Periode yang ditutup legacy tidak pernah dibuka
+  ulang; koreksinya jatuh ke 3100.

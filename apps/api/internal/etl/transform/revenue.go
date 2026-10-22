@@ -70,8 +70,12 @@ func (s *state) unbookedRevenue() {
 	}
 	notesOf := map[int64][]row.Row{}
 	number := map[int64]string{}
+	dateOf := map[int64]string{} // SJ -> WIB delivery day (the day legacy booked its COGS)
 	for _, d := range s.out.Tables["delivery_notes"] {
 		number[d.Int("id")] = d.Str("number")
+		if v := d.Str("delivery_date"); len(v) >= 10 {
+			dateOf[d.Int("id")] = v[:10]
+		}
 		if d.Str("status") == "confirmed" && d.Str("document_kind") == "order" {
 			notesOf[d.Int("sales_order_id")] = append(notesOf[d.Int("sales_order_id")], d)
 		}
@@ -125,7 +129,7 @@ func (s *state) unbookedRevenue() {
 				for _, cg := range s.legacyCOGS(c.journals) {
 					s.migCorr = append(s.migCorr, migCorrection{kind: corrCancelledShipped, branch: c.branch, doc: soID, ref: so.Str("number"),
 						product: cg.product, variant: cg.variant, deliveryNote: c.dn, legacyMovement: c.legacyDoc, amount: cg.amount,
-						reason: "SJ " + number[c.dn] + " milik order batal"})
+						reason: "SJ " + number[c.dn] + " milik order batal", date: dateOf[c.dn]})
 					total += cg.amount
 				}
 			}
@@ -168,8 +172,12 @@ func (s *state) unbookedRevenue() {
 			}
 		}
 		legacyOf := map[int64]int64{}
+		var last string // one journal per order: the day of its latest SJ
 		for _, c := range group {
 			legacyOf[c.dn] = c.legacyDoc
+			if dateOf[c.dn] > last {
+				last = dateOf[c.dn]
+			}
 		}
 		party := so.Int("party_id")
 		for _, k := range order {
@@ -177,11 +185,11 @@ func (s *state) unbookedRevenue() {
 				continue
 			}
 			s.migCorr = append(s.migCorr, migCorrection{kind: corrRevenueUnbooked, branch: group[0].branch, doc: soID, ref: so.Str("number"),
-				party: party, product: k.product, variant: k.variant, deliveryNote: k.dn, legacyMovement: legacyOf[k.dn], amount: revOf[k], reason: "SJ " + sjList})
+				party: party, product: k.product, variant: k.variant, deliveryNote: k.dn, legacyMovement: legacyOf[k.dn], amount: revOf[k], reason: "SJ " + sjList, date: last})
 		}
 		if tax != 0 {
 			s.migCorr = append(s.migCorr, migCorrection{kind: corrRevenueUnbooked, taxLeg: true, branch: group[0].branch, doc: soID, ref: so.Str("number"),
-				party: party, deliveryNote: group[len(group)-1].dn, legacyMovement: group[len(group)-1].legacyDoc, amount: tax, reason: "SJ " + sjList})
+				party: party, deliveryNote: group[len(group)-1].dn, legacyMovement: group[len(group)-1].legacyDoc, amount: tax, reason: "SJ " + sjList, date: last})
 		}
 		s.out.Explain["revenue_unbooked_orders"]++
 		s.out.Explain["revenue_unbooked_value"] += revenue + tax

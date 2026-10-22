@@ -586,7 +586,7 @@ func (s *state) costLedger(movs []*mov) {
 					// goods are back but its books still count them sold. A
 					// migration correction journal puts them back (ADR-0018 D11).
 					s.migCorr = append(s.migCorr, migCorrection{kind: corrDNCancel, branch: x.pos.branch, doc: x.refID.(int64),
-						product: x.pos.product, variant: x.pos.variant, movement: x.newID, legacyMovement: x.legacy, amount: v})
+						product: x.pos.product, variant: x.pos.variant, movement: x.newID, legacyMovement: x.legacy, amount: v, date: wibDate(x.when)})
 					dnCorrected[x.newID] = true
 					s.out.Explain["dn_cancel_value"] += v
 					s.find(report.Warn, "DN_CANCEL_COGS", "inventory_movements", x.legacy,
@@ -1083,7 +1083,7 @@ func (s *state) unjournalled(rows map[int64]*crow, done map[int64]bool) {
 			doc = x.refID.(int64)
 		}
 		s.migCorr = append(s.migCorr, migCorrection{kind: kind, branch: x.pos.branch, doc: doc, refType: x.refType, product: x.pos.product,
-			variant: x.pos.variant, movement: id, legacyMovement: x.legacy, amount: v, reason: why})
+			variant: x.pos.variant, movement: id, legacyMovement: x.legacy, amount: v, reason: why, date: wibDate(x.when)})
 		s.find(report.Warn, code, "inventory_movements", x.legacy,
 			"nilai persediaan Rp%d (%s %s) tanpa jurnal yang akan datang: jurnal koreksi migrasi", v, x.refType, why)
 	}

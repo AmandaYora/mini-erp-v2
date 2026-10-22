@@ -166,8 +166,10 @@ verify lulus. Urutan yang **harus** diikuti, dan jebakan yang sudah ketahuan:
    dikembalikan). Lampiran yang dihapus di legacy tidak dimigrasi (MEDIA_ARCHIVED; diarsip `archive/raw/media_files`).
    Penomoran biaya usaha melanjutkan seri legacy `EXP/<tahun>/n`: penghitung `EXP:<tahun>` revamp = nomor legacy
    tertinggi, jadi biaya baru bernomor `EXP-<cabang>/<tahun>/n+1` (V-18 juga mensimulasikan penghitung keuangan).
-   **Jurnal koreksi migrasi** (ADR-0018 D11; `source_doc_type=migration_correction`, nomor `JV-<cabang>/<tahun>/n`,
-   tanggal freeze di periode terbuka; rinciannya per baris di `report/migration_corrections.csv`): HPP SJ batal yang
+   **Jurnal koreksi migrasi** (ADR-0018 D11; `source_doc_type=migration_correction`, nomor `JV-<cabang>/<tahun>/n`;
+   penempatan ADR-0024: koreksi atas satu transaksi bertanggal dokumen asalnya bila di periode terbuka sesudah saldo
+   awal, lainnya bertanggal freeze dengan kaki laba rugi ke ekuitas 3100 Koreksi Saldo Awal; penyesuaian stok legacy
+   juga ke 3100; rinciannya per baris di `report/migration_corrections.csv`): HPP SJ batal yang
    tidak pernah dibalik legacy (DN_CANCEL_COGS, Dr Persediaan / Cr HPP); keadaan biaya legacy bernilai tanpa qty
    (COST_STATE_NO_QTY, Dr selisih persediaan / Cr Persediaan, ledger dinolkan) atau ber-qty tanpa nilai padahal baris
    biayanya bernilai (COST_STATE_NO_VALUE, ditulis naik); mutasi yang tidak akan pernah dijurnal: barang SJ dari dokumen

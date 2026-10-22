@@ -72,7 +72,10 @@ func TestTransformRevenueUnbooked(t *testing.T) {
 	for _, a := range out.Tables["finance_accounts"] {
 		acct[a.Int("id")] = a.Str("code")
 	}
-	type sums struct{ revenue, tax, receivable, entry int64 }
+	type sums struct {
+		revenue, tax, receivable, entry int64
+		account, date                  string
+	}
 	got := map[string]*sums{}
 	for _, r := range out.Tables["migration_corrections"] {
 		if r.Str("kind") != "revenue_unbooked" {
@@ -86,23 +89,30 @@ func TestTransformRevenueUnbooked(t *testing.T) {
 		if r.Str("debit_account") != "1100" {
 			t.Errorf("revenue correction debits %s, want 1100 (Piutang): %v", r.Str("debit_account"), r)
 		}
-		// The revenue leg is a correction of the books before go-live, so it
-		// lands on Koreksi Saldo Awal, not on this day's profit (ADR-0024).
+		// ADR-0024: revenue is booked on the day of its SJ when that day is in
+		// an open period of the migrated books; otherwise (closed period) on
+		// Koreksi Saldo Awal at the freeze, never on the freeze day's profit.
 		switch r.Str("credit_account") {
-		case transform.OpeningCorrectionCode:
+		case "4000", transform.OpeningCorrectionCode:
 			g.revenue += r.Int("amount")
+			g.account, g.date = r.Str("credit_account"), r.Str("entry_date")
 		case "2100":
 			g.tax += r.Int("amount")
 		default:
 			t.Errorf("revenue correction credits %s: %v", r.Str("credit_account"), r)
 		}
 	}
-	// Order 6: 4 x 15.000, untaxed. Order 2: 5 x 11.100 including 11% tax.
-	want := map[string]sums{"ORD-CBG/PJ/2026/02/00001": {revenue: 60000}, "ORD-PST/PJ/2026/01/00001": {revenue: 50000, tax: 5500}}
+	// Order 6: 4 x 15.000, untaxed, SJ 11 Feb (open period) -> Penjualan that
+	// day. Order 2: 5 x 11.100 incl. 11% tax, SJ 16 Jan (January closed in
+	// legacy) -> Koreksi Saldo Awal at the freeze (2026-03-05).
+	want := map[string]sums{
+		"ORD-CBG/PJ/2026/02/00001": {revenue: 60000, account: "4000", date: "2026-02-11"},
+		"ORD-PST/PJ/2026/01/00001": {revenue: 50000, tax: 5500, account: transform.OpeningCorrectionCode, date: "2026-03-05"},
+	}
 	for ref, w := range want {
 		g := got[ref]
-		if g == nil || g.revenue != w.revenue || g.tax != w.tax {
-			t.Errorf("%s: correction %+v, want revenue %d tax %d", ref, g, w.revenue, w.tax)
+		if g == nil || g.revenue != w.revenue || g.tax != w.tax || g.account != w.account || g.date != w.date {
+			t.Errorf("%s: correction %+v, want revenue %d tax %d on %s dated %s", ref, g, w.revenue, w.tax, w.account, w.date)
 			continue
 		}
 		// The journal: receivable on the customer, revenue on the product.
@@ -118,8 +128,12 @@ func TestTransformRevenueUnbooked(t *testing.T) {
 				if !l.Has("party_id") || l.Has("product_id") {
 					t.Errorf("%s: Piutang line without customer (or with product): %v", ref, l)
 				}
-			case "4000", "5000", "5100":
-				t.Errorf("%s: correction touches profit: %v", ref, l)
+			case "4000":
+				if w.account != "4000" || !l.Has("product_id") || l.Has("party_id") {
+					t.Errorf("%s: Penjualan line (want %s, product, no party): %v", ref, w.account, l)
+				}
+			case "5000", "5100":
+				t.Errorf("%s: revenue correction touches cost: %v", ref, l)
 			case transform.OpeningCorrectionCode:
 				if l.Has("product_id") || l.Has("party_id") {
 					t.Errorf("%s: Koreksi Saldo Awal line with a dimension: %v", ref, l)

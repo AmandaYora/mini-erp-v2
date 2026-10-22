@@ -72,7 +72,8 @@ type migCorrection struct {
 	deliveryNote             int64 // revenue: the SJ the amount belongs to
 	legacyState              int64
 	amount                   int64
-	taxLeg                   bool // revenue: the PPN Keluaran part
+	taxLeg                   bool   // revenue: the PPN Keluaran part
+	date                     string // WIB day of the source event (transaction kinds)
 }
 
 // corrAccounts are the legacy system keys a correction debits and credits
@@ -97,14 +98,19 @@ func corrAccounts(c migCorrection) (dr, cr string) {
 	return "inventory", "stock_difference" // corrStateNoValue, corrStockUnposted
 }
 
-// corrLegKeys are the keys a correction is booked on: its profit legs (HPP,
-// selisih persediaan, penjualan) go to Koreksi Saldo Awal, because the error
-// corrected belongs to the books before go-live, not to the business of the
-// freeze day (ADR-0024). A cancelled order's COGS reclass stays: both of its
-// legs are profit, so it nets to zero on that day.
-func corrLegKeys(c migCorrection) (dr, cr string) {
+// transactionKinds correct the profit of one document (its revenue or COGS):
+// booked on that document's own date they put each month's profit right
+// (ADR-0024).
+var transactionKinds = map[string]bool{corrDNCancel: true, corrCOGSUnposted: true, corrRevenueUnbooked: true, corrCancelledShipped: true}
+
+// corrLegKeys are the keys a correction is booked on. In profit (inPL) it
+// keeps its own accounts; otherwise its profit legs (HPP, selisih persediaan,
+// penjualan) go to Koreksi Saldo Awal, because what it corrects is a balance
+// brought from before go-live, not the business of the freeze day
+// (ADR-0024).
+func corrLegKeys(c migCorrection, inPL bool) (dr, cr string) {
 	dr, cr = corrAccounts(c)
-	if c.kind == corrCancelledShipped {
+	if inPL {
 		return dr, cr
 	}
 	toEquity := func(k string) string {
@@ -154,13 +160,30 @@ func (s *state) migrationCorrections() {
 		s.find(report.Blocker, "MIG_CORR_DATE", "etl", 0, "tanggal freeze %s sebelum tanggal saldo awal %s", day, s.open)
 		return
 	}
-	for _, p := range s.raw["finance_periods"] {
-		from, ok1 := p.Time("date_from")
-		to, ok2 := p.Time("date_to")
-		if p.Str("status") == "closed" && ok1 && ok2 && day >= from.Format(dateFmt) && day <= to.Format(dateFmt) {
-			s.find(report.Blocker, "MIG_CORR_PERIOD", "etl", 0, "periode tanggal freeze %s sudah ditutup legacy: koreksi tidak boleh membuka ulang periode", day)
-			return
+	closed := func(d string) bool {
+		for _, p := range s.raw["finance_periods"] {
+			from, ok1 := p.Time("date_from")
+			to, ok2 := p.Time("date_to")
+			if p.Str("status") == "closed" && ok1 && ok2 && d >= from.Format(dateFmt) && d <= to.Format(dateFmt) {
+				return true
+			}
 		}
+		return false
+	}
+	if closed(day) {
+		s.find(report.Blocker, "MIG_CORR_PERIOD", "etl", 0, "periode tanggal freeze %s sudah ditutup legacy: koreksi tidak boleh membuka ulang periode", day)
+		return
+	}
+	// placement: a transaction correction whose document date lies in the
+	// migrated books (opening..freeze, period open) is booked in profit on that
+	// date; anything else on the freeze day, its profit legs on equity. A
+	// cancelled order's COGS reclass always stays in profit (both its legs are
+	// profit accounts, so it nets to zero wherever it lands).
+	place := func(c migCorrection) (date string, inPL bool) {
+		if transactionKinds[c.kind] && c.date != "" && c.date >= s.open && c.date <= day && !closed(c.date) {
+			return c.date, true
+		}
+		return day, c.kind == corrCancelledShipped
 	}
 	bySys := map[string]*acct{}
 	for _, a := range s.acct {
@@ -179,8 +202,9 @@ func (s *state) migrationCorrections() {
 			}
 			continue
 		}
-		dr, cr := corrLegKeys(c)
-		for _, key := range []string{dr, cr} {
+		dr, cr := corrAccounts(c)
+		edr, ecr := corrLegKeys(c, false)
+		for _, key := range []string{dr, cr, edr, ecr} {
 			if bySys[key] == nil {
 				s.find(report.Blocker, "MIG_CORR_ACCOUNT", "finance_accounts", 0, "akun ber-system_key %q tidak ada: koreksi migrasi %s tidak dapat dijurnal (jangan buat akun baru tanpa keputusan)", key, c.kind)
 				return
@@ -207,13 +231,15 @@ func (s *state) migrationCorrections() {
 
 	// One journal per cancelled SJ, one per write-down; deterministic order.
 	type group struct {
-		kind, ref string
-		branch    int64
-		items     []migCorrection
+		kind, ref, date string
+		inPL            bool
+		branch          int64
+		items           []migCorrection
 	}
 	groups := map[string]*group{}
 	for _, c := range s.migCorr {
 		var key, ref string
+		date, inPL := place(c)
 		switch c.kind {
 		case corrDNCancel:
 			key, ref = fmt.Sprintf("%s|%d|%d", c.kind, c.branch, c.doc), docNumber["delivery:"+strconv.FormatInt(c.doc, 10)]
@@ -231,8 +257,9 @@ func (s *state) migrationCorrections() {
 			}
 			key = fmt.Sprintf("%s|%d|%s", c.kind, c.branch, ref)
 		}
+		key += "|" + date
 		if groups[key] == nil {
-			groups[key] = &group{kind: c.kind, ref: ref, branch: c.branch}
+			groups[key] = &group{kind: c.kind, ref: ref, date: date, inPL: inPL, branch: c.branch}
 		}
 		groups[key].items = append(groups[key].items, c)
 	}
@@ -241,7 +268,7 @@ func (s *state) migrationCorrections() {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	entryDate := naiveDateTime(day)
+	var dated int
 	for i, k := range keys {
 		g := groups[k]
 		sort.SliceStable(g.items, func(a, b int) bool {
@@ -261,14 +288,26 @@ func (s *state) migrationCorrections() {
 			return x.movement < y.movement
 		})
 		code := s.branchCode[g.branch]
-		jvKey := code + "/" + day[:4]
+		entryDate := naiveDateTime(g.date)
+		if g.date != day {
+			dated++
+		}
+		jvKey := code + "/" + g.date[:4]
 		nextJV[jvKey]++
-		number := fmt.Sprintf("JV-%s/%s/%05d", code, day[:4], nextJV[jvKey])
+		number := fmt.Sprintf("JV-%s/%s/%05d", code, g.date[:4], nextJV[jvKey])
 		id := s.allocSub("finance_journal_entries", int64(i+1), 8)
+		// counter names the profit account a correction books against, or
+		// Koreksi Saldo Awal when it is placed on equity.
+		counter := func(pl string) string {
+			if g.inPL {
+				return pl
+			}
+			return "Koreksi Saldo Awal"
+		}
 		var memo, desc string
 		switch g.kind {
 		case corrDNCancel:
-			memo = fmt.Sprintf("Koreksi migrasi: SJ %s dibatalkan di legacy, HPP keluarnya tidak pernah dibalik; barang kembali ke stok (Dr Persediaan / Cr Koreksi Saldo Awal)", g.ref)
+			memo = fmt.Sprintf("Koreksi migrasi: SJ %s dibatalkan di legacy, HPP keluarnya tidak pernah dibalik; barang kembali ke stok (Dr Persediaan / Cr %s)", g.ref, counter("HPP"))
 			desc = "Koreksi migrasi: HPP SJ batal " + g.ref
 		case corrStateNoQty:
 			memo = fmt.Sprintf("Koreksi migrasi: produk %s bernilai di keadaan biaya legacy tanpa qty; nilai persediaan dinolkan (Dr Koreksi Saldo Awal / Cr Persediaan)", g.ref)
@@ -277,10 +316,10 @@ func (s *state) migrationCorrections() {
 			memo = fmt.Sprintf("Koreksi migrasi: produk %s ber-qty tanpa nilai di keadaan biaya legacy, padahal baris biayanya bernilai; Persediaan ditulis naik (Dr Persediaan / Cr Koreksi Saldo Awal)", g.ref)
 			desc = "Koreksi migrasi: persediaan tanpa nilai " + g.ref
 		case corrCOGSUnposted:
-			memo = fmt.Sprintf("Koreksi migrasi: barang SJ %s keluar/masuk tanpa jurnal HPP di legacy (%s); Persediaan disesuaikan ke ledger biaya lawan Koreksi Saldo Awal", g.ref, g.items[0].reason)
+			memo = fmt.Sprintf("Koreksi migrasi: barang SJ %s keluar/masuk tanpa jurnal HPP di legacy (%s); Persediaan disesuaikan ke ledger biaya lawan %s", g.ref, g.items[0].reason, counter("HPP"))
 			desc = "Koreksi migrasi: HPP tanpa jurnal " + g.ref
 		case corrRevenueUnbooked:
-			memo = fmt.Sprintf("Koreksi migrasi: penjualan %s (%s) sudah dikirim dan HPP-nya dijurnal legacy, tetapi pendapatannya tidak pernah dijurnal (legacy menjurnal saat order selesai) dan SJ-nya di bawah batas cutover; piutangnya dibukukan lawan Koreksi Saldo Awal (Dr Piutang / Cr Koreksi Saldo Awal)", g.ref, g.items[0].reason)
+			memo = fmt.Sprintf("Koreksi migrasi: penjualan %s (%s) sudah dikirim dan HPP-nya dijurnal legacy, tetapi pendapatannya tidak pernah dijurnal (legacy menjurnal saat order selesai) dan SJ-nya di bawah batas cutover; piutang dibukukan (Dr Piutang / Cr %s)", g.ref, g.items[0].reason, counter("Penjualan"))
 			memo = s.trunc("finance_journal_entries", 0, "memo", memo, maxJournalText)
 			desc = "Koreksi migrasi: pendapatan belum dijurnal " + g.ref
 		case corrPaymentCancelled:
@@ -310,7 +349,7 @@ func (s *state) migrationCorrections() {
 		})
 		s.out.Explain["migration_correction_entries"]++
 		for _, c := range g.items {
-			dk, ck := corrLegKeys(c)
+			dk, ck := corrLegKeys(c, g.inPL)
 			d, cc := bySys[dk], bySys[ck]
 			if c.drAcct != 0 {
 				d, cc = s.acct[c.drAcct], s.acct[c.crAcct]
@@ -367,10 +406,13 @@ func (s *state) migrationCorrections() {
 			}
 			s.out.Explain["migration_correction_value"] += c.amount
 			s.emit("migration_corrections", row.Row{
-				"kind": c.kind, "branch_id": c.branch, "entry_id": id, "journal_number": number, "entry_date": day, "ref": g.ref,
+				"kind": c.kind, "branch_id": c.branch, "entry_id": id, "journal_number": number, "entry_date": g.date, "ref": g.ref,
 				"product_id": productID, "product_code": s.productRow[c.product].Str("code"), "variant_id": variant,
 				"stock_movement_id": mv, "legacy_id": legacy, "amount": c.amount, "debit_account": d.code, "credit_account": cc.code, "reason": c.reason,
 			})
 		}
 	}
+	s.out.Explain["migration_correction_dated"] = int64(dated)
+	s.find(report.Info, "MIG_CORR_DATED", "etl", 0,
+		"%d jurnal koreksi transaksi bertanggal dokumen asalnya (laba bulan itu); jurnal lain bertanggal %s dengan kaki laba rugi ke Koreksi Saldo Awal (ADR-0024)", dated, day)
 }
