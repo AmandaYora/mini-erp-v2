@@ -168,3 +168,34 @@ describe("DashboardPage", () => {
     expect(screen.getByText(/Pembelian: Menunggu keputusan · umur 4 hari/)).toBeInTheDocument();
   });
 });
+
+describe("DashboardPage — tren penjualan", () => {
+  function trendDays(n: number) {
+    return Array.from({ length: n }, (_, i) => ({ date: addDays(todayWIB(), i - n + 1), revenue: 100_000 * (i + 1), expense: 0, profit: 0 }));
+  }
+
+  it("periode Mingguan meminta data mulai Senin; candlestick hanya untuk mingguan/bulanan dan pilihan diingat", async () => {
+    localStorage.clear();
+    salesTrend.mockResolvedValue(trendDays(30));
+    renderPage();
+    const candle = await screen.findByRole("radio", { name: "Candlestick" });
+    expect(candle).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Bulanan" })).toBeDisabled(); // 30 hari: bulanan tidak bermakna
+
+    fireEvent.click(screen.getByRole("radio", { name: "Mingguan" }));
+    await waitFor(() => expect(salesTrend).toHaveBeenCalledTimes(2));
+    const [from, to] = salesTrend.mock.calls[1] as [string, string];
+    expect(new Date(`${from}T00:00:00Z`).getUTCDay()).toBe(1);
+    expect(to).toBe(todayWIB());
+
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Candlestick" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("radio", { name: "Candlestick" }));
+    const saved = Object.keys(localStorage).find((k) => k.startsWith("mini-erp.dashboard.trend"));
+    expect(saved && JSON.parse(localStorage.getItem(saved) ?? "{}")).toEqual({ range: "30d", interval: "week", chart: "candle" });
+
+    // Kembali ke 7 hari: mingguan & candlestick tidak sah, jatuh ke harian + batang.
+    fireEvent.click(screen.getByRole("radio", { name: "7 hari" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Harian" })).toHaveAttribute("data-state", "on"));
+    expect(screen.getByRole("radio", { name: "Batang" })).toHaveAttribute("data-state", "on");
+  });
+});

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Info } from "lucide-react";
+import { ChartCandlestick, ChartColumn, ChartLine, Info } from "lucide-react";
 import {
   CardSkeleton,
   ErrorState,
@@ -24,8 +24,22 @@ import { dashboardService } from "@/modules/dashboard/services/dashboard.service
 import { ActionCard } from "@/modules/dashboard/components/ActionCard";
 import { OrderStatusCard } from "@/modules/dashboard/components/OrderStatusCard";
 import { TopProductsCard } from "@/modules/dashboard/components/TopProductsCard";
-import { TrendBarChart } from "@/modules/dashboard/components/TrendBarChart";
-import { addDays, greetingTitle, longDateWIB, overdueDays } from "@/modules/dashboard/lib/dashboard";
+import { SalesTrendChart } from "@/modules/dashboard/components/SalesTrendChart";
+import { greetingTitle, longDateWIB, overdueDays } from "@/modules/dashboard/lib/dashboard";
+import {
+  TREND_CHART_TYPES,
+  TREND_INTERVALS,
+  TREND_PREFS_BASE,
+  bucketTrend,
+  isChartAllowed,
+  isIntervalAllowed,
+  normalizeTrendView,
+  readTrendPrefs,
+  trendWindow,
+  writeTrendPrefs,
+} from "@/modules/dashboard/lib/trend";
+import type { TrendChartType, TrendInterval, TrendPrefs } from "@/modules/dashboard/lib/trend";
+import { userKey } from "@/shared/stores/ui-prefs.store";
 import { WHATSAPP_LABEL, whatsappState } from "@/modules/dashboard/lib/whatsapp";
 import type { DashboardSummary, TrendRangeKey } from "@/modules/dashboard/types";
 import { TREND_RANGES } from "@/modules/dashboard/types";
@@ -93,7 +107,15 @@ function KpiRow({ summary, source, overdueOrders }: { summary: DashboardSummary;
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [source, setSource] = useState<Source>("ledger");
-  const [trendRange, setTrendRange] = useState<TrendRangeKey>("30d");
+  // Rentang, periode (harian/mingguan/bulanan), dan bentuk grafik tren diingat per pengguna.
+  const [trendPrefs, setTrendPrefsState] = useState<TrendPrefs>(() => readTrendPrefs(userKey(TREND_PREFS_BASE)));
+  const { range: trendRange, interval: trendInterval, chart: trendChart } = trendPrefs;
+  const setTrendPrefs = (next: Partial<TrendPrefs>) => {
+    const range = next.range ?? trendRange;
+    const prefs = { range, ...normalizeTrendView(range, next.interval ?? trendInterval, next.chart ?? trendChart) };
+    writeTrendPrefs(userKey(TREND_PREFS_BASE), prefs);
+    setTrendPrefsState(prefs);
+  };
   const user = useAuthStore((s) => s.user);
   const branch = useAuthStore((s) => s.branch);
   // Tren memakai /reporting/sales-trend (izin reporting.view), bukan dashboard.view:
@@ -105,11 +127,10 @@ export default function DashboardPage() {
   const trend = useAsyncData(
     () => {
       if (!canTrend) return Promise.resolve([]);
-      const days = TREND_RANGES.find((r) => r.value === trendRange)?.days ?? 30;
-      const to = todayWIB();
-      return dashboardService.salesTrend(addDays(to, -(days - 1)), to);
+      const { from, to } = trendWindow(trendRange, trendInterval, todayWIB());
+      return dashboardService.salesTrend(from, to);
     },
-    [trendRange, canTrend],
+    [trendRange, trendInterval, canTrend],
   );
   // Kartu status WhatsApp hanya untuk peran yang boleh melihat asisten (DB-01).
   const canAssistant = useAuthStore((s) => s.permissions.includes("assistant.view"));
@@ -127,8 +148,10 @@ export default function DashboardPage() {
   const orderStatus = useAsyncData(() => dashboardService.orderStatus(), []);
 
   const trendPoints = trend.data ?? [];
+  const trendBuckets = useMemo(() => bucketTrend(trend.data ?? [], trendInterval), [trend.data, trendInterval]);
   const trendTotal = trendPoints.reduce((n, p) => n + p.revenue, 0);
   const trendLabel = TREND_RANGES.find((r) => r.value === trendRange)?.label ?? "30 hari";
+  const intervalLabel = (TREND_INTERVALS.find((i) => i.value === trendInterval)?.label ?? "Harian").toLowerCase();
   const overdueOrders =
     priority.data && !priority.error ? priority.data.filter((o) => overdueDays(o.dueDate, today) > 0).length : null;
   const data = summary.data;
@@ -242,7 +265,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <SectionCard
           title="Tren penjualan"
-          description={`Omzet harian cabang aktif, ${trendLabel} terakhir.`}
+          description={`Omzet ${intervalLabel} cabang aktif, ${trendLabel} terakhir.`}
           actions={
             canTrend ? (
               <ToggleGroup
@@ -250,7 +273,7 @@ export default function DashboardPage() {
                 variant="outline"
                 size="sm"
                 value={trendRange}
-                onValueChange={(v) => v && setTrendRange(v as TrendRangeKey)}
+                onValueChange={(v) => v && setTrendPrefs({ range: v as TrendRangeKey })}
                 aria-label="Rentang tren"
               >
                 {TREND_RANGES.map((r) => (
@@ -274,14 +297,57 @@ export default function DashboardPage() {
             <EmptyState title="Belum ada penjualan" description={`Tidak ada omzet dalam ${trendLabel} terakhir.`} />
           ) : (
             <div className={trend.loading ? "opacity-60 transition-opacity" : undefined}>
-              <p className="tabular mb-2 text-sm text-muted-foreground">
-                {`Total ${trendLabel}: `}
-                <span className="font-semibold text-foreground">{formatIDR(trendTotal)}</span>
-              </p>
-              <TrendBarChart
-                data={trendPoints}
-                range={trendRange}
-                summary={`Grafik area omzet harian ${trendLabel} terakhir, total ${formatIDR(trendTotal)}.`}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                <p className="tabular text-sm text-muted-foreground">
+                  {`Total ${trendLabel}: `}
+                  <span className="font-semibold text-foreground">{formatIDR(trendTotal)}</span>
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    value={trendInterval}
+                    onValueChange={(v) => v && setTrendPrefs({ interval: v as TrendInterval })}
+                    aria-label="Periode tren"
+                  >
+                    {TREND_INTERVALS.map((i) => (
+                      <ToggleGroupItem key={i.value} value={i.value} disabled={!isIntervalAllowed(trendRange, i.value)}>
+                        {i.label}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    value={trendChart}
+                    onValueChange={(v) => v && setTrendPrefs({ chart: v as TrendChartType })}
+                    aria-label="Bentuk grafik"
+                  >
+                    {TREND_CHART_TYPES.map((c) => {
+                      const Icon = c.value === "line" ? ChartLine : c.value === "candle" ? ChartCandlestick : ChartColumn;
+                      const allowed = isChartAllowed(trendInterval, c.value);
+                      return (
+                        <ToggleGroupItem
+                          key={c.value}
+                          value={c.value}
+                          disabled={!allowed}
+                          aria-label={c.label}
+                          title={allowed ? c.label : `${c.label}: pilih Mingguan atau Bulanan`}
+                        >
+                          <Icon aria-hidden />
+                        </ToggleGroupItem>
+                      );
+                    })}
+                  </ToggleGroup>
+                </div>
+              </div>
+              <SalesTrendChart
+                data={trendBuckets}
+                interval={trendInterval}
+                chart={trendChart}
+                summary={`Grafik ${TREND_CHART_TYPES.find((c) => c.value === trendChart)?.label.toLowerCase()} omzet ${intervalLabel} ${trendLabel} terakhir, total ${formatIDR(trendTotal)}.`}
               />
             </div>
           )}
