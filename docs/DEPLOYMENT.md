@@ -165,22 +165,60 @@ wajib diperhatikan khusus produksi (gagal start bila dilanggar):
   tidak boleh) dijadikan setelan yang bisa diubah dari UI (lihat
   [ADR-0006](../knowledge/decisions/ADR-0006-locale-timezone-locked.md)).
 
-## 7. APK Kasir Android (`android-pos-shell`) — bangun ulang saat cutover (OP-05, D5)
+## 7. APK Kasir Android (`android-pos-shell`) dan cutover tablet (OP-05, D5)
 
 POS di tablet kasir berjalan lewat **cangkang Android tipis** (`android-pos-shell`, paket `id.minierp.kasir`):
 `WebView` layar penuh yang memuat POS web dan menyediakan jembatan cetak `window.AndroidPrinter`
 (raw ESC/POS ke printer thermal Epson TM-T82X di LAN, `IP:9100`) — hal yang tak bisa dilakukan browser.
 Keputusan D5 ([ADR-0018](../knowledge/decisions/ADR-0018-keputusan-paritas.md)): **dokumentasi saja**, tanpa perubahan kode;
-sumber APK tetap di repo legacy (`H:\dimasprasetio\SAAS\mini-erp\android-pos-shell`, lihat `README.md` di sana).
+sumber APK tetap di repo legacy (`H:\dimasprasetio\SAAS\mini-erp\android-pos-shell`; di Mac
+`~/Documents/dimas-project-individu/mini-erp/android-pos-shell`, lihat `README.md` di sana).
 
 **Kapan APK harus dibangun ulang.** Kode POS **tidak** ada di dalam APK; ia dimuat dari server saat dijalankan.
-Jadi deploy web biasa tidak butuh APK baru. APK **wajib dibangun ulang** bila:
+APK membuka `POS_URL` (`https://minierp.my.id`, terkunci saat build) tanpa pembatasan host, dan kontrak jembatannya
+sama dengan `apps/web/src/modules/print/lib/native-printer.ts`. Jadi deploy web biasa **dan cutover yang
+mempertahankan domain `minierp.my.id`** (DNS dialihkan dari VPS legacy ke VPS elcodelabs) **tidak** butuh APK baru.
+APK hanya dibangun ulang bila:
 
-- domain/URL aplikasi berubah — `POS_URL` terkunci ke domain legacy (`https://minierp.my.id`) saat build.
-  **Cutover ke domain/host baru = bangun ulang APK**; tanpa itu tablet tetap membuka sistem legacy;
-- logika jembatan/printer native berubah (versi bridge, ePOS2 SDK).
+- domain/URL aplikasi berubah — tanpa APK baru tablet tetap membuka `POS_URL` lama;
+- logika jembatan/printer native berubah (versi bridge, ePOS2 SDK, kontrak `native-printer.ts`).
 
-**Langkah bangun ulang.**
+Syaratnya: `https://minierp.my.id` sudah melayani v2 dengan sertifikat valid di server baru **sebelum** DNS dialihkan —
+APK memasang `usesCleartextTraffic=false`, jadi HTTP polos atau sertifikat salah = layar kosong di tablet.
+
+**Service worker legacy di perangkat.** Aplikasi legacy mendaftarkan service worker `/sw.js` (lingkup `/`, cache
+`mini-erp-pwa-v1-app`/`-runtime`, navigasi network-first, `/offline.html` dipra-cache) di setiap WebView/browser yang
+pernah membukanya. v2 tidak memakai service worker, tetapi registrasi lama tetap hidup setelah domain dialihkan.
+Karena itu v2 menyajikan **`/sw.js` pembersih** (`apps/web/public/sw.js`, `Content-Type: text/javascript`,
+`Cache-Control: no-store`): saat app dibuka dan online, browser memeriksa ulang `/sw.js`, memasang versi pembersih,
+yang menghapus semua cache origin, mencabut registrasinya, lalu memuat ulang tab sekali — sesudahnya v2 berjalan tanpa
+service worker. Tanpa berkas itu (`/sw.js` jatuh ke fallback SPA HTML) pembaruan selalu gagal dan saat offline tablet
+menampilkan halaman offline legacy. Berkas ini dipertahankan di v2 (perangkat yang lama tak dibuka baru dibersihkan saat
+kembali online); v2 sendiri **tidak** mendaftarkannya (dijaga `src/test/legacy-sw-kill-switch.test.ts`, e2e E18).
+
+Memastikan service worker sudah hilang di tablet:
+
+- APK build debug (WebView otomatis dapat di-*inspect*): sambungkan USB debugging, buka `chrome://inspect/#service-workers`
+  di Chrome desktop — tidak boleh ada entri `https://minierp.my.id/`. APK release tidak dapat di-*inspect*.
+- Gejala: setelah app dibuka sekali saat online, matikan Wi-Fi lalu buka lagi — halaman "Mini ERP sedang offline" legacy
+  tidak boleh muncul lagi (yang tampil halaman galat jaringan WebView).
+- Upaya terakhir: Setelan Android → Aplikasi → Kasir Mini ERP → Penyimpanan → **Hapus data**. Ini juga menghapus
+  konfigurasi printer (IP/port, auto-cut, laci) yang tersimpan di tablet — isi ulang lewat Pengaturan Printer.
+
+**Langkah per tablet sesudah DNS dialihkan** (uji satu tablet dulu, baru semua tablet):
+
+1. **Tutup paksa** app Kasir Mini ERP (Setelan → Aplikasi → Kasir Mini ERP → Paksa berhenti, atau geser dari daftar app
+   terbaru), lalu buka lagi dari ikonnya (bukan Chrome). Tablet harus online; halaman boleh memuat ulang sekali sendiri
+   (service worker legacy dibersihkan).
+2. Pastikan halaman login **v2** yang tampil (bukan legacy). Bila masih legacy: DNS tablet/router belum berpindah —
+   tunggu TTL atau mulai ulang Wi-Fi, lalu ulangi langkah 1.
+3. **Login ulang dengan akun pribadi kasir** (mis. `widia`, `luluk`, `nurma`, `selvi`). Sesi legacy tidak berlaku di v2,
+   dan hash kata sandi akun pribadi ikut termigrasi, jadi sandinya sama dengan di legacy. Akun bawaan seed (`kasir`,
+   `admin`, `staff`, …) yang masih bersandi bawaan dikunci ETL (temuan `USER_SEED_PASSWORD`) dan tidak dipakai di tablet.
+4. Uji cetak: Tes Cetak di Pengaturan Printer, satu struk penjualan tunai uji, dan laci kas bila dipakai (rincian di
+   "Uji jembatan" di bawah). Konfigurasi printer tersimpan di tablet, jadi tetap ada setelah pengalihan.
+
+**Langkah bangun ulang** (hanya bila domain/URL atau jembatan native berubah).
 
 1. Prasyarat: Android Studio (Ladybug/Koala+) atau CLI (Android SDK + JDK 17 + Gradle 8.7).
 2. Ubah URL di `app/build.gradle.kts`:
@@ -190,7 +228,7 @@ Jadi deploy web biasa tidak butuh APK baru. APK **wajib dibangun ulang** bila:
    (`app/build/outputs/apk/debug/app-debug.apk`). Bila `gradle-wrapper.jar` belum ada: `gradle wrapper --gradle-version 8.7` sekali.
 5. Pasang ke tiap tablet: `adb install -r <apk>` atau salin APK ke tablet dan buka (izinkan "Install dari sumber tak dikenal").
    Konfigurasi printer (IP/port, auto-cut, laci kas) tersimpan di SharedPreferences tablet — `install -r` tidak menghapusnya.
-6. Setiap tablet: buka ikon **Kasir Mini ERP** (bukan Chrome), pastikan halaman login revamp tampil (bukan legacy).
+6. Setiap tablet: buka ikon **Kasir Mini ERP** (bukan Chrome), lalu ikuti "Langkah per tablet" di atas mulai butir 2.
 
 **Uji jembatan `AndroidPrinter` (per tablet, setelah pasang/rebuild).**
 

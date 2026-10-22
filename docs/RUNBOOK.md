@@ -237,10 +237,23 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
 curl -s -H "$H" "$API/api/v1/finance/close/readiness?year=$Y&month=$M" > readiness-1.json
 curl -s -H "$H" "$API/api/v1/ops/integrity"
 ```
+- [ ] **Beberapa jam sebelum pengalihan**: TTL DNS `minierp.my.id` diturunkan (mis. 300 dtk; tunggu minimal TTL lama
+      habis) agar perangkat cepat berpindah dan jalur balik (§5) juga cepat.
+- [ ] **Rilis v2 yang memuat `/sw.js` pembersih sudah live** di server baru:
+      `curl -sI https://<host-baru>/sw.js` → `200`, `Content-Type: text/javascript`, `Cache-Control: no-store` (bukan
+      `text/html`). Tanpa itu service worker legacy di tablet tidak pernah hilang ([DEPLOYMENT.md §7](DEPLOYMENT.md#7-apk-kasir-android-android-pos-shell-dan-cutover-tablet-op-05-d5)).
+- [ ] **HTTPS `minierp.my.id` aktif di server baru sebelum DNS dialihkan** (APK kasir `usesCleartextTraffic=false`):
+      nginx `server_name minierp.my.id` + sertifikat valid, diuji tanpa menunggu DNS dengan
+      `curl --resolve minierp.my.id:443:<IP-baru> https://minierp.my.id/readyz`. Tantangan HTTP-01 certbot baru lolos
+      setelah DNS berpindah — terbitkan lewat DNS-01 atau pasang sertifikat legacy yang masih berlaku lebih dulu.
+- [ ] **Legacy dibekukan saat pengalihan**: selama propagasi DNS legacy tidak menerima transaksi (aplikasi dihentikan
+      atau halaman pemeliharaan), supaya tidak ada transaksi terpecah antara dua server.
 - [ ] DNS/proxy dialihkan ke revamp; jalur balik ke legacy (§5) siap dan diuji sebelumnya.
-- [ ] **APK Kasir Android dibangun ulang bila domain berubah** (`POS_URL` di `android-pos-shell/app/build.gradle.kts`),
-      dipasang di semua tablet kasir, lalu **uji jembatan `AndroidPrinter`** per tablet (Tes Cetak, struk POS, laci kas,
-      gagal-aman) — langkah di [DEPLOYMENT.md §7](DEPLOYMENT.md#7-apk-kasir-android-android-pos-shell--bangun-ulang-saat-cutover-op-05-d5).
+- [ ] **Tablet kasir**: APK **tidak** dibangun ulang selama domain tetap `minierp.my.id` (hanya bila domain/URL atau
+      jembatan native berubah). **Satu tablet dulu**: tutup paksa app Kasir Mini ERP, buka lagi, pastikan login v2,
+      login ulang dengan akun pribadi kasir, **uji jembatan `AndroidPrinter`** (Tes Cetak, struk POS, laci kas,
+      gagal-aman) dan pastikan service worker legacy hilang; baru setelah lulus **semua tablet** — langkah di
+      [DEPLOYMENT.md §7](DEPLOYMENT.md#7-apk-kasir-android-android-pos-shell-dan-cutover-tablet-op-05-d5).
 - [ ] Cetak fisik diverifikasi manual di perangkat nyata (struk thermal, nota, faktur, label QR).
 - [ ] Kasir dan admin login, satu penjualan POS tunai + satu PO + satu penerimaan uji berhasil (lalu dibatalkan/ditandai uji).
 

@@ -122,6 +122,10 @@ func (s *Server) MountStatic(dir string) {
 // buildAssetPath is the directory Vite emits content-hashed files into.
 const buildAssetPath = "/assets/"
 
+// legacyServiceWorkerPath is the script the legacy app registered on this
+// origin; public/sw.js now answers it with a self-unregistering worker.
+const legacyServiceWorkerPath = "/sw.js"
+
 // setStaticCache marks build output immutable and everything else revalidated.
 //
 // Vite puts a content hash in every filename under /assets/, so those URLs
@@ -130,9 +134,16 @@ const buildAssetPath = "/assets/"
 // else served from the public directory (favicon, manifest, images dropped
 // in by hand) keeps its name across deploys, so it gets revalidation instead
 // — correctness first, and a 304 is still nearly free.
+//
+// The service worker script is never stored: a cached copy would delay the
+// cleanup on devices that still run the legacy worker.
 func setStaticCache(w http.ResponseWriter, urlPath string) {
 	if strings.HasPrefix(urlPath, buildAssetPath) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	if urlPath == legacyServiceWorkerPath {
+		w.Header().Set("Cache-Control", "no-store")
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
