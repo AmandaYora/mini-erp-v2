@@ -74,7 +74,7 @@ func TestTransformRevenueUnbooked(t *testing.T) {
 	}
 	type sums struct {
 		revenue, tax, receivable, entry int64
-		account, date                  string
+		account, date                   string
 	}
 	got := map[string]*sums{}
 	for _, r := range out.Tables["migration_corrections"] {
