@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Volume2, VolumeX, X } from "lucide-react";
+import { SwitchCamera, Volume2, VolumeX, X } from "lucide-react";
 import { Button, Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/shared/components/ui";
 import { Notice } from "@/shared/components/feedback/notice";
 import { cn } from "@/shared/lib/cn";
-import { cameraFallbackMessage, cameraUnavailableReason, pickRearCamera } from "@/modules/pos/lib/camera";
+import {
+  cameraActiveMessage,
+  cameraAttempts,
+  cameraFallbackMessage,
+  cameraUnavailableReason,
+  classifyCameras,
+  loadCameraSide,
+  nextCamera,
+  saveCameraSide,
+  sideFromFacingMode,
+  switchCameraLabel,
+  type CameraInfo,
+  type CameraRequest,
+  type CameraSide,
+} from "@/modules/pos/lib/camera";
 import { isScanSoundMuted, playScanSound, setScanSoundMuted } from "@/modules/pos/lib/scan-sound";
 import {
   EMPTY_SCAN_GATE,
@@ -20,12 +34,25 @@ import {
 // Dialog tetap terbuka: tiap kode terbaca -> kilat hijau + getar + chip + barang masuk
 // keranjang; kode sama dalam ±1,5 dtk diabaikan (lib/scan-session). Kamera butuh HTTPS + izin;
 // bila tak tersedia / ditolak, input kode manual selalu tersedia sebagai cadangan.
+// Kamera dibuka dulu (facingMode), baru daftar perangkat dibaca: sebelum izin browser
+// hanya memberi satu perangkat tanpa label. Tombol ganti kamera muncul bila ada dua sisi
+// (atau >=2 webcam); tiap ganti menghentikan stream lama sebelum membuka yang baru.
 
 interface ScannerControls {
-  stop: () => void;
+  // zxing: async bila track mendukung senter (mematikan senter setelah berhenti).
+  stop: () => void | Promise<void>;
+  streamVideoSettingsGet?: (trackFilter: (track: MediaStreamTrack) => MediaStreamTrack[]) => MediaTrackSettings;
 }
 interface DecodeResult {
   getText: () => string;
+}
+type DecodeCallback = (result: DecodeResult | undefined, err: unknown) => void;
+interface ScanReader {
+  decodeFromConstraints: (
+    constraints: MediaStreamConstraints,
+    video: HTMLVideoElement,
+    callback: DecodeCallback,
+  ) => Promise<ScannerControls>;
 }
 
 const CHIP_TONE = {
@@ -36,6 +63,67 @@ const CHIP_TONE = {
 
 // Galat per-bingkai yang normal (belum ada kode / bacaan sebagian) — bukan kegagalan kamera.
 const BENIGN_FRAME_ERROR = /NotFound|Checksum|Format/i;
+// Stream baru segera setelah stop kadang gagal/hitam di iOS Safari: ulangi sekali setelah jeda.
+const SWITCH_RETRY_MS = 400;
+
+// Runtime zxing 0.2.1 memanggil videoTracks.find(filter); d.ts-nya menulis filter mengembalikan array.
+const FIRST_TRACK = (() => true) as unknown as (track: MediaStreamTrack) => MediaStreamTrack[];
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? `${err.name} ${err.message}` : String(err);
+}
+
+async function stopCamera(controls: ScannerControls | null): Promise<void> {
+  try {
+    await controls?.stop();
+  } catch {
+    /* senter gagal dimatikan: track sudah berhenti */
+  }
+}
+
+/** Coba tiap constraint berurutan (berikutnya bila Overconstrained/NotFound); saat ganti
+ * kamera, galat lain diulang sekali setelah jeda. */
+async function openCamera(
+  reader: ScanReader,
+  video: HTMLVideoElement,
+  request: CameraRequest,
+  callback: DecodeCallback,
+  isAlive: () => boolean,
+): Promise<ScannerControls> {
+  let lastErr: unknown = new Error("NotFoundError");
+  for (const constraints of cameraAttempts(request)) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await reader.decodeFromConstraints(constraints, video, callback);
+      } catch (err) {
+        lastErr = err;
+        const msg = errorText(err);
+        if (!isAlive() || /NotAllowed|Permission|Denied/i.test(msg)) throw err;
+        if (/Overconstrained|NotFound/i.test(msg)) break;
+        if (request.kind === "initial" || attempt > 0) throw err;
+        await new Promise((resolve) => window.setTimeout(resolve, SWITCH_RETRY_MS));
+        if (!isAlive()) throw err;
+      }
+    }
+  }
+  throw lastErr;
+}
+
+function readTrackSettings(controls: ScannerControls): MediaTrackSettings {
+  try {
+    return controls.streamVideoSettingsGet?.(FIRST_TRACK) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+async function listVideoInputs(): Promise<MediaDeviceInfo[]> {
+  try {
+    return (await navigator.mediaDevices.enumerateDevices?.()) ?? [];
+  } catch {
+    return [];
+  }
+}
 
 function ScanBody({
   paused,
@@ -47,7 +135,10 @@ function ScanBody({
   onScan: (code: string) => Promise<ScanOutcome>;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const controlsRef = useRef<ScannerControls | null>(null);
+  const readerRef = useRef<ScanReader | null>(null);
+  // Buka/tutup kamera berurutan: stream baru tidak dibuka sebelum yang lama berhenti.
+  const cameraChain = useRef<Promise<void>>(Promise.resolve());
+  const settingsRef = useRef<MediaTrackSettings>({});
   const onScanRef = useRef(onScan);
   const pausedRef = useRef(paused);
   const gateRef = useRef<ScanGate>(EMPTY_SCAN_GATE);
@@ -60,9 +151,13 @@ function ScanBody({
     pausedRef.current = paused;
   });
 
-  const [devices, setDevices] = useState<{ deviceId: string; label: string }[]>([]);
-  // "" = belum memilih; "default" = tanpa daftar perangkat (pakai kamera belakang bawaan).
-  const [deviceId, setDeviceId] = useState("");
+  const [request, setRequest] = useState<CameraRequest>(() => ({ kind: "initial", side: loadCameraSide() }));
+  const [cameras, setCameras] = useState<CameraInfo[]>([]);
+  const [active, setActive] = useState<{ deviceId: string | null; side: CameraSide | null }>({
+    deviceId: null,
+    side: null,
+  });
+  const [announce, setAnnounce] = useState("");
   const [status, setStatus] = useState<"loading" | "scanning" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
@@ -110,7 +205,8 @@ function ScanBody({
     let alive = true;
     let controls: ScannerControls | null = null;
 
-    void (async () => {
+    const run = cameraChain.current.then(async () => {
+      if (!alive) return;
       const reason = cameraUnavailableReason();
       if (reason) {
         setError(cameraFallbackMessage(reason));
@@ -120,24 +216,18 @@ function ScanBody({
       try {
         const { BrowserMultiFormatReader } = await import("@zxing/browser");
         if (!alive) return;
-        if (deviceId === "") {
-          const list: { deviceId: string; label: string }[] = await BrowserMultiFormatReader.listVideoInputDevices();
-          if (!alive) return;
-          setDevices(list.map((d) => ({ deviceId: d.deviceId, label: d.label })));
-          setDeviceId(pickRearCamera(list)?.deviceId || "default");
-          return; // efek berjalan lagi dengan kamera terpilih
-        }
         const video = videoRef.current;
         if (!video) {
           setError("Pratinjau kamera tidak tersedia — gunakan input manual di bawah.");
           setStatus("error");
           return;
         }
-        const reader = new BrowserMultiFormatReader();
-        controls = await reader.decodeFromVideoDevice(
-          deviceId === "default" ? undefined : deviceId,
+        readerRef.current ??= new BrowserMultiFormatReader();
+        const opened = await openCamera(
+          readerRef.current,
           video,
-          (result: DecodeResult | undefined, err: unknown) => {
+          request,
+          (result, err) => {
             if (!alive) return;
             if (result) {
               handleFrame(result.getText());
@@ -146,18 +236,32 @@ function ScanBody({
               setStatus("error");
             }
           },
+          () => alive,
         );
-        controlsRef.current = controls;
         if (!alive) {
-          controls.stop();
-          controlsRef.current = null;
+          await stopCamera(opened);
           return;
         }
+        controls = opened;
         setError(null);
         setStatus("scanning");
+
+        // Setelah izin: label & deviceId asli tersedia; sisi kamera aktif dari settings track.
+        const settings = readTrackSettings(opened);
+        settingsRef.current = settings;
+        const list = classifyCameras(await listVideoInputs(), settings);
+        if (!alive) return;
+        const activeId = settings.deviceId ?? null;
+        const side = list.find((c) => c.deviceId === activeId)?.side ?? sideFromFacingMode(settings.facingMode);
+        setCameras(list);
+        setActive({ deviceId: activeId, side });
+        if (request.kind !== "initial") {
+          if (side) saveCameraSide(side);
+          setAnnounce(cameraActiveMessage(side));
+        }
       } catch (err) {
         if (!alive) return;
-        const msg = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+        const msg = errorText(err);
         if (/NotAllowed|Permission|Denied/i.test(msg)) {
           setError("Akses kamera ditolak — izinkan di pengaturan browser atau gunakan input manual di bawah.");
         } else if (/NotFound|DevicesNotFound|Overconstrained/i.test(msg)) {
@@ -167,15 +271,41 @@ function ScanBody({
         }
         setStatus("error");
       }
-    })();
+    });
+    cameraChain.current = run.catch(() => undefined);
 
     return () => {
       alive = false;
-      controls?.stop();
-      controlsRef.current?.stop();
-      controlsRef.current = null;
+      // Antre setelah pembukaan yang mungkin masih berjalan; ia menutup sendiri bila belum selesai.
+      cameraChain.current = cameraChain.current.then(() => stopCamera(controls));
     };
-  }, [deviceId, handleFrame]);
+  }, [request, handleFrame]);
+
+  // Webcam USB dicabut/dipasang: segarkan ketersediaan tombol ganti kamera.
+  useEffect(() => {
+    const media = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
+    if (typeof media?.addEventListener !== "function") return;
+    let alive = true;
+    const onChange = () => {
+      void listVideoInputs().then((list) => {
+        if (alive) setCameras(classifyCameras(list, settingsRef.current));
+      });
+    };
+    media.addEventListener("devicechange", onChange);
+    return () => {
+      alive = false;
+      media.removeEventListener("devicechange", onChange);
+    };
+  }, []);
+
+  const switchTarget = nextCamera(cameras, active);
+
+  function handleSwitch() {
+    if (!switchTarget || status === "loading") return;
+    setStatus("loading");
+    setAnnounce("");
+    setRequest(switchTarget);
+  }
 
   function handleManual(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -217,7 +347,12 @@ function ScanBody({
       </SheetHeader>
 
       <div className="relative mx-4 min-h-0 flex-1 overflow-hidden rounded-2xl bg-foreground">
-        <video ref={videoRef} className="size-full object-cover" muted playsInline />
+        <video
+          ref={videoRef}
+          className={cn("size-full object-cover", active.side === "user" && "-scale-x-100")}
+          muted
+          playsInline
+        />
         {status === "loading" && (
           <p role="status" className="absolute inset-0 flex items-center justify-center text-base text-background/80">
             Membuka kamera…
@@ -235,24 +370,20 @@ function ScanBody({
             )}
           />
         )}
-        {devices.length >= 2 && (
-          <div role="group" aria-label="Kamera" className="absolute right-3 bottom-3 left-3 flex gap-2 overflow-x-auto">
-            {devices.map((d, i) => (
-              <button
-                key={d.deviceId}
-                type="button"
-                aria-pressed={deviceId === d.deviceId}
-                onClick={() => setDeviceId(d.deviceId)}
-                className={cn(
-                  "h-12 flex-none touch-manipulation rounded-full px-4 text-sm font-medium whitespace-nowrap select-none",
-                  deviceId === d.deviceId ? "bg-background text-foreground" : "bg-foreground/60 text-background",
-                )}
-              >
-                {d.label || `Kamera ${i + 1}`}
-              </button>
-            ))}
-          </div>
+        {switchTarget && (
+          <button
+            type="button"
+            aria-label={switchCameraLabel(switchTarget)}
+            disabled={status === "loading"}
+            onClick={handleSwitch}
+            className="absolute top-3 right-3 flex size-12 touch-manipulation items-center justify-center rounded-full bg-foreground/60 text-background select-none active:bg-foreground/80 disabled:opacity-50"
+          >
+            <SwitchCamera aria-hidden className="size-6" />
+          </button>
         )}
+        <p role="status" className="sr-only">
+          {announce}
+        </p>
       </div>
 
       <div className="space-y-3 p-4">
