@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { X } from "lucide-react";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/shared/components/ui";
@@ -12,6 +12,7 @@ import { ProductGrid } from "@/modules/pos/components/ProductGrid";
 import { CartPanel } from "@/modules/pos/components/CartPanel";
 import { CheckoutSheet } from "@/modules/pos/components/CheckoutSheet";
 import { PosDock } from "@/modules/pos/components/PosDock";
+import { ProductInfoSheet } from "@/modules/pos/components/ProductInfoSheet";
 import { ScanDialog } from "@/modules/pos/components/ScanDialog";
 import { VariantSheet } from "@/modules/pos/components/VariantSheet";
 
@@ -31,6 +32,15 @@ export default function PosPage() {
   const landscape = useMediaQuery(POS_LANDSCAPE_QUERY, false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [cartOpenRaw, setCartOpen] = useState(false);
+  // Info produk (cek harga & stok tanpa keranjang): id tile yang dibuka.
+  const [infoId, setInfoId] = useState<number | null>(null);
+  const infoProduct = infoId === null ? null : (catalog.items.find((p) => p.id === infoId) ?? null);
+  // Sesudah transaksi selesai, angka stok tile disegarkan (stok baru saja keluar).
+  const completedOrder = pos.completed?.orderNumber;
+  const { refreshStock } = catalog;
+  useEffect(() => {
+    if (completedOrder) void refreshStock();
+  }, [completedOrder, refreshStock]);
   // Diputar ke mendatar saat sheet terbuka: panel keranjang tampil di samping, sheet tidak dibawa.
   const cartOpen = cartOpenRaw && !wide;
   const topbar = {
@@ -44,13 +54,13 @@ export default function PosPage() {
       {wide ? (
         <>
           <PosTopbar slot={outlet ? outlet.topbarSlot : undefined} {...topbar} />
-          <ProductGrid pos={pos} catalog={catalog} />
+          <ProductGrid pos={pos} catalog={catalog} onInfo={setInfoId} />
           <CartPanel pos={pos} />
         </>
       ) : (
         <>
           <PosTopbar compact slot={landscape && outlet ? outlet.topbarSlot : undefined} {...topbar} />
-          <ProductGrid pos={pos} catalog={catalog} />
+          <ProductGrid pos={pos} catalog={catalog} onInfo={setInfoId} />
           <PosDock
             itemCount={pos.totals.itemCount}
             total={pos.totals.total}
@@ -85,6 +95,14 @@ export default function PosPage() {
         </>
       )}
       <CheckoutSheet pos={pos} />
+      <ProductInfoSheet
+        product={infoProduct}
+        onClose={() => setInfoId(null)}
+        onAdd={(productId) => {
+          setInfoId(null);
+          void pos.addProductById(productId);
+        }}
+      />
       <VariantSheet
         choice={pos.variantChoice}
         onClose={() => pos.setVariantChoice(null)}

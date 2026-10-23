@@ -7,6 +7,8 @@ import type { PosCategory, PosProductListItem } from "@/modules/pos/types";
 
 /** Produk per halaman katalog (dimuat berikutnya saat grid di-scroll). */
 export const PAGE_SIZE = 48;
+/** Penyegaran stok sesudah checkout membaca ulang paling banyak halaman ini (240 produk teratas). */
+export const REFRESH_PAGES = 5;
 
 /**
  * Katalog POS: kategori (drilldown) + pencarian produk, dimuat per halaman (infinite scroll).
@@ -151,6 +153,35 @@ export function usePosCatalog() {
     fetchPage(pageRef.current + 1);
   }, [fetchPage]);
 
+  /**
+   * Segarkan stok (dan harga) produk yang sudah termuat tanpa mengganggu kisi: baca ulang halaman
+   * 1..n diam-diam (n ≤ REFRESH_PAGES), lalu ganti hanya field stok/harga per id — urutan, posisi
+   * gulir, dan item tidak berubah. Dipakai sesudah checkout agar angka stok tile tidak basi.
+   */
+  const refreshStock = useCallback(async () => {
+    const gen = seqRef.current;
+    const pages = Math.min(pageRef.current, REFRESH_PAGES);
+    const fresh = new Map<number, PosProductListItem>();
+    for (let p = 1; p <= pages; p++) {
+      try {
+        const res = await posService.products({ ...paramsRef.current, page: p, limit: PAGE_SIZE });
+        for (const it of res.items) fresh.set(it.id, it);
+      } catch {
+        return; // penyegaran bonus: gagal = angka lama tetap tampil
+      }
+      if (seqRef.current !== gen) return;
+    }
+    if (fresh.size === 0) return;
+    setItems((prev) =>
+      prev.map((it) => {
+        const f = fresh.get(it.id);
+        return f
+          ? { ...it, stockAvailable: f.stockAvailable, belowMinStock: f.belowMinStock, sellingPrice: f.sellingPrice }
+          : it;
+      }),
+    );
+  }, []);
+
   return {
     categories,
     activeCategoryId,
@@ -168,6 +199,7 @@ export function usePosCatalog() {
     lastPageCount,
     loadMore,
     retry,
+    refreshStock,
   };
 }
 

@@ -38,6 +38,9 @@ export interface PosProductDetail {
   sellingPrice: number;
   /** Harga jual minimum per satuan dasar (0 = tanpa batas). */
   minSellingPrice: number;
+  /** Isi satuan jual dalam satuan dasar (mis. 12 untuk DUS isi 12). */
+  salesFactor?: number;
+  tracked?: boolean;
   status: string;
   variants: PosProductVariant[];
 }
@@ -58,7 +61,7 @@ export interface ScanVariantChoice {
   code: string;
   name: string;
   barcode: string;
-  /** Stok tersedia varian ini di cabang (satuan dasar); undefined = tidak diketahui. */
+  /** Stok tersedia varian ini di lokasi jual cabang (satuan jual); undefined = tidak diketahui. */
   available?: number;
 }
 
@@ -118,6 +121,24 @@ export interface PosProductListItem {
   status: string;
   /** Foto utama (URL /media bertanda tangan, kedaluwarsa setelah TTL); null = tanpa foto. */
   primaryImageUrl?: string | null;
+  /** false = tidak dilacak stok (jasa/non-stok): tile tanpa angka stok. */
+  tracked?: boolean;
+  /** Stok tersedia cabang aktif dalam satuan jual (hanya dengan izin stock.view dan produk dilacak). */
+  stockAvailable?: number | null;
+  stockUom?: string;
+  /** Stok (satuan dasar) ≤ stok minimum produk (> 0). */
+  belowMinStock?: boolean;
+  /** Varian aktif (termasuk "Standar" tersembunyi) — untuk label "N varian". */
+  variants?: PosProductVariant[];
+}
+
+/** Satu lokasi stok cabang (GET /api/v1/stock/locations). */
+export interface PosLocation {
+  id: number;
+  code: string;
+  name: string;
+  kind: string;
+  status: string;
 }
 
 /** Satu baris hasil POST /api/v1/pricing/quote. */

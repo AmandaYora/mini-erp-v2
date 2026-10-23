@@ -15,6 +15,7 @@ import {
   type MemberPrices,
 } from "@/modules/pos/lib/cart";
 import { formatQty, normalizeQty } from "@/modules/pos/lib/qty";
+import { availableByVariant, sellableLocationIds } from "@/modules/pos/lib/stock";
 import {
   CHECKOUT_STEP_LABEL,
   NO_PAY_PERMISSION_MESSAGE,
@@ -83,14 +84,16 @@ export interface VariantChoiceState {
   variants: ScanVariantChoice[];
 }
 
-/** Stok tersedia per varian (satuan dasar, semua lokasi cabang) untuk pemilih varian.
- * Gagal/403 = tidak diketahui (pemilih tetap tampil tanpa angka stok). */
-async function variantAvailability(productId: number): Promise<Map<number, number> | null> {
+/** Stok tersedia per varian untuk pemilih varian — aturan yang sama dengan tile katalog
+ * (lokasi jual, satuan jual; lib/stock). Gagal/403 = tidak diketahui (pemilih tetap tampil tanpa
+ * angka stok). */
+async function variantAvailability(productId: number, salesFactor?: number): Promise<Map<number, number> | null> {
   try {
-    const rows = await posService.productBalances(productId);
-    const out = new Map<number, number>();
-    for (const b of rows ?? []) out.set(b.variantId, (out.get(b.variantId) ?? 0) + Math.max(0, b.available));
-    return out;
+    const [rows, locations] = await Promise.all([
+      posService.productBalances(productId),
+      posService.locations().catch(() => null),
+    ]);
+    return availableByVariant(rows ?? [], sellableLocationIds(locations), salesFactor);
   } catch {
     return null;
   }
@@ -368,7 +371,7 @@ export function usePosCart() {
         // "Standar" tidak pernah ditawarkan selama ada varian terlihat.
         const sellable = sellableVariants(d.variants);
         if (variantId === undefined && sellable.length > 1) {
-          const available = await variantAvailability(d.id);
+          const available = await variantAvailability(d.id, d.salesFactor);
           setVariantChoice({
             productId: d.id,
             productCode: d.code,

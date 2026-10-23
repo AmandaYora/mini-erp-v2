@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FormSheet, SearchInput } from "@/shared/components/ui";
 import { cn } from "@/shared/lib/cn";
 import { formatNumber } from "@/shared/lib/format";
+import { formatQty } from "@/modules/pos/lib/qty";
 import { variantChoiceLabel } from "@/modules/pos/lib/scan";
 import type { VariantChoiceState } from "@/modules/pos/hooks/use-pos-cart";
 
@@ -67,7 +68,7 @@ function VariantList({ choice, onPick }: { choice: VariantChoiceState; onPick: (
                   <span className="min-w-0">{variantChoiceLabel(v)}</span>
                   {v.available !== undefined && (
                     <span className={cn("tabular flex-none text-sm", empty ? "text-destructive" : "text-muted-foreground")}>
-                      {empty ? "Stok habis" : `Stok ${formatNumber(v.available)}`}
+                      {empty ? "Stok habis" : `Stok ${formatQty(v.available)}`}
                     </span>
                   )}
                 </button>

@@ -6,6 +6,7 @@
 // - GET /api/v1/product-categories (products.view — drilldown kategori)
 // - GET /api/v1/products/:id (products.view — untuk varian/satuan/harga)
 // - POST /api/v1/stock/scan-product {barcode} (stock.view)
+// - GET /api/v1/stock/locations?status=active (stock.view — nama lokasi + lokasi jual untuk stok tersedia)
 // - GET /api/v1/customers?search=&status=&page=&limit= (customers.view)
 // - POST /api/v1/customers (customers.create — pelanggan baru dari kasir, PR-02)
 // - GET /api/v1/customers/:id (customers.view — tipe member panel pelanggan)
@@ -31,6 +32,7 @@ import type {
   PosCustomer,
   PosCustomerDetail,
   PosDeliveryPayload,
+  PosLocation,
   PosMemberType,
   PosOrderPayload,
   PosOrderState,
@@ -43,6 +45,10 @@ import type {
   ScanResult,
   StockSuggestion,
 } from "@/modules/pos/types";
+
+// Lokasi cabang jarang berubah: dibaca sekali per 5 menit untuk semua lembar stok POS.
+const LOCATIONS_TTL_MS = 5 * 60_000;
+let locationsCache: { at: number; list: Promise<PosLocation[]> } | null = null;
 
 export const posService = {
   /** Daftar kategori aktif untuk drilldown katalog. */
@@ -72,6 +78,18 @@ export const posService = {
   /** Saldo per posisi satu produk di cabang aktif (stock.view) — stok per varian di pemilih varian. */
   productBalances: (productId: number) =>
     apiGet<ScanBalance[]>("/api/v1/stock/balances", { productId }),
+
+  /** Lokasi aktif cabang (nama + jenis) — menyaring lokasi rusak dari stok tersedia. Disimpan 5 menit. */
+  locations: (): Promise<PosLocation[]> => {
+    if (!locationsCache || Date.now() - locationsCache.at > LOCATIONS_TTL_MS) {
+      const list = apiGet<PosLocation[]>("/api/v1/stock/locations", { status: "active" }).catch((err: unknown) => {
+        locationsCache = null;
+        throw err;
+      });
+      locationsCache = { at: Date.now(), list };
+    }
+    return locationsCache.list;
+  },
 
   /** Pindai barcode → {product, variant, balances}. 404 = barcode tak dikenal. */
   scanBarcode: (barcode: string) =>

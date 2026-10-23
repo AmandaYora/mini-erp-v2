@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { productByCode, stockQty } from "../helpers/api";
-import { collectErrors, loginAs } from "../helpers/ui";
+import { ok, productByCode, stockQty } from "../helpers/api";
+import { collectErrors, loginAs, rupiah } from "../helpers/ui";
 
 // Temuan 5 (2026-10-23): Mode Kasir dibuka di HP. Tanpa ajakan "putar tablet"; cari → ketuk tile →
 // dok menunjukkan jumlah + total → keranjang di sheet bawah → Bayar → tunai → selesai.
@@ -38,6 +38,29 @@ test.describe("E23 POS di HP (tata letak ringkas < 1024px)", () => {
     await expect(dock.getByRole("button", { name: "Keranjang kosong" })).toBeVisible();
 
     expect(await stockQty(p.id)).toBe(before - 2);
+    expect(errors).toEqual([]);
+  });
+
+  test("cek harga & stok tanpa keranjang: tile menampilkan stok, info produk tidak menahan stok", async ({ page }) => {
+    const p = await productByCode("P010"); // Sampo Sachet 1.500
+    const stock = await stockQty(p.id);
+    await loginAs(page, "kasir");
+    const errors = collectErrors(page);
+    await page.goto("/pos");
+    await page.getByLabel("Cari Produk").fill(p.code);
+    const tile = page.getByRole("button", { name: `Tambah ${p.name}` }).first();
+    await expect(tile).toContainText(`Stok ${rupiah(stock)}`);
+    await page.getByRole("button", { name: `Info ${p.name}` }).first().tap();
+    const info = page.getByRole("dialog", { name: "Info produk" });
+    await expect(info.getByRole("region", { name: "Stok tersedia" })).toContainText(rupiah(stock));
+    await expect(info.getByText(/^Rp\s?1\.500$/)).toBeVisible();
+    await info.getByRole("button", { name: "Tutup", exact: true }).tap();
+    await expect(info).toHaveCount(0);
+    await expect(page.getByRole("navigation", { name: "Aksi kasir" }).getByRole("button", { name: "Keranjang kosong" })).toBeVisible();
+    await page.waitForTimeout(1000); // jendela debounce tahanan (400 ms) terlewati
+    const rows = await ok<any[]>("kasir", "GET", `/stock/balances?productId=${p.id}`);
+    expect(rows.reduce((n, b) => n + b.reserved, 0)).toBe(0);
+    expect(await stockQty(p.id)).toBe(stock);
     expect(errors).toEqual([]);
   });
 
