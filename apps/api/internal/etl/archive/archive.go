@@ -38,7 +38,6 @@ var DroppedColumns = map[string][]string{
 		"metadata_json", "subtotal_amount", "subtotal_before_tax", "subtotal_after_tax"},
 	"order_items":           {"pricing_source", "unit_price", "line_discount_amount", "line_discount_percent", "line_total_before_tax", "line_total_after_tax", "tax_rate_snapshot", "notes"},
 	"products":              {"uom", "has_variants", "attributes_json", "summary_text"},
-	"product_variants":      {"attributes_json", "is_hidden", "sort_order"},
 	"business_parties":      {"metadata_json"},
 	"users":                 {"last_login_at", "display_title", "phone_e164"},
 	"payment_allocations":   {"allocation_method", "allocated_at"},

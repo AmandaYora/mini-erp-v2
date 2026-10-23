@@ -341,3 +341,32 @@ periode tertutup, saldo awal keuangan belum diposting.
 
 Sifatnya maju saja: HPP barang yang sudah keluar sebelum revaluasi tidak diubah (gunakan restatement bila perlu, sesudahnya).
 Pemulihan bila keliru: revaluasi sekali lagi ke harga yang benar, jangan membalik jurnalnya (baris ledger tidak ikut kembali).
+
+## 6d. Perbaikan data varian hasil ETL (`variantfix`, temuan 2 — 2026-10-23)
+
+Muatan ETL sebelum perbaikan ini tidak membawa `is_hidden`, `sort_order`, dan status `inactive` varian. Akibatnya varian
+bawaan "Standar" yang di legacy tersembunyi menjadi varian terlihat (stok 0 di produk ber-warna), dan varian yang dimatikan
+pengguna menjadi `archived`. Kode POS/order sudah menyaring varian tersembunyi; datanya dipulihkan **sekali** dengan
+`apps/api/cmd/variantfix`, yang membaca nilai dari **salinan legacy beku** (`mini_erp_legacy_copy`, wajib `etl_copy_marker`)
+dan mencocokkan baris lewat `etl_id_map`. Hanya baris yang masih bernilai bawaan ETL yang diubah (`is_hidden` 0, `sort_order` 0,
+status `archived`); suntingan pengguna sesudah go-live dibiarkan dan dilaporkan. Varian bersaldo stok tidak disembunyikan bila
+produknya masih punya varian aktif lain yang terlihat. `updated_at` tidak disentuh. Idempoten: jalan kedua tidak mengubah apa pun.
+
+Hasil uji pada salinan `minierp_rehearsal` (2026-10-23): 7.777 varian terpetakan; disembunyikan 6.033 (6.031 "Standar" + 2),
+`sort_order` 1.679, `inactive` 637, dilewati 0; sesudahnya varian aktif terlihat = 1.704 = legacy (0 beda per varian). Bukti:
+`~/mini-erp-ops/varian-fix/`.
+
+Langkah di production (saat deploy rilis yang memuat perbaikan POS/order):
+
+1. Di Mac (salinan legacy beku ada di sini), bangun skrip SQL mandiri:
+   ```bash
+   cd apps/api && go run ./cmd/variantfix --legacy-dsn 'root@tcp(127.0.0.1:3306)/mini_erp_legacy_copy' --emit-sql varian-fix.sql
+   ```
+   Hasilnya `varian-fix.sql` (COMMIT) dan `varian-fix.sql.dry-run.sql` (ROLLBACK). Skrip tidak memuat id revamp; ia
+   menggabungkan `etl_id_map` di server.
+2. Backup (§2), salin kedua berkas ke server.
+3. Dry run: `mysql minierp_db < varian-fix.sql.dry-run.sql` → baris `rencana` (perkiraan: sembunyikan ±6.033, urutan ±1.679,
+   nonaktif ±637, dilewati_bersaldo 0) dan `sesudah` (semua 0). Angka berbeda jauh = berhenti, laporkan.
+4. Terapkan: `mysql minierp_db < varian-fix.sql` (satu transaksi). Jalankan sekali lagi: `rencana` harus 0 semua.
+5. Cek: `SELECT COUNT(*) FROM product_variants WHERE status='active' AND is_hidden=0` ≈ 1.704 + varian baru sejak go-live;
+   buka POS, ketuk produk cat (mis. PARAGON EMULSION TD 1KG) → lembar "Pilih varian" berisi warna tanpa "Standar".

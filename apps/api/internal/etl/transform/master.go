@@ -29,6 +29,25 @@ func archivedStatus(r row.Row) string {
 	return "active"
 }
 
+// variantStatus keeps a live variant a user switched off as "inactive" (the
+// revamp has the state); archived or unknown states stay "archived".
+func variantStatus(r row.Row) string {
+	if !r.Has("archived_at") && r.Str("status") == "inactive" {
+		return "inactive"
+	}
+	return archivedStatus(r)
+}
+
+// variantAttributes carries a non-empty legacy attribute object; empty ones
+// ("{}", null) stay NULL like a variant created in the revamp.
+func variantAttributes(r row.Row) any {
+	a := strings.TrimSpace(r.Str("attributes_json"))
+	if a == "" || a == "{}" || a == "null" || a == "[]" {
+		return nil
+	}
+	return a
+}
+
 func (s *state) branches() {
 	rows := sortedBy(s.raw["branches"], "id_branch")
 	defaults := 0
@@ -318,7 +337,11 @@ func (s *state) catalog() {
 		s.emit("product_variants", row.Row{
 			"id": id, "product_id": pid, "code": code,
 			"name": s.trunc("product_variants", lid, "name", r.Str("variant_name"), 150), "barcode": bc, "is_default": b2i(r.Bool("is_default")),
-			"status": archivedStatus(r), "created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
+			// Temuan 2 (2026-10-23): the hidden "Standar" default, the display
+			// order and the user-switched-off state travel too — without them every
+			// hidden default became a sellable variant beside the real colours.
+			"is_hidden": b2i(r.Bool("is_hidden")), "sort_order": r.Int("sort_order"), "attributes": variantAttributes(r),
+			"status": variantStatus(r), "created_at": tsLocalOr(r, "created_at", s.epoch()), "updated_at": tsLocalOr(r, "updated_at", s.epoch()),
 		})
 	}
 }

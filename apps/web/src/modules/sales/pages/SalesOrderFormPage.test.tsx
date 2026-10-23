@@ -297,6 +297,24 @@ describe("form order jual — pindai QR / barcode (SL-10)", () => {
     expect(items[0]).toMatchObject({ productId: 5, variantId: 9, qty: 2 });
   });
 
+  it("produk ber-varian: baris menunggu pilihan varian dan tidak tersimpan sebelum dipilih (temuan 2)", async () => {
+    seedDraft({
+      partyId: 3,
+      lines: [{ ...line, variantId: 0, variants: [{ id: 11, code: "CAT-001", name: "Putih" }, { id: 12, code: "CAT-002", name: "Merah" }] }],
+    });
+    renderPage();
+    const select = await screen.findByLabelText("Varian BRG-1 — Barang Uji");
+    expect((select as HTMLSelectElement).value).toBe("");
+    expect(screen.getByRole("option", { name: "Pilih varian…" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Simpan order" }));
+    expect(await screen.findAllByText(/Varian wajib dipilih/)).not.toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.change(select, { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Simpan order" }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.calls[0][0].items[0]).toMatchObject({ productId: 5, variantId: 12 });
+  });
+
   it("kode berbagai varian atau produk nonaktif ditolak tanpa menambah baris", async () => {
     scanLookup.mockResolvedValue({ id: 5, code: "BRG-1", name: "Barang Uji", status: "active", via: "product_code", variantRequired: true });
     seedDraft({ lines: [] });

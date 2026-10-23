@@ -263,6 +263,9 @@ func (v *verifier) counts() {
 		{"V-01d", "kategori produk", "SELECT COUNT(*) FROM {product_categories} WHERE {co} = :c", "SELECT COUNT(*) FROM product_categories", 0},
 		{"V-01e", "produk", "SELECT COUNT(*) FROM {products} WHERE {co} = :c", "SELECT COUNT(*) FROM products", 0},
 		{"V-01f", "varian", "SELECT COUNT(*) FROM {product_variants} WHERE {co} = :c", "SELECT COUNT(*) FROM product_variants", 0},
+		// Temuan 2: varian yang ditawarkan saat menjual (aktif, tidak tersembunyi) sama dengan legacy.
+		{"V-01f2", "varian aktif terlihat", "SELECT COUNT(*) FROM {product_variants} WHERE {co} = :c AND status = 'active' AND archived_at IS NULL AND is_hidden = 0",
+			"SELECT COUNT(*) FROM product_variants WHERE status = 'active' AND is_hidden = 0", 0},
 		{"V-01g", "pihak (customer/supplier)", "SELECT COUNT(*) FROM {business_parties} WHERE {co} = :c AND party_type IN ('customer','supplier')", "SELECT COUNT(*) FROM parties", 0},
 		{"V-01h", "alamat kirim", "SELECT COUNT(*) FROM {business_party_delivery_addresses} WHERE {co} = :c", "SELECT COUNT(*) FROM party_delivery_addresses", 0},
 		{"V-01i", "lokasi stok (lokasi rusak digabung)",

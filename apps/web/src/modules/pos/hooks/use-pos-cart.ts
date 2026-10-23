@@ -36,6 +36,7 @@ import { isDefiniteRejection, readApiError } from "@/modules/pos/lib/api-error";
 import { deliveryItemsFor, lineKey } from "@/modules/pos/lib/holds";
 import { posReadiness } from "@/modules/pos/lib/readiness";
 import { scanAction, scanErrorMessage } from "@/modules/pos/lib/scan";
+import { sellableVariants } from "@/modules/products/lib/variants";
 import type { ScanOutcome } from "@/modules/pos/lib/scan-session";
 import { useStockHolds } from "@/modules/pos/hooks/useStockHolds";
 import type {
@@ -71,13 +72,27 @@ function saleUoms(p: PosProductDetail): string[] {
 
 export type AddResult =
   | { ok: true; name: string; qty: number }
-  | { ok: false; reason: "locked" | "failed" };
+  // "choose": produk punya > 1 varian layak jual — lembar pilih varian dibuka.
+  | { ok: false; reason: "locked" | "failed" | "choose" };
 
 export interface VariantChoiceState {
   productId: number;
   productCode: string;
   productName: string;
   variants: ScanVariantChoice[];
+}
+
+/** Stok tersedia per varian (satuan dasar, semua lokasi cabang) untuk pemilih varian.
+ * Gagal/403 = tidak diketahui (pemilih tetap tampil tanpa angka stok). */
+async function variantAvailability(productId: number): Promise<Map<number, number> | null> {
+  try {
+    const rows = await posService.productBalances(productId);
+    const out = new Map<number, number>();
+    for (const b of rows ?? []) out.set(b.variantId, (out.get(b.variantId) ?? 0) + Math.max(0, b.available));
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -343,14 +358,35 @@ export function usePosCart() {
           toast.danger("Gagal menambah baris", "Produk tidak punya varian.");
           return { ok: false, reason: "failed" };
         }
-        const variant =
-          (variantId !== undefined ? d.variants.find((v) => v.id === variantId) : undefined) ??
-          d.variants.find((v) => v.isDefault) ??
-          d.variants[0];
         if (variantId !== undefined && !d.variants.some((v) => v.id === variantId)) {
           toast.danger("Gagal menambah baris", "Varian hasil pindai tidak ada di produk ini.");
           return { ok: false, reason: "failed" };
         }
+        // Tanpa varian pindaian: produk dengan > 1 varian layak jual (aktif, tidak tersembunyi)
+        // wajib dipilih — paritas legacy (dropdown varian di kartu POS). Varian tersembunyi
+        // "Standar" tidak pernah ditawarkan selama ada varian terlihat.
+        const sellable = sellableVariants(d.variants);
+        if (variantId === undefined && sellable.length > 1) {
+          const available = await variantAvailability(d.id);
+          setVariantChoice({
+            productId: d.id,
+            productCode: d.code,
+            productName: d.name,
+            variants: sellable.map((v) => ({
+              id: v.id,
+              code: v.code,
+              name: v.name,
+              barcode: v.barcode,
+              available: available?.get(v.id) ?? (available ? 0 : undefined),
+            })),
+          });
+          return { ok: false, reason: "choose" };
+        }
+        const variant =
+          (variantId !== undefined ? d.variants.find((v) => v.id === variantId) : undefined) ??
+          sellable[0] ??
+          d.variants.find((v) => v.isDefault) ??
+          d.variants[0];
         const uoms = saleUoms(d);
         if (uoms.length === 0) {
           toast.danger("Gagal menambah baris", "Produk tidak punya satuan jual.");

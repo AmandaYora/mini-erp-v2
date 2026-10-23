@@ -61,6 +61,7 @@ import { QuickCustomerSheet } from "@/modules/party/components/QuickCustomerShee
 import type { Party } from "@/modules/party/types";
 import type { Address } from "@/modules/party/types";
 import { productsService } from "@/modules/products/services/products.service";
+import { sellableVariants } from "@/modules/products/lib/variants";
 import { ScanDialog } from "@/modules/pos/components/ScanDialog";
 import type { ScanOutcome } from "@/modules/pos/lib/scan-session";
 import type { Product } from "@/modules/products/types";
@@ -419,8 +420,11 @@ function SalesOrderStandardForm() {
             const d = details.get(it.productId);
             const variants =
               d && d.variants.length > 0
-                ? d.variants.map((v) => ({ id: v.id, code: v.code, name: v.name }))
+                ? sellableVariants(d.variants).map((v) => ({ id: v.id, code: v.code, name: v.name }))
                 : [{ id: it.variantId, code: "-", name: "Varian tersimpan" }];
+            // Varian tersimpan selalu tetap bisa dipilih (mis. "Standar" tersembunyi pada order lama).
+            const saved = d?.variants.find((v) => v.id === it.variantId);
+            if (saved && !variants.some((v) => v.id === saved.id)) variants.push({ id: saved.id, code: saved.code, name: saved.name });
             const uoms = d && uniqueUoms(d).length > 0 ? uniqueUoms(d) : [it.uom];
             return {
               key: nextKey++,
@@ -531,7 +535,9 @@ function SalesOrderStandardForm() {
     setAddingLine(true);
     try {
       const d = await productsService.detail(productId);
-      const variants = d.variants.map((v) => ({ id: v.id, code: v.code, name: v.name }));
+      // Hanya varian layak jual (aktif, tidak tersembunyi); > 1 varian = wajib pilih (legacy).
+      const sellable = sellableVariants(d.variants);
+      const variants = sellable.map((v) => ({ id: v.id, code: v.code, name: v.name }));
       if (variants.length === 0) {
         toast.danger("Gagal menambah baris", "Produk tidak punya varian.");
         return { ok: false };
@@ -541,10 +547,13 @@ function SalesOrderStandardForm() {
         toast.danger("Gagal menambah baris", "Produk tidak punya satuan jual.");
         return { ok: false };
       }
-      const defaultVariant =
-        (variantId !== undefined ? d.variants.find((v) => v.id === variantId) : undefined) ??
-        d.variants.find((v) => v.isDefault) ??
-        d.variants[0];
+      // Varian hasil pindai dipakai apa adanya; tanpa pindaian, satu-satunya varian layak jual
+      // dipilih otomatis, selebihnya baris menunggu pilihan (variantId 0 → "Varian wajib dipilih").
+      const scanned = variantId !== undefined ? d.variants.find((v) => v.id === variantId) : undefined;
+      const defaultVariant = scanned ?? (sellable.length === 1 ? sellable[0] : { id: 0 });
+      if (scanned && !variants.some((v) => v.id === scanned.id)) {
+        variants.push({ id: scanned.id, code: scanned.code, name: scanned.name });
+      }
       const uom = d.salesUom || uoms[0];
       const dupe = lines.some(
         (r) => r.productId === d.id && r.variantId === defaultVariant.id && r.uom === uom,
@@ -1210,7 +1219,7 @@ function SalesOrderStandardForm() {
                 {
                   id: "product",
                   header: "Produk",
-                  render: (r) => (
+                  render: (r, i) => (
                     <div className="min-w-44">
                       <p className="font-medium">{r.productLabel}</p>
                       {readOnly || r.variants.length <= 1 ? (
@@ -1220,16 +1229,25 @@ function SalesOrderStandardForm() {
                       ) : (
                         <div className="mt-1">
                           <SelectInput
-                            value={String(r.variantId)}
+                            value={r.variantId > 0 ? String(r.variantId) : ""}
                             onChange={(e) => updateLine(r.key, { variantId: Number(e.target.value) })}
                             aria-label={`Varian ${r.productLabel}`}
+                            aria-invalid={r.variantId <= 0 || undefined}
                           >
+                            {r.variantId <= 0 && (
+                              <option value="" disabled>
+                                Pilih varian…
+                              </option>
+                            )}
                             {r.variants.map((v) => (
                               <option key={v.id} value={String(v.id)}>
                                 {v.code} — {v.name}
                               </option>
                             ))}
                           </SelectInput>
+                          {errors[`items.${i}.variantId`] && r.variantId <= 0 && (
+                            <p className="mt-1 text-xs text-destructive">{errors[`items.${i}.variantId`]}</p>
+                          )}
                         </div>
                       )}
                     </div>

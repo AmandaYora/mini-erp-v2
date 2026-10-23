@@ -39,6 +39,7 @@ import type {
   PosProductDetail,
   PosProductListItem,
   PricingQuote,
+  ScanBalance,
   ScanResult,
   StockSuggestion,
 } from "@/modules/pos/types";
@@ -67,6 +68,10 @@ export const posService = {
   /** Detail produk untuk varian default, satuan jual, dan harga katalog. */
   productDetail: (id: number) =>
     apiGet<PosProductDetail>(`/api/v1/products/${id}`),
+
+  /** Saldo per posisi satu produk di cabang aktif (stock.view) — stok per varian di pemilih varian. */
+  productBalances: (productId: number) =>
+    apiGet<ScanBalance[]>("/api/v1/stock/balances", { productId }),
 
   /** Pindai barcode → {product, variant, balances}. 404 = barcode tak dikenal. */
   scanBarcode: (barcode: string) =>

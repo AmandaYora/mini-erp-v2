@@ -22,6 +22,9 @@ export interface PosProductVariant {
   barcode: string;
   isDefault: boolean;
   status: string;
+  /** Varian bawaan tersembunyi ("Standar") — tidak ditawarkan bila ada varian terlihat. */
+  isHidden?: boolean;
+  sortOrder?: number;
 }
 
 /** Detail produk minimal untuk menambah baris (GET /api/v1/products/:id). */
@@ -55,6 +58,8 @@ export interface ScanVariantChoice {
   code: string;
   name: string;
   barcode: string;
+  /** Stok tersedia varian ini di cabang (satuan dasar); undefined = tidak diketahui. */
+  available?: number;
 }
 
 /** Status hasil pindai: ok | variant_required | inactive (string agar status baru tak merusak tipe). */

@@ -58,7 +58,9 @@ INSERT INTO legacy_product_variants (id_product_variant, @@CO@@, id_product, var
 (4, 1, 3, 'BRG-003-DEF', 'Default', NULL, '', 1, 0, 'active', 4, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),
 (5, 1, 4, 'JSA-001-DEF', 'Default', NULL, NULL, 1, 0, 'active', 5, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),
 (6, 1, 5, 'BDL-001-DEF', 'Default', NULL, NULL, 1, 0, 'active', 6, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),
-(7, 1, 6, 'NST-001-DEF', 'Default', NULL, NULL, 1, 0, 'active', 7, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL);
+(7, 1, 6, 'NST-001-DEF', 'Default', NULL, NULL, 1, 0, 'active', 7, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),
+(8, 1, 2, 'BRG-002', 'Standar', '{}', NULL, 0, 1, 'active', 0, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),
+(9, 1, 2, 'BRG-002-L', 'Ukuran L', '{"ukuran": "L"}', NULL, 0, 0, 'inactive', 9, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL);
 INSERT INTO legacy_business_parties (id_business_party, @@CO@@, party_type, id_member_type, code, name, phone_e164, email, address_text, notes, metadata_json, created_at, updated_at, archived_at) VALUES
 (1, 1, 'customer', 1, 'CUS-001', 'Pelanggan Satu', '+628111', NULL, 'Alamat Pelanggan Satu', NULL, NULL, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),
 (2, 1, 'customer', NULL, 'CUS-002', 'Pelanggan Dua', '+628112', NULL, 'Alamat Pelanggan Dua', NULL, NULL, '2025-11-01 00:00:00.000000', '2025-11-01 00:00:00.000000', NULL),

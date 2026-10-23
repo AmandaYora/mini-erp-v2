@@ -497,3 +497,29 @@ func TestTransformStockAdjustmentToOpeningCorrection(t *testing.T) {
 		t.Error("reclassified line not in adjustments.csv")
 	}
 }
+
+// Temuan 2 (2026-10-23): hidden default, display order, attributes and the
+// "inactive" state of a variant travel (they were dropped before).
+func TestTransformVariantVisibilityTravels(t *testing.T) {
+	env := etltest.Setup(t)
+	work := t.TempDir()
+	extractFixture(t, env, work)
+	out := runTransform(t, work)
+	byCode := map[string]row.Row{}
+	for _, r := range out.Tables["product_variants"] {
+		byCode[r.Str("code")] = r
+	}
+	std, l, s := byCode["BRG-002"], byCode["BRG-002-L"], byCode["BRG-002-S"]
+	if std == nil || l == nil || s == nil {
+		t.Fatalf("variants missing: %v", byCode)
+	}
+	if std.Int("is_hidden") != 1 || std.Str("status") != "active" || std.Has("attributes") {
+		t.Errorf("Standar = %v, want hidden active without attributes", std)
+	}
+	if l.Str("status") != "inactive" || l.Int("sort_order") != 9 || !strings.Contains(l.Str("attributes"), "ukuran") || l.Int("is_hidden") != 0 {
+		t.Errorf("Ukuran L = %v, want inactive, sort 9, attributes carried", l)
+	}
+	if s.Int("sort_order") != 2 || s.Int("is_hidden") != 0 || s.Str("status") != "active" {
+		t.Errorf("Ukuran S = %v", s)
+	}
+}
