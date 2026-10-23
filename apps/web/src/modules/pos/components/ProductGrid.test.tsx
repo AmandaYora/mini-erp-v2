@@ -141,9 +141,11 @@ describe("ProductGrid — infinite scroll", () => {
     render(<Harness pos={makePos()} />);
     await screen.findByRole("button", { name: "Muat lagi" });
     expect(svc.products).toHaveBeenCalledTimes(1);
-    // Seperti browser: sentinel masuk area pratinjau -> callback observer aktif.
+    // Seperti browser: sentinel masuk area pratinjau -> callback observer aktif. Observer dipasang
+    // ulang di effect setelah render "Muat lagi", jadi tunggu sampai tepat satu yang hidup
+    // (dulu dibaca seketika -> flaky bila effect belum jalan).
+    await waitFor(() => expect(observers.filter((o) => !o.disconnected)).toHaveLength(1));
     const live = observers.filter((o) => !o.disconnected);
-    expect(live).toHaveLength(1);
     sentinelVisible = true;
     act(() => live[0].fire(true));
     await screen.findByText("Semua produk ditampilkan (4)");
