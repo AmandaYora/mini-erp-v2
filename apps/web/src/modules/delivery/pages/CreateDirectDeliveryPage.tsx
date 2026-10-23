@@ -30,6 +30,7 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { deliveryService } from "@/modules/delivery/services/delivery.service";
+import { sellableVariants } from "@/modules/products/lib/variants";
 import {
   directDeliverySchema,
   toDirectDeliveryPayload,
@@ -157,8 +158,7 @@ export default function CreateDirectDeliveryPage() {
       );
       return;
     }
-    const activeVariants = d.variants.filter((v) => v.status === "active");
-    const variants = (activeVariants.length > 0 ? activeVariants : d.variants).map((v) => ({
+    const variants = sellableVariants(d.variants).map((v) => ({
       id: v.id,
       code: v.code,
       name: v.name,
@@ -172,7 +172,8 @@ export default function CreateDirectDeliveryPage() {
       toast.danger("Gagal menambah baris", "Produk tidak punya satuan.");
       return;
     }
-    const defaultVariant = d.variants.find((v) => v.isDefault && variants.some((x) => x.id === v.id)) ?? variants[0];
+    // Lebih dari satu varian layak jual (mis. warna cat): pengguna memilih (0 = belum dipilih).
+    const defaultVariant = { id: variants.length === 1 ? variants[0].id : 0 };
     const uom = uoms.includes(d.salesUom) ? d.salesUom : uoms[0];
     if (lines.some((r) => r.productId === d.id && r.variantId === defaultVariant.id && r.uom === uom)) {
       toast.warning("Baris sudah ada", "Ubah qty pada baris yang sudah ada.");
@@ -520,6 +521,9 @@ export default function CreateDirectDeliveryPage() {
                             onChange={(e) => patchLine(r.key, { variantId: Number(e.target.value) })}
                             aria-label={`Varian ${r.productLabel}`}
                           >
+                            <option value="0" disabled>
+                              Pilih varian…
+                            </option>
                             {r.variants.map((v) => (
                               <option key={v.id} value={String(v.id)}>
                                 {v.code} — {v.name}

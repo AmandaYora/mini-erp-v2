@@ -284,6 +284,9 @@ export interface PurchasingProductVariant {
   name: string;
   isDefault: boolean;
   status: string;
+  /** Varian bawaan "Standar" produk ber-varian: tidak ditawarkan bila ada varian terlihat. */
+  isHidden?: boolean;
+  sortOrder?: number;
 }
 
 // Subset partyView untuk opsi supplier.

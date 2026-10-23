@@ -354,7 +354,11 @@ produknya masih punya varian aktif lain yang terlihat. `updated_at` tidak disent
 
 Hasil uji pada salinan `minierp_rehearsal` (2026-10-23): 7.777 varian terpetakan; disembunyikan 6.033 (6.031 "Standar" + 2),
 `sort_order` 1.679, `inactive` 637, dilewati 0; sesudahnya varian aktif terlihat = 1.704 = legacy (0 beda per varian). Bukti:
-`~/mini-erp-ops/varian-fix/`.
+`~/mini-erp-ops/varian-fix/`. Uji dampak di aplikasi (salinan penuh sebelum/sesudah, 2026-10-23): tidak ada varian `active`
+yang dinonaktifkan; 637 `inactive` sebelumnya sudah `archived` (631 milik produk yang di legacy nonaktif), dan bagi semua modul
+`inactive` sama dengan `archived`. Produk aktif tanpa varian aktif = 0 (sebelum, sesudah, legacy). Nilai persediaan, laporan stok,
+alert kesehatan data, dan integritas finance identik; jual/pindai/SJ/retur/PO/GR/transfer/koreksi/revaluasi produk satu-varian
+berjalan sama. Bukti: `~/mini-erp-ops/qa/variantfix-dampak/`.
 
 Langkah di production (saat deploy rilis yang memuat perbaikan POS/order):
 

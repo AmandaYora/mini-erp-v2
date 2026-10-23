@@ -135,7 +135,11 @@ func (s *Service) RevaluationPositions(ctx context.Context, branchID, productID 
 		}
 		code, name, baseUOM = p.Code, p.Name, p.BaseUOM
 		for _, v := range p.Variants {
-			if !v.IsHidden {
+			if v.IsHidden {
+				// The implicit default of a product without real variants
+				// (legacy "Standar"): labelled as the product page does.
+				variantNames[v.ID] = "Varian bawaan"
+			} else {
 				variantNames[v.ID] = v.Name
 			}
 		}

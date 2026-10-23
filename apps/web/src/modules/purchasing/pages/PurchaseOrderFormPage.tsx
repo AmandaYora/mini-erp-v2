@@ -38,6 +38,7 @@ import {
   purchasingLookupService,
 } from "@/modules/purchasing/services/purchase-order.service";
 import { calcLineEstimate } from "@/modules/purchasing/lib/estimate";
+import { sellableVariants, soleSellableVariant } from "@/modules/products/lib/variants";
 import type {
   PurchaseOrder,
   PurchasePaymentTerms,
@@ -483,7 +484,8 @@ export default function PurchaseOrderFormPage() {
     updateLine(key, { productId, variantId: null });
     const d = await ensureDetail(productId);
     if (!d) return;
-    const fallbackVariant = d.variants.find((v) => v.isDefault) ?? d.variants[0];
+    // Produk ber-varian (mis. warna cat): pengguna memilih; varian bawaan tersembunyi tidak dipakai diam-diam.
+    const fallbackVariant = soleSellableVariant(d.variants);
     const uoms = [d.purchaseUom, d.baseUom, d.salesUom].filter(
       (u, i, arr) => u.trim() !== "" && arr.indexOf(u) === i,
     );
@@ -710,7 +712,10 @@ export default function PurchaseOrderFormPage() {
       render: (row, idx) => {
         const d = row.productId !== null ? details[row.productId] : undefined;
         const loadingDetail = row.productId !== null && detailLoading[row.productId] === true && !d;
-        const variants = (d?.variants ?? []).filter((v) => v.status === "active");
+        const sellable = sellableVariants(d?.variants ?? []);
+        // Varian tersimpan di luar daftar (PO lama) tetap ditampilkan agar pilihan tidak hilang.
+        const saved = sellable.some((v) => v.id === row.variantId) ? undefined : d?.variants.find((v) => v.id === row.variantId);
+        const variants = saved ? [...sellable, saved] : sellable;
         const showVariant =
           row.productId !== null && (loadingDetail || variants.length !== 1 || Boolean(err(`lines.${idx}.variantId`)));
         return (
