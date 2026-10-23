@@ -13,9 +13,9 @@
 // the balance before → after is printed and nothing is written. --commit
 // applies the lines only when none is rejected.
 //
-// The approver password is read from STOCKFIX_APPROVER_PASSWORD, or from one
-// line of standard input when that is empty — never from a flag (shell
-// history). Like costrebuild it runs in the app container
+// The approver password is read from STOCKFIX_APPROVER_PASSWORD, or prompted
+// when that is empty (without echo on a terminal, else one line of standard
+// input) — never from a flag (shell history), and never printed. Like costrebuild it runs in the app container
 // (`docker compose ... run --rm app ./stockfix ...`) against the host database.
 //
 // Exit codes: 0 ok (dry run clean, or committed), 1 rejected / failed, 2 usage.
@@ -42,6 +42,8 @@ import (
 	"mini-erp/internal/database"
 	"mini-erp/internal/shared/logger"
 	"mini-erp/internal/shared/signedurl"
+
+	"golang.org/x/term"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -69,9 +71,10 @@ func run(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	}
 	password := os.Getenv("STOCKFIX_APPROVER_PASSWORD")
 	if *commit && *approver != "" && password == "" {
-		fmt.Fprint(errOut, "Kata sandi penyetuju: ")
-		line, _ := bufio.NewReader(stdin).ReadString('\n')
-		password = strings.TrimRight(line, "\r\n")
+		if password, err = readPassword(stdin, errOut); err != nil {
+			fmt.Fprintln(errOut, "stockfix:", err)
+			return 2
+		}
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -111,6 +114,33 @@ func run(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// readPassword prompts for the approver password. On a terminal it is read
+// without echo; otherwise (a pipe, a file) it is the first line. The password
+// is never written anywhere — not to the prompt, an error, or the report.
+func readPassword(stdin io.Reader, prompt io.Writer) (string, error) {
+	fmt.Fprint(prompt, "Kata sandi penyetuju: ")
+	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		b, err := term.ReadPassword(int(f.Fd()))
+		fmt.Fprintln(prompt)
+		if err != nil {
+			return "", errors.New("gagal membaca kata sandi penyetuju")
+		}
+		return nonEmpty(string(b))
+	}
+	line, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", errors.New("gagal membaca kata sandi penyetuju")
+	}
+	return nonEmpty(strings.TrimRight(line, "\r\n"))
+}
+
+func nonEmpty(password string) (string, error) {
+	if password == "" {
+		return "", errors.New("kata sandi penyetuju kosong")
+	}
+	return password, nil
 }
 
 // readLines accepts a JSON array (or {"lines": [...]}) or a CSV whose header

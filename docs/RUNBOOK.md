@@ -392,7 +392,8 @@ movement rujukan, saldo sesudahnya negatif, stok tersedianya (di luar tahanan) k
 diberi penanda `[stockfix:<refMovementId>]`; baris yang penandanya sudah ada di kartu stok dilaporkan "sudah dinetralkan" dan
 tidak ditulis ulang (idempoten). `--actor` = username nyata yang aktif, punya izin `stock.adjust` dan akses cabang;
 `--approver` = pemegang `stock.approve` (wajib bila "selalu butuh persetujuan" aktif — bawaan; mode `strict` menolak penyetuju
-= actor). Kata sandi penyetuju hanya lewat env `STOCKFIX_APPROVER_PASSWORD` atau stdin, tidak lewat argumen.
+= actor). Kata sandi penyetuju hanya lewat env `STOCKFIX_APPROVER_PASSWORD` atau prompt (di terminal tanpa gema; selain itu satu
+baris stdin), tidak lewat argumen, dan tidak pernah dicetak.
 
 Langkah di server (biner `stockfix` ada di image bersama `api`/`seed`/`costrebuild`):
 

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mini-erp/cmd/stockfix/fix"
@@ -37,5 +40,41 @@ func TestReadLinesJSONAndCSV(t *testing.T) {
 func TestUsageWithoutRequiredFlags(t *testing.T) {
 	if code := run([]string{"--branch-id", "1"}, nil, os.Stdout, os.Stderr); code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
+	}
+}
+
+// Not a terminal (pipe/file): the first line is the password; only the prompt
+// is written, never the password itself.
+func TestReadPasswordFromPipe(t *testing.T) {
+	for _, in := range []string{"rahasia-kuat-1\nbaris-berikut\n", "rahasia-kuat-1\r\n", "rahasia-kuat-1"} {
+		var prompt bytes.Buffer
+		got, err := readPassword(strings.NewReader(in), &prompt)
+		if err != nil || got != "rahasia-kuat-1" {
+			t.Errorf("%q: %q err=%v", in, got, err)
+		}
+		if strings.Contains(prompt.String(), "rahasia") || prompt.String() != "Kata sandi penyetuju: " {
+			t.Errorf("prompt = %q", prompt.String())
+		}
+	}
+	if _, err := readPassword(strings.NewReader("\n"), &bytes.Buffer{}); err == nil {
+		t.Error("an empty password was accepted")
+	}
+	// An *os.File that is not a terminal (here a pipe) also takes the line path.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.WriteString("dari-pipa\n")
+	_ = w.Close()
+	if got, err := readPassword(r, &bytes.Buffer{}); err != nil || got != "dari-pipa" {
+		t.Errorf("pipe: %q err=%v", got, err)
+	}
+}
+
+// The report carries the approver's name only: no field can hold the password.
+func TestReportHasNoPassword(t *testing.T) {
+	b, _ := json.Marshal(fix.Report{Approver: "bosstok", Lines: []fix.Result{{Reason: "x"}}})
+	if strings.Contains(strings.ToLower(string(b)), "password") || strings.Contains(strings.ToLower(string(b)), "sandi") {
+		t.Fatalf("report JSON = %s", b)
 	}
 }
