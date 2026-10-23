@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatIDR, formatNumber } from "@/shared/lib/format";
+import { formatIDR } from "@/shared/lib/format";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { posCheckoutSchema } from "@/modules/pos/schemas/pos-checkout.schema";
@@ -14,6 +14,7 @@ import {
   reclampLineDiscounts,
   type MemberPrices,
 } from "@/modules/pos/lib/cart";
+import { formatQty, normalizeQty } from "@/modules/pos/lib/qty";
 import {
   CHECKOUT_STEP_LABEL,
   NO_PAY_PERMISSION_MESSAGE,
@@ -396,12 +397,12 @@ export function usePosCart() {
         const found = cartLive.current.find(
           (l) => l.productId === d.id && l.variantId === variant.id && l.uom === uom,
         );
-        const qty = found ? found.qty + 1 : 1;
+        const qty = found ? (normalizeQty(found.qty + 1) ?? 1) : 1;
         const same = (l: CartLine) => l.productId === d.id && l.variantId === variant.id && l.uom === uom;
         // Decided inside the update: two scans in a row can land before the
         // first one re-rendered, so the live ref may not show the line yet.
         setCart((rows) => {
-          if (rows.some(same)) return rows.map((l) => (same(l) ? { ...l, qty: l.qty + 1 } : l));
+          if (rows.some(same)) return rows.map((l) => (same(l) ? { ...l, qty: normalizeQty(l.qty + 1) ?? l.qty } : l));
           return [
             ...rows,
             {
@@ -491,13 +492,15 @@ export function usePosCart() {
     return memberPriceOf(l.productId) !== null ? 0 : l.minSellingPrice;
   }
 
-  /** Setel qty (≥ 1); nominal diskon dijepit ulang karena batasnya bergantung qty. */
+  /** Setel qty (desimal > 0, 4 desimal — temuan 7); qty tidak valid diabaikan. Nominal diskon
+   * dijepit ulang karena batasnya bergantung qty. */
   function setQty(key: number, requested: number) {
     if (started) return;
+    const qty = normalizeQty(requested);
+    if (qty === null) return;
     setCart((rows) =>
       rows.map((l) => {
         if (l.key !== key) return l;
-        const qty = Math.max(1, Math.floor(requested) || 1);
         const c = clampLineDiscount(
           { qty, unitPrice: displayUnitPrice(l) },
           { discountPct: l.discountPct, discountNominal: l.discountNominal },
@@ -636,7 +639,7 @@ export function usePosCart() {
       if (!st) continue;
       if (st.error) return `${l.productName}: ${st.error}`;
       if (st.shortfall > 0) {
-        return `Stok ${l.productName} kurang ${formatNumber(st.shortfall)} — kurangi qty atau hapus baris sebelum membayar.`;
+        return `Stok ${l.productName} kurang ${formatQty(st.shortfall)} — kurangi qty atau hapus baris sebelum membayar.`;
       }
     }
     return null;

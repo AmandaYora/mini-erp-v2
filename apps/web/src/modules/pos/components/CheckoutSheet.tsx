@@ -17,6 +17,7 @@ import { Notice } from "@/shared/components/feedback/notice";
 import { cn } from "@/shared/lib/cn";
 import { formatIDR, formatNumber } from "@/shared/lib/format";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
+import { formatQty } from "@/modules/pos/lib/qty";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { lineTotal } from "@/modules/pos/lib/cart";
 import { NO_PAY_PERMISSION_MESSAGE } from "@/modules/pos/lib/checkout";
@@ -406,7 +407,7 @@ function CompletedView({ pos }: { pos: PosCartApi }) {
             return (
               <li key={l.key} className="flex justify-between gap-3 py-1.5">
                 <span className="min-w-0 truncate text-muted-foreground">
-                  {l.productName} × {l.qty}
+                  {l.productName} × {formatQty(l.qty)}
                 </span>
                 <span className="tabular font-semibold text-foreground">
                   {formatIDR(

@@ -8,6 +8,7 @@ import { cn } from "@/shared/lib/cn";
 import { PosCategoryDrilldown } from "@/modules/pos/components/PosCategoryDrilldown";
 import type { PosCartApi } from "@/modules/pos/hooks/use-pos-cart";
 import type { PosCatalogApi } from "@/modules/pos/hooks/use-pos-catalog";
+import { formatQty } from "@/modules/pos/lib/qty";
 import type { PosProductListItem } from "@/modules/pos/types";
 
 // Mulai memuat halaman berikutnya ±600 px sebelum dasar kisi terlihat.
@@ -74,7 +75,7 @@ const Tile = memo(function Tile({
         <TileThumb key={product.primaryImageUrl ?? ""} name={product.name} src={product.primaryImageUrl} />
         {inCart > 0 && (
           <span className="tabular rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
-            ×{inCart}
+            ×{formatQty(inCart)}
           </span>
         )}
       </span>

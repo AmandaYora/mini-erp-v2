@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import { ChevronRight, Minus, Plus, X } from "lucide-react";
 import { Button, Popover, PopoverContent, PopoverTrigger } from "@/shared/components/ui";
 import { Numpad } from "@/shared/components/patterns";
@@ -6,19 +6,34 @@ import { cn } from "@/shared/lib/cn";
 import { formatIDR, formatNumber } from "@/shared/lib/format";
 import { lineDiscount } from "@/modules/pos/lib/cart";
 import type { PosCartApi } from "@/modules/pos/hooks/use-pos-cart";
+import { acceptQtyDraft, canDecrease, formatQty, parseQtyInput } from "@/modules/pos/lib/qty";
 import type { CartLine } from "@/modules/pos/types";
 
 const STEP =
   "flex size-12 flex-none touch-manipulation items-center justify-center rounded-lg border border-input bg-card text-foreground transition-[transform,background-color] duration-100 select-none active:scale-[0.98] active:bg-accent disabled:pointer-events-none disabled:opacity-40";
 
-/** Qty: ketuk angka membuka Numpad (tanpa keyboard sistem). */
+/**
+ * Qty: ketuk angka membuka Numpad (tanpa keyboard sistem). Desimal boleh (temuan 7, mis. 0,8 m kabel):
+ * tombol koma di Numpad, atau keyboard fisik — angka, "," atau ".", Backspace, Enter.
+ */
 function QtyPopover({ line, disabled, onCommit }: { line: CartLine; disabled: boolean; onCommit: (qty: number) => void }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const parsed = draft === "" ? null : parseQtyInput(draft);
+  function edit(next: string) {
+    if (acceptQtyDraft(next)) setDraft(next);
+  }
   function commit() {
-    const n = Number(draft);
-    if (draft !== "" && Number.isFinite(n) && n >= 1) onCommit(n);
+    if (parsed !== null) onCommit(parsed);
     setOpen(false);
+  }
+  function onKeyDown(e: KeyboardEvent) {
+    if (/^\d$/.test(e.key)) edit(draft === "0" ? e.key : draft + e.key);
+    else if ((e.key === "," || e.key === ".") && !draft.includes(".")) edit(draft === "" ? "0." : `${draft}.`);
+    else if (e.key === "Backspace") setDraft(draft.slice(0, -1));
+    else if (e.key === "Enter") commit();
+    else return;
+    e.preventDefault();
   }
   return (
     <Popover
@@ -35,17 +50,26 @@ function QtyPopover({ line, disabled, onCommit }: { line: CartLine; disabled: bo
           aria-label={`Ubah qty ${line.productName}`}
           className="tabular flex h-12 min-w-14 touch-manipulation items-center justify-center rounded-lg px-2 font-display text-xl font-semibold text-foreground select-none active:bg-accent disabled:opacity-60"
         >
-          {formatNumber(line.qty)}
+          {formatQty(line.qty)}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="center" className="w-80 space-y-3 p-3">
+      <PopoverContent align="center" className="w-80 space-y-3 p-3" onKeyDown={onKeyDown}>
         <div className="flex items-baseline justify-between rounded-lg bg-muted px-4 py-2">
           <span className="text-sm text-muted-foreground">Qty ({line.uom})</span>
           <span className={cn("tabular font-display text-3xl font-semibold", draft === "" && "text-muted-foreground")}>
-            {draft === "" ? formatNumber(line.qty) : formatNumber(Number(draft))}
+            {draft === "" ? formatQty(line.qty) : draft.replace(".", ",")}
           </span>
         </div>
-        <Numpad value={draft} onChange={setDraft} onEnter={commit} enterLabel="OK" maxLength={6} aria-label="Papan angka qty" />
+        <Numpad
+          value={draft}
+          onChange={edit}
+          onEnter={commit}
+          enterLabel="OK"
+          allowDecimal
+          decimalSeparator=","
+          maxLength={10}
+          aria-label="Papan angka qty"
+        />
       </PopoverContent>
     </Popover>
   );
@@ -176,7 +200,8 @@ export function CartLineRow({ line, pos }: { line: CartLine; pos: PosCartApi }) 
           <button
             type="button"
             className={STEP}
-            disabled={pos.started || line.qty <= 1}
+            // Langkah 1; di bawah 1 (mis. 0,8) tombol nonaktif — ubah lewat angka, atau hapus baris.
+            disabled={pos.started || !canDecrease(line.qty)}
             onClick={() => pos.changeQty(line.key, -1)}
             aria-label="Kurangi qty"
           >
@@ -200,7 +225,7 @@ export function CartLineRow({ line, pos }: { line: CartLine; pos: PosCartApi }) 
       </div>
       {quoteErr && <p className="text-xs font-semibold text-destructive">Harga member tidak dapat dihitung: {quoteErr}</p>}
       {st && st.shortfall > 0 && (
-        <p className="text-xs font-semibold text-destructive">Stok kurang {formatNumber(st.shortfall)} — kurangi qty.</p>
+        <p className="text-xs font-semibold text-destructive">Stok kurang {formatQty(st.shortfall)} — kurangi qty.</p>
       )}
       {st?.error && <p className="text-xs font-semibold text-destructive">{st.error}</p>}
     </li>

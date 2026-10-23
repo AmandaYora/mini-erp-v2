@@ -226,9 +226,9 @@ export function formatReceiptDateTime(v: string | null | undefined): string {
   return formatWith(v, { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-/** Kuantitas struk: maksimal 3 desimal, format id-ID. */
+/** Kuantitas struk: maksimal 4 desimal (= presisi qty POS, temuan 7), format id-ID. */
 export function formatReceiptQuantity(qty: number): string {
-  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(qty);
+  return new Intl.NumberFormat("id-ID", { maximumFractionDigits: 4 }).format(qty);
 }
 
 /**
