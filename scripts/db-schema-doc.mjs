@@ -46,7 +46,7 @@ export function render(mods = collect()) {
   return `${BEGIN}
 Daftar di bawah DIBANGKITKAN dari berkas baseline (\`node scripts/db-schema-doc.mjs\`); jangan diedit manual.
 Kepemilikan tabel = nama berkas migrasi (\`NNNNNN_<modul>.up.sql\`) dan ditegakkan arch-check Rule T/F.
-Modul \`dashboard\` dan \`reporting\` tidak memiliki tabel.
+Modul \`reporting\` tidak memiliki tabel; \`dashboard\` hanya memiliki tabel penundaan alert (ADR-0025).
 
 | Modul | Berkas migrasi | Tabel | Jumlah |
 |---|---|---|---|

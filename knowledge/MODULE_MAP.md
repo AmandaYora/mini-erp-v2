@@ -26,7 +26,7 @@ modul di lapisan lebih rendah tidak boleh bergantung pada lapisan lebih tinggi.
 | L6 | `salesreturn` | Retur customer atas SO/SJ | `sales`, `delivery` |
 | L6 | `purchasereturn` | Retur ke supplier atas PO/penerimaan | `purchasing`, `goodsreceipt` |
 | L7 | `finance` | COA, jurnal, HPP, laporan, tutup periode, ekspor pajak | **semua modul di atas** (lihat SYSTEM_DESIGN §7 — konsumen data terbesar) |
-| L8 | `dashboard` | Ringkasan operasional (hari ini + bulan berjalan + saldo kunci — baca finance live, tanpa tabel) | `finance` |
+| L8 | `dashboard` | Ringkasan operasional (hari ini + bulan berjalan + saldo kunci — baca finance live) dan alert kesehatan data (dihitung langsung; satu tabel penundaan alert, ADR-0025) | `finance`, `stock`, `sales`, `purchasing`, `payment`, `salesreturn`; untuk alert: `user`, `product`, `party`, `delivery` lewat `HealthClient` read-only + port integritas dari bootstrap |
 | L8 | `reporting` | Tren penjualan harian + nilai persediaan (baca finance live, tanpa agregasi terjadwal — KI-126) | `finance` |
 | L9 | `assistant` | Bot WA (whatsmeow) + 8 intent tooling read-only, whitelist nomor, tanpa RAG/AI/knowledge | `branch`, `product`, `sales`, `purchasing`, `stock`, `finance` |
 

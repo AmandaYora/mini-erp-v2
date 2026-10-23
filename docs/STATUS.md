@@ -4,7 +4,7 @@
 merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui file ini (dan tanggalnya)
 — jangan menulis angka di `CLAUDE.md`, `README.md`, atau `knowledge/`.
 
-**Terakhir diukur:** 2026-10-21, dari kode di `main`.
+**Terakhir diukur:** 2026-10-23, dari kode di `main`.
 
 ## 1. Posisi singkat
 
@@ -20,16 +20,16 @@ merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui fi
 | Ukuran | Nilai | Perintah |
 |---|---|---|
 | Modul backend | 20 | `ls apps/api/internal/modules` |
-| Rute `/api/v1` | 260 (307 panggilan frontend, semua cocok; 22 rute tidak dipanggil web) | `node scripts/contract-check.mjs` (`--list` untuk rinci) |
-| Kode izin | 81 | `node scripts/contract-check.mjs` |
-| Tabel | 69 (sistem lama: 70) | `node scripts/db-schema-doc.mjs` → [DB_SCHEMA.md](DB_SCHEMA.md) §3 |
-| Berkas migrasi | 33 = 18 baseline per modul + `000019`–`000023`, `000031`–`000037`, `000039`–`000041` (nomor 24–30 dan 38 sengaja kosong) | `ls apps/api/migrations/*.up.sql` |
-| sqlc | 16 dari 18 modul bertabel `migrated`; `finance` dan `stock` masih `pending` | `scripts/sqlc-migration-status.json` |
-| Halaman frontend | 88 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
+| Rute `/api/v1` | 269 (318 panggilan frontend, semua cocok; 22 rute tidak dipanggil web) | `node scripts/contract-check.mjs` (`--list` untuk rinci) |
+| Kode izin | 85 | `node scripts/contract-check.mjs` |
+| Tabel | 70 (sistem lama: 70; `dashboard_alert_snoozes` baru, ADR-0025) | `node scripts/db-schema-doc.mjs` → [DB_SCHEMA.md](DB_SCHEMA.md) §3 |
+| Berkas migrasi | 37 = 18 baseline per modul + `000019`–`000023`, `000031`–`000037`, `000039`–`000045` (nomor 24–30 dan 38 sengaja kosong) | `ls apps/api/migrations/*.up.sql` |
+| sqlc | 17 dari 19 modul bertabel `migrated`; `finance` dan `stock` masih `pending` | `scripts/sqlc-migration-status.json` |
+| Halaman frontend | 90 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
 | Go non-test (`internal/modules`) | ±81 ribu baris | `find apps/api/internal/modules -name '*.go' ! -name '*_test.go' \| xargs cat \| wc -l` |
-| Test backend | 201 berkas `*_test.go` (125 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
+| Test backend | 205 berkas `*_test.go` (127 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
 | Test frontend | 172 berkas (942 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
-| Spec E2E | 19 (E01–E16, V00 visual, V01 a11y, V02 responsif); gerbang terakhir 100 lulus / 0 dilewati / 0 gagal | `ls apps/e2e/specs` |
+| Spec E2E | 22 (E01–E19, V00 visual, V01 a11y, V02 responsif) | `ls apps/e2e/specs` |
 
 Gerbang penuh terakhir: 2026-10-19/20 (`node scripts/verify.mjs`, `verify.mjs --web`, `npm run test:e2e`).
 Gerbang 2026-10-21 hijau: `verify.mjs --api` termasuk integrasi Go, vitest, dan `npm run test:e2e`.
@@ -48,6 +48,7 @@ Sebelum rilis, ulangi sekali pada pohon kerja yang bersih.
 | sqlc untuk `finance` dan `stock` | Terbuka, fase terakhir | [ADR-0012](../knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md) |
 | Sisa redesain UI: uji tablet kasir sungguhan (U5-5 + uji sentuh POS bagian U7-2), logo resmi (U7-7); tema gelap ditunda. Fase 6 dan U7-2/U7-3 (keyboard E15, responsif V02) selesai 2026-10-21 | Menunggu pemilik/perangkat | [plan/redesain-ui/PLAN.md](plan/redesain-ui/PLAN.md) "Pembaruan eksekusi 2026-10-21" |
 | **SJ Langsung** (surat jalan dulu tanpa order, order dibuat dari SJ; jalur tambahan, ADR-0022) | **Terimplementasi 2026-10-21** di `main` (belum dirilis; migrasi `000042_delivery_direct`, `000043_sales_origin`): backend `delivery`/`sales`/`finance` + test integrasi `direct_delivery_test.go`; frontend pengiriman/order/dasbor; izin baru `delivery.create_direct` (tidak diberikan otomatis ke role mana pun — pemilik memberikan per role, K5). Default K1–K7 dipakai, **menunggu konfirmasi pemilik/akuntan** (K1 jurnal ditunda sampai order ada vs akun antara; K3 termin). Belum: e2e Playwright (T-01), uji cetak fisik SJ Langsung, rilis setelah cutover (K7) | [ADR-0022](../knowledge/decisions/ADR-0022-sj-langsung.md), [plan/sj-langsung/PLAN.md](plan/sj-langsung/PLAN.md) |
+| **Alert kesehatan data** (kartu "Perlu tindakan" + halaman `/data-health`, ADR-0025) | **Terimplementasi 2026-10-23** di `main`, belum dirilis (migrasi `000045_dashboard_alert_snooze`; izin `dashboard.alerts.view_all` diberikan ke admin bawaan sekali saat start, `dashboard.alerts.security` hanya owner/superadmin). 13 cek (A1–A15 kecuali A3); angka pada salinan `minierp_rehearsal` cocok persis dengan spesifikasi (A2 64 produk Rp14.200.431.681, A7 2.154 produk, A8 38, A11 10, A12 8 …). **Ditunda/terbuka**: A3 antrean posting (tahap 2, butuh antrean posting read-only); aksi "lengkapi bukti" untuk SJ terkirim tanpa status tanda tangan (belum ada jalur web, A11 baru selesai lewat koreksi data); A14 menghitung paling banyak 20 order (jendela daftar prioritas); kolektor integritas A13 masih N+1 (T8) | [ADR-0025](../knowledge/decisions/ADR-0025-alert-kesehatan-data.md), [API_CONTRACT.md](API_CONTRACT.md) §6 |
 | Keterbatasan yang dipantau: DM WhatsApp format LID tanpa `SenderAlt` (N-44); `Readiness`/`VerifyRollups` menjalankan `Sync` ledger (menulis, idempoten); `AverageUnitCost` per posisi pada stok rusak (ST-03) | Dipantau | [PARITY_AUDIT.md](PARITY_AUDIT.md) §0A.2 |
 
 Daftar rinci yang **diterima sebagai gap** (beserta alasannya) ada di [PARITY_AUDIT.md](PARITY_AUDIT.md) §0A.2.

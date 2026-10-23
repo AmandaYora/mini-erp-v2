@@ -35,6 +35,7 @@ satu orang.
 | **Document Sequence (Penomoran Dokumen)** | Nomor berjalan per jenis dokumen per cabang, prefix dari kode cabang — kontrak milik modul `branch`. |
 | **Koreksi pembayaran** | Perbaikan salah input pembayaran (metode, nominal, tanggal, referensi): pembayaran pengganti untuk pihak dan dokumen yang sama dibuat, yang asli dibatalkan dengan alasan, jurnal yang asli dibalik. Satu-satunya jalan memperbaiki pembayaran order tunai/COD yang sudah selesai tanpa membuatnya belum lunas; modul `payment`. |
 | **Journal Entry / Journal Line** | Baris jurnal akuntansi (double-entry) — satu-satunya sumber laporan keuangan, modul `finance`. |
+| **Alert kesehatan data** | Masalah data yang **dihitung langsung** dari basis data (mis. harga modal > 1,2× harga jual, stok awal belum diopname, periode lewat belum ditutup, sandi bawaan superadmin), bertingkat kritis/perlu perhatian/info, per area (keuangan, persediaan, master, dokumen, keamanan). Tidak disimpan: hilang sendiri begitu datanya beres. **Tunda** = menyembunyikan alert untuk seluruh cabang 1/3/7/14 hari dengan alasan (kritis maks 7, keamanan tidak bisa), gugur otomatis bila masalahnya bertambah. Dilihat lewat izin `dashboard.alerts.view_all` (bawaan owner, superadmin, admin); area keamanan butuh `dashboard.alerts.security` (owner, superadmin). ADR-0025. |
 | **Branch Scope** | `branchId` yang selalu diturunkan dari sesi terautentikasi (modul `auth`), tidak pernah dari body request. Tidak ada scope perusahaan (ADR-0009). |
 
 ## Peran Pengguna (Role Bawaan)

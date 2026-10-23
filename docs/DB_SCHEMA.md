@@ -51,7 +51,7 @@ otomatis berikut dibangkitkan darinya; subbagian per modul sesudahnya adalah nar
 <!-- BEGIN GENERATED: tables (scripts/db-schema-doc.mjs) -->
 Daftar di bawah DIBANGKITKAN dari berkas baseline (`node scripts/db-schema-doc.mjs`); jangan diedit manual.
 Kepemilikan tabel = nama berkas migrasi (`NNNNNN_<modul>.up.sql`) dan ditegakkan arch-check Rule T/F.
-Modul `dashboard` dan `reporting` tidak memiliki tabel.
+Modul `reporting` tidak memiliki tabel; `dashboard` hanya memiliki tabel penundaan alert (ADR-0025).
 
 | Modul | Berkas migrasi | Tabel | Jumlah |
 |---|---|---|---|
@@ -73,7 +73,8 @@ Modul `dashboard` dan `reporting` tidak memiliki tabel.
 | `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql`, `000035_finance_corrections.up.sql`, `000044_finance_opening_correction.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta`, `finance_inventory_revaluations`, `finance_inventory_revaluation_lines` | 16 |
 | `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
 | `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
-| **Total** | 18 berkas modul | | **69** |
+| `dashboard` | `000045_dashboard_alert_snooze.up.sql` | `dashboard_alert_snoozes` | 1 |
+| **Total** | 19 berkas modul | | **70** |
 <!-- END GENERATED: tables -->
 
 ### `audit` (L0)
@@ -280,6 +281,7 @@ Tidak memiliki tabel transaksional sendiri (baca-saja lewat kontrak modul lain),
 
 | Tabel | Untuk apa |
 |---|---|
+| `dashboard_alert_snoozes` (`dashboard`) | Penundaan alert kesehatan data per (cabang, alert), `uq (branch_id, alert_id)`: alasan, durasi, `snoozed_until` (UTC), jumlah & rupiah saat ditunda (tunda gugur bila masalah memburuk). Alert sendiri tidak disimpan — dihitung langsung (`000045`, ADR-0025) |
 | `daily_operational_metrics` (`reporting`) | Hasil agregasi harian terjadwal (order, stok) — **DIHAPUS** (cron menulis tapi nol pembaca — KI-126 diputuskan hapus di L8; reporting baca finance live) |
 
 ## 4. Contoh Pola Relasi Lintas Modul (Primitive ID, Bukan FK)
@@ -357,6 +359,7 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 
 | Migrasi | Tugas | Perubahan | ETL |
 |---|---|---|---|
+| `000045_dashboard_alert_snooze` | ADR-0025 (alert kesehatan data) | tabel baru `dashboard_alert_snoozes` (modul `dashboard`, tanpa FK lintas modul); `dashboard` pindah dari `noSql` ke `migrated` sqlc | tidak dimuat ETL (tabel mulai kosong) |
 | `000019_sales` | SL-09 | `sales_orders.credit_approved_by`, `credit_approved_at` (nullable): siapa/kapan kredit disetujui | memetakan `credit_approved_*` dan `assigned_user_id` legacy |
 | `000020_assistant_tool_status` | AS-02 | `assistant_tool_executions.status` (default `success`), `error_text`: tool gagal tercatat per baris | tak terpengaruh |
 | `000021_stock_parity` | ST-01, ST-02 | `stock_locations.is_picking_area`, `is_primary`, `sort_order`; `stock_transfers.driver_name`, `vehicle_plate`, `transfer_date` (diisi hari WIB kirim/dibuat untuk dokumen lama) | spec load membawa `is_picking_area`/`is_primary`/`sort_order`, `driver_name`/`vehicle_number`/`transfer_date` |
