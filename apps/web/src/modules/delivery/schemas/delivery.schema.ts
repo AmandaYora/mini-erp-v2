@@ -24,7 +24,9 @@ export const deliverSchema = z.object({
   // "" = kosongkan → server memakai tanggal hari ini (WIB).
   deliveryDate: z.string().default(""),
   notes: z.string().default(""),
-  items: z.array(deliverLineSchema).min(1, "Minimal 1 baris item"),
+  // Hanya baris yang dicentang "Kirim" yang divalidasi dan dikirim; sisanya tetap
+  // tersedia untuk surat jalan berikutnya (server menerima SJ sebagian baris).
+  items: z.array(deliverLineSchema).min(1, "Pilih minimal 1 barang yang dikirim"),
 });
 
 export type DeliverFormValues = z.infer<typeof deliverSchema>;

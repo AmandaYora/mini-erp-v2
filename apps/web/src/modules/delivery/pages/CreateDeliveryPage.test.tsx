@@ -126,4 +126,38 @@ describe("halaman Buat Surat Jalan (?from=)", () => {
     expect(typeof body.clientRef).toBe("string");
     expect(body.items).toHaveLength(2);
   });
+
+  it("checkbox Kirim: bawaan semua tercentang; baris dilepas tidak dikirim dan ringkasan menyesuaikan", async () => {
+    create.mockResolvedValue({ message: "ok", data: { id: 56, number: "SJ-56" } });
+    open();
+    await screen.findByText("Semen");
+    const semen = screen.getByRole("checkbox", { name: "Kirim Semen" });
+    const paku = screen.getByRole("checkbox", { name: "Kirim Paku" });
+    expect(semen).toHaveAttribute("aria-checked", "true");
+    expect(paku).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("checkbox", { name: "Pilih semua barang" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(paku);
+    expect(screen.getByRole("checkbox", { name: "Pilih semua barang" })).toHaveAttribute("aria-checked", "mixed");
+    expect(screen.getByLabelText("Qty kirim Paku")).toBeDisabled();
+    expect(screen.getByText(/dari 2 baris dikirim/)).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText("Nama supir"), { target: { value: "Andi" } });
+    fireEvent.change(screen.getByPlaceholderText("Nama petugas gudang"), { target: { value: "Rudi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Simpan surat jalan" }));
+    await screen.findByText("detail surat jalan");
+    const body = create.mock.calls[0][0];
+    expect(body.items).toEqual([{ productId: 10, variantId: 11, uom: "sak", qty: 4 }]);
+  });
+
+  it("qty kosong pada baris yang dilepas tidak menghalangi; semua dilepas -> galat jelas", async () => {
+    open();
+    await screen.findByText("Semen");
+    fireEvent.change(screen.getByLabelText("Qty kirim Paku"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pilih semua barang" }));
+    expect(screen.getByRole("checkbox", { name: "Kirim Semen" })).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Simpan surat jalan" }));
+    expect(await screen.findByText("Pilih minimal 1 barang yang dikirim")).toBeTruthy();
+    expect(create).not.toHaveBeenCalled();
+  });
 });

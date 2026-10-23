@@ -9,6 +9,9 @@ export interface LineColumn<T> {
   /** Lebar kolom (CSS), mis. "9rem". Kolom tanpa lebar membagi sisa ruang. */
   width?: string;
   align?: "left" | "right" | "center";
+  /** Kontrol di kepala kolom (mis. checkbox "pilih semua") menggantikan teks `header` di tabel; pada
+   * mode kartu tampil di strip atas daftar. `header` tetap dipakai sebagai label kolom di kartu. */
+  headerNode?: ReactNode;
   /** Isi sel — biasanya kontrol input; `index` untuk label aksesibel ("Qty baris 3"). */
   render: (line: T, index: number) => ReactNode;
 }
@@ -26,6 +29,8 @@ export interface LineItemsEditorProps<T> {
   readOnly?: boolean;
   /** Baris di bawah tabel (mis. ringkasan). */
   footer?: ReactNode;
+  /** Kelas tambahan per baris, mis. baris yang dikecualikan tampil redup. */
+  rowClassName?: (line: T) => string | undefined;
   className?: string;
 }
 
@@ -68,6 +73,7 @@ export function LineItemsEditor<T>({
   emptyText = "Belum ada baris.",
   readOnly = false,
   footer,
+  rowClassName,
   className,
 }: LineItemsEditorProps<T>) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -115,25 +121,41 @@ export function LineItemsEditor<T>({
         lines.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-muted-foreground">{emptyText}</p>
         ) : (
-          <ol className="divide-y divide-border">
-            {lines.map((line, index) => (
-              <li key={getKey(line, index)} data-line="" className="px-3 py-3" onKeyDown={(e) => handleLineKeyDown(e, index)}>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="tabular text-xs font-semibold text-muted-foreground">Baris {index + 1}</span>
-                  {canEdit && onRemove && removeButton(index)}
-                </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-                  {columns.map((c, ci) => (
-                    // Kolom pertama (biasanya produk/akun) dan kolom tanpa lebar tetap memakai lebar penuh.
-                    <div key={c.id} className={cn("min-w-0", (ci === 0 || !c.width) && "col-span-2")}>
-                      {c.header && <div className="mb-1 text-xs font-medium text-muted-foreground">{c.header}</div>}
-                      <div className={cn("text-sm", c.align === "right" && "text-right")}>{c.render(line, index)}</div>
-                    </div>
+          <>
+            {columns.some((c) => c.headerNode) && (
+              <div className="flex flex-wrap items-center gap-4 border-b border-border bg-background px-3 py-2">
+                {columns
+                  .filter((c) => c.headerNode)
+                  .map((c) => (
+                    <div key={c.id}>{c.headerNode}</div>
                   ))}
-                </div>
-              </li>
-            ))}
-          </ol>
+              </div>
+            )}
+            <ol className="divide-y divide-border">
+              {lines.map((line, index) => (
+                <li
+                  key={getKey(line, index)}
+                  data-line=""
+                  className={cn("px-3 py-3", rowClassName?.(line))}
+                  onKeyDown={(e) => handleLineKeyDown(e, index)}
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="tabular text-xs font-semibold text-muted-foreground">Baris {index + 1}</span>
+                    {canEdit && onRemove && removeButton(index)}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    {columns.map((c, ci) => (
+                      // Kolom pertama (biasanya produk/akun) dan kolom tanpa lebar tetap memakai lebar penuh.
+                      <div key={c.id} className={cn("min-w-0", (ci === 0 || !c.width) && "col-span-2")}>
+                        {c.header && <div className="mb-1 text-xs font-medium text-muted-foreground">{c.header}</div>}
+                        <div className={cn("text-sm", c.align === "right" && "text-right")}>{c.render(line, index)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </>
         )
       ) : (
         <div className="overflow-x-auto">
@@ -153,7 +175,7 @@ export function LineItemsEditor<T>({
                       c.align === "right" ? "text-right" : c.align === "center" ? "text-center" : "text-left",
                     )}
                   >
-                    {c.header}
+                    {c.headerNode ?? c.header}
                   </th>
                 ))}
                 {canEdit && onRemove && (
@@ -175,7 +197,7 @@ export function LineItemsEditor<T>({
                   <tr
                     key={getKey(line, index)}
                     data-line=""
-                    className="border-b border-border align-top last:border-b-0"
+                    className={cn("border-b border-border align-top last:border-b-0", rowClassName?.(line))}
                     onKeyDown={(e) => handleLineKeyDown(e, index)}
                   >
                     <td className="tabular px-3 py-2.5 text-center text-xs text-muted-foreground">{index + 1}</td>

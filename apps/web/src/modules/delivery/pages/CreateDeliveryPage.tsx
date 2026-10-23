@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { z } from "zod";
 import {
   Button,
+  Checkbox,
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -46,6 +47,9 @@ interface DeliverLineRow {
   maxQty: number;
   qty: string;
   locationId: number | null;
+  /** Dicentang "Kirim" (bawaan ya). Baris tak dicentang tidak dikirim ke API dan sisanya
+   * tetap tersedia untuk surat jalan berikutnya — padanan "Pilih Item yang Dibawa" legacy. */
+  included: boolean;
 }
 
 let nextLineKey = 1;
@@ -104,6 +108,7 @@ async function fetchDeliverLines(soId: number): Promise<{ so: SalesOrderOption; 
         maxQty: rest,
         qty: String(rest),
         locationId: null,
+        included: true,
       };
     })
     .filter((r) => r.maxQty > 0);
@@ -165,6 +170,10 @@ export default function CreateDeliveryPage() {
     setLines((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
+  function setAllIncluded(included: boolean) {
+    setLines((prev) => prev.map((r) => ({ ...r, included })));
+  }
+
   /** Jepit qty klien ke [0, maxQty] — backend menolak over-SO. */
   function handleQtyChange(key: number, maxQty: number, raw: string) {
     if (raw.trim() === "") {
@@ -182,13 +191,15 @@ export default function CreateDeliveryPage() {
       salesOrderId: soId ?? 0,
       deliveryDate: deliveryDate.trim(),
       notes,
-      items: lines.map((r) => ({
-        productId: r.productId,
-        variantId: r.variantId,
-        locationId: r.locationId ?? 0,
-        uom: r.uom,
-        qty: r.qty,
-      })),
+      items: lines
+        .filter((r) => r.included)
+        .map((r) => ({
+          productId: r.productId,
+          variantId: r.variantId,
+          locationId: r.locationId ?? 0,
+          uom: r.uom,
+          qty: r.qty,
+        })),
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Periksa kembali isian formulir.");
@@ -235,7 +246,11 @@ export default function CreateDeliveryPage() {
 
   const so = loaded?.so ?? null;
   const cancelTo = soId ? `${ROUTE_PATHS.salesOrders}/${soId}` : ROUTE_PATHS.deliveries;
-  const totalQty = lines.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  // Ringkasan hanya menghitung baris yang dicentang "Kirim".
+  const picked = lines.filter((r) => r.included);
+  const totalQty = picked.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  const allState: boolean | "indeterminate" =
+    picked.length === 0 ? false : picked.length === lines.length ? true : "indeterminate";
   const errorCount = Object.keys(fieldErrors).length;
 
   return (
@@ -362,7 +377,32 @@ export default function CreateDeliveryPage() {
                   ? "Pilih order jual untuk memuat baris barang."
                   : "Semua barang order ini sudah dikirim atau dibuatkan surat jalan."
               }
+              rowClassName={(r) => (r.included ? undefined : "bg-muted text-muted-foreground")}
               columns={[
+                {
+                  id: "include",
+                  header: "Kirim",
+                  width: "5.5rem",
+                  headerNode: (
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                      <Checkbox
+                        aria-label="Pilih semua barang"
+                        checked={allState}
+                        onCheckedChange={(v) => setAllIncluded(v === true)}
+                      />
+                      Kirim
+                    </label>
+                  ),
+                  render: (r) => (
+                    <span className="inline-flex h-9 items-center px-1">
+                      <Checkbox
+                        aria-label={`Kirim ${r.productName}`}
+                        checked={r.included}
+                        onCheckedChange={(v) => patchLine(r.key, { included: v === true })}
+                      />
+                    </span>
+                  ),
+                },
                 {
                   id: "product",
                   header: "Produk",
@@ -396,6 +436,7 @@ export default function CreateDeliveryPage() {
                       min="0"
                       step="any"
                       value={r.qty}
+                      disabled={!r.included}
                       onChange={(e) => handleQtyChange(r.key, r.maxQty, e.target.value)}
                       aria-label={`Qty kirim ${r.productName}`}
                       className="text-right"
@@ -411,6 +452,7 @@ export default function CreateDeliveryPage() {
                       aria-label={`Lokasi asal ${r.productName}`}
                       options={(locations ?? []).map((l) => ({ value: l.id, label: `${l.code} — ${l.name}` }))}
                       value={r.locationId}
+                      disabled={!r.included}
                       placeholder="Otomatis (server)"
                       allowClear
                       onChange={(v) => patchLine(r.key, { locationId: toId(v) })}
@@ -426,7 +468,8 @@ export default function CreateDeliveryPage() {
           summary={
             <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
               <span>
-                <span className="tabular">{lines.length}</span> baris
+                <span className="tabular">{picked.length}</span>
+                {picked.length === lines.length ? " baris" : ` dari ${lines.length} baris dikirim`}
               </span>
               <span>
                 Total qty <Qty value={totalQty} className="font-semibold text-foreground" />
