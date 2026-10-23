@@ -130,5 +130,7 @@ type OrderStatus struct {
 func PermissionCatalog() []usercontracts.PermissionSeed {
 	return []usercontracts.PermissionSeed{
 		{Code: "dashboard.view", Name: "Dasbor: Lihat"},
+		{Code: "dashboard.alerts.view_all", Name: "Dasbor: Lihat & tunda alert kesehatan data"},
+		{Code: "dashboard.alerts.security", Name: "Dasbor: Lihat alert keamanan"},
 	}
 }

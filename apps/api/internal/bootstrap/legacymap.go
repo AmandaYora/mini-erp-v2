@@ -228,12 +228,20 @@ func legacyKasir() []string {
 // (authz_seed_applied) and is never re-added if an admin removes it.
 var kasirPaymentGrants = []string{"payment.create", "payment.view"}
 
+// adminHealthGrants give the default admin role the data-health alerts
+// (ADR-0025): seeing and snoozing them is operational oversight, an admin's job
+// (owner's decision 2026-10-23, knowing staff holding admin see them too). The
+// keamanan area (dashboard.alerts.security) stays owner/superadmin only. A
+// default grant reaches existing databases once on the next start
+// (authz_seed_applied) and is never re-added if the owner removes it.
+var adminHealthGrants = []string{"dashboard.alerts.view_all"}
+
 // DefaultGrants maps role code -> revamp codes granted once on first seed.
 // Admin/staff/kasir keep their customizations afterwards (tracked in
 // authz_seed_applied); owner/superadmin re-sync to everything each run.
 func DefaultGrants() map[string][]string {
 	return map[string][]string{
-		"admin": MapLegacyCodes(legacyAdmin()),
+		"admin": append(MapLegacyCodes(legacyAdmin()), adminHealthGrants...),
 		"staff": MapLegacyCodes(legacyStaff()),
 		"kasir": append(MapLegacyCodes(legacyKasir()), kasirPaymentGrants...),
 	}

@@ -44,6 +44,8 @@ var roleMatrix = map[string]string{
 	"customers.create":              "oask",
 	"customers.update":              "oask",
 	"customers.view":                "oask",
+	"dashboard.alerts.security":     "o", // ADR-0025: keamanan hanya owner/superadmin
+	"dashboard.alerts.view_all":     "oa",
 	"dashboard.view":                "oask",
 	"delivery.archive":              "oask",
 	"delivery.create":               "oask",

@@ -1,10 +1,10 @@
 {
   "_comment": "sqlc migration ratchet (F8-15 Rule C, F8-18). Every module under apps/api/internal/modules is in exactly one list. Move a module from pending to migrated in the SAME commit that adds its queries/*.sql and generated sqlc/db.go; arch-check fails if the list and the tree disagree, and Rule R then forbids raw QueryContext/ExecContext in migrated modules. noSql = module owns no tables.",
   "migrated": [
-    "assistant", "audit", "auth", "branch", "company", "delivery", "goodsreceipt", "media", "party", "payment", "purchasereturn", "purchasing", "product", "sales", "salesreturn", "user"
+    "assistant", "audit", "auth", "branch", "company", "dashboard", "delivery", "goodsreceipt", "media", "party", "payment", "purchasereturn", "purchasing", "product", "sales", "salesreturn", "user"
   ],
   "pending": [
     "finance", "stock"
   ],
-  "noSql": ["dashboard", "reporting"]
+  "noSql": ["reporting"]
 }

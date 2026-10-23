@@ -15,6 +15,7 @@ import (
 	"mini-erp/internal/modules/branch"
 	"mini-erp/internal/modules/company"
 	"mini-erp/internal/modules/dashboard"
+	dashboardapp "mini-erp/internal/modules/dashboard/application"
 	"mini-erp/internal/modules/delivery"
 	"mini-erp/internal/modules/finance"
 	"mini-erp/internal/modules/goodsreceipt"
@@ -162,8 +163,12 @@ func Wire(db *sql.DB, o Options) (*Modules, error) {
 	m.SalesReturn.SetCosts(m.Finance.Finance())
 	// L8 readers: dashboard (finance figures + operational widgets) and
 	// reporting (finance figures).
-	m.Dashboard = dashboard.NewModule(m.Finance.Finance(), m.Stock.Stock(), m.Sales.Service(), m.Purchasing.Service(),
-		m.SalesReturn.SalesReturns(), m.Payment.Payments())
+	m.Dashboard = dashboard.NewModule(db, m.Finance.Finance(), m.Stock.Stock(), m.Sales.Service(), m.Purchasing.Service(),
+		m.SalesReturn.SalesReturns(), m.Payment.Payments(), dashboardapp.HealthSources{
+			Users: m.User.Health(), UserNames: m.User.Users(), Finance: m.Finance.Health(), Stock: m.Stock.Health(),
+			Products: m.Product.Health(), Parties: m.Party.Health(), Delivery: m.Delivery.Health(),
+			Sales: m.Sales.Service(), Payments: m.Payment.Payments(), Integrity: m.IntegrityIssues,
+		}, m.Audit.Audit(), o.Log)
 	m.Reporting = reporting.NewModule(m.Finance.Finance(), m.Sales.Service(), m.Purchasing.Service(), m.Stock.Stock(), m.Payment.Payments())
 	// Audit list decoration (F3b-8): actor and branch names resolved through
 	// the user/branch contracts, never by joining their tables.

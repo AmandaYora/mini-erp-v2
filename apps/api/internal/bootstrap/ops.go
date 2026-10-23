@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"net/http"
 
 	authcontracts "mini-erp/internal/modules/auth/contracts"
@@ -14,7 +15,12 @@ import (
 // disagrees with their status). Read-only: the operator repeats or undoes each
 // action; nothing heals behind the user's back.
 func (m *Modules) IntegrityReport(r *http.Request, branchID int64) ([]integrity.Issue, error) {
-	ctx := r.Context()
+	return m.IntegrityIssues(r.Context(), branchID)
+}
+
+// IntegrityIssues is IntegrityReport for callers without a request: the
+// data-health alert A13 reads it on its own timer (ADR-0025).
+func (m *Modules) IntegrityIssues(ctx context.Context, branchID int64) ([]integrity.Issue, error) {
 	out := []integrity.Issue{}
 	for _, collect := range []func() ([]integrity.Issue, error){
 		func() ([]integrity.Issue, error) { return m.Delivery.Service().IntegrityIssues(ctx, branchID) },
