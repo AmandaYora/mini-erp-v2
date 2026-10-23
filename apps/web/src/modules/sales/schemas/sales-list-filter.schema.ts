@@ -12,7 +12,7 @@ import { SALES_ORIGINS, SALES_STATUSES } from "@/modules/sales/types";
 
 export const SALES_SORT_KEYS = ["id", "date", "number", "total", "status"] as const;
 export const PAYMENT_TERMS = ["cod", "net", "prepaid"] as const;
-export const PAYMENT_STATUSES = ["unpaid", "partial", "paid", "overdue"] as const;
+export const PAYMENT_STATUSES = ["unpaid", "partial", "paid", "overdue", "received"] as const;
 
 // Skema filter daftar Order Jual. State-nya hidup di URL (useUrlFilters);
 // tipe filter diturunkan lewat z.infer, bukan ditulis manual.

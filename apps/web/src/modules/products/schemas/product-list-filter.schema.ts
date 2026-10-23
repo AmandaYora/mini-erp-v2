@@ -11,6 +11,9 @@ export const productListFilterSchema = z.object({
   status: z.enum(["active", "inactive", "archived", "all"]),
   type: enumOrEmpty(["barang", "jasa", "paket", "non_stok"] as const),
   tracked: enumOrEmpty(["true", "false"] as const),
+  // Filter dari alert kesehatan data (ADR-0025): tampil sebagai chip yang bisa dihapus.
+  priceIssue: enumOrEmpty(["min_above_selling"] as const),
+  duplicateName: enumOrEmpty(["1"] as const),
   view: z.enum(["table", "gallery"]),
   page: pageFilter,
 });
@@ -23,6 +26,8 @@ export const PRODUCT_LIST_DEFAULTS: ProductListFilter = {
   status: "active",
   type: "",
   tracked: "",
+  priceIssue: "",
+  duplicateName: "",
   view: "table",
   page: 1,
 };

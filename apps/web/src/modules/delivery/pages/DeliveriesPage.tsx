@@ -39,6 +39,9 @@ import { useUrlFilters } from "@/shared/hooks/use-url-filters";
 
 const LIMIT = 20;
 
+// Filter tanda tangan penerima (alert kesehatan data A11: SJ bersopir tanpa status TTD).
+const SIGNATURE_LABEL: Record<string, string> = { none: "belum diisi", signed: "bertanda tangan", missing: "tanpa TTD (beralasan)" };
+
 // Kolom tabel hanya dari kunci noteView yang benar-benar ada: number,
 // deliveryDate, orderNumber, status, items, documentKind, salesReturnId,
 // origin, partyName. Filter (semua server-side): search (nomor/penerima/
@@ -100,6 +103,13 @@ export default function DeliveriesPage() {
   }
   if (filters.unordered === "1") {
     active.push({ key: "unordered", label: "Belum diorder", onRemove: () => setFilters({ unordered: "" }) });
+  }
+  if (filters.signature) {
+    active.push({
+      key: "signature",
+      label: `TTD: ${SIGNATURE_LABEL[filters.signature] ?? filters.signature}`,
+      onRemove: () => setFilters({ signature: "" }),
+    });
   }
   const hasFilters = active.length > 0 || Boolean(filters.search || filters.status || filters.from || filters.to);
 
@@ -275,6 +285,21 @@ export default function DeliveriesPage() {
               ),
             },
             { header: "Penerima", render: (r) => r.recipientName || "–" },
+            {
+              header: "TTD",
+              render: (r) =>
+                r.status !== "confirmed" ? (
+                  "–"
+                ) : r.recipientSignatureStatus === "signed" ? (
+                  <Badge tone="success">Bertanda tangan</Badge>
+                ) : r.recipientSignatureStatus === "missing" ? (
+                  <Badge tone="muted">Tanpa TTD</Badge>
+                ) : r.driverName ? (
+                  <Badge tone="warning">Belum diisi</Badge>
+                ) : (
+                  "–"
+                ),
+            },
             { header: "Baris", align: "right", render: (r) => <Qty value={r.items.length} /> },
             { header: "Status", render: (r) => <StatusBadge status={r.status} /> },
           ]}

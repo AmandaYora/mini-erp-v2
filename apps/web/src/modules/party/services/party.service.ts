@@ -23,6 +23,8 @@ import type {
 export interface PartyListParams {
   search?: string;
   status?: string;
+  /** "1" = nama dipakai lebih dari satu pihak aktif (alert A10). */
+  duplicateName?: string;
   page: number;
   limit: number;
 }
@@ -31,7 +33,7 @@ function listParams(p: PartyListParams): Record<string, unknown> {
   const search = p.search?.trim() ? p.search.trim() : undefined;
   // "all" = Semua status (tanpa filter); kosong juga tanpa filter.
   const status = p.status && p.status !== "all" ? p.status : undefined;
-  return { search, status, page: p.page, limit: p.limit };
+  return { search, status, duplicateName: p.duplicateName || undefined, page: p.page, limit: p.limit };
 }
 
 function searchParams(search?: string, status?: string): Record<string, unknown> {

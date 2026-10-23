@@ -56,6 +56,7 @@ const PAYMENT_STATUS_LABEL = {
   partial: "Bayar sebagian",
   paid: "Lunas",
   overdue: "Jatuh tempo",
+  received: "Sudah dibayar (sebagian/lunas)",
 } as const;
 
 export default function SalesOrdersPage() {

@@ -28,6 +28,9 @@ import { formatDateTime } from "@/shared/lib/format";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
+import { useUrlFilters } from "@/shared/hooks/use-url-filters";
+import { USER_LIST_DEFAULTS, userListFilterSchema } from "@/modules/users/schemas/user-list-filter.schema";
+import type { UserListFilter } from "@/modules/users/schemas/user-list-filter.schema";
 import { userService } from "@/modules/users/services/user.service";
 import { roleService } from "@/modules/users/services/role.service";
 import {
@@ -62,9 +65,11 @@ export default function UsersPage() {
   const canUpdate = can("users.update");
   const canArchive = can("users.archive");
 
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
-  const [page, setPage] = useState(1);
+  const { filters, setFilters } = useUrlFilters(userListFilterSchema, USER_LIST_DEFAULTS);
+  const { search, status, page } = filters;
+  const setSearch = (v: string) => setFilters({ search: v });
+  const setStatus = (v: string) => setFilters({ status: v as UserListFilter["status"] });
+  const setPage = (p: number) => setFilters({ page: p });
 
   const { data, loading, error, reload } = useAsyncData(
     async (signal) => {
@@ -411,7 +416,6 @@ export default function UsersPage() {
             value={search}
             onSearch={(v) => {
               setSearch(v);
-              setPage(1);
             }}
           />
         }
@@ -423,7 +427,6 @@ export default function UsersPage() {
                 value={status}
                 onChange={(e) => {
                   setStatus(e.target.value);
-                  setPage(1);
                 }}
               >
                 <option value="">Semua</option>
@@ -441,7 +444,6 @@ export default function UsersPage() {
                   label: `Status: ${status === "active" ? "Aktif" : "Nonaktif"}`,
                   onRemove: () => {
                     setStatus("");
-                    setPage(1);
                   },
                 },
               ]
@@ -452,7 +454,6 @@ export default function UsersPage() {
             ? () => {
                 setSearch("");
                 setStatus("");
-                setPage(1);
               }
             : undefined
         }

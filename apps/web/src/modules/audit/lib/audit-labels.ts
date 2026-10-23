@@ -158,6 +158,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "finance.cost_restatement": "Hitung ulang HPP (restatement biaya persediaan)",
   "finance.inventory_revaluation": "Revaluasi harga modal persediaan",
 
+  // Kesehatan data (ADR-0025)
+  "data_health_snoozes.create": "Tunda alert kesehatan data",
+  "data_health_snoozes.delete": "Batalkan tunda alert kesehatan data",
+
   // Sistem
   "error.unexpected": "Galat server tak terduga",
 };
@@ -202,6 +206,7 @@ export const ENTITY_LABELS: Record<string, string> = {
   posting_source: "Transaksi antrian posting",
   cost_ledger: "Ledger biaya persediaan",
   inventory_revaluation: "Revaluasi harga modal",
+  data_health_snooze: "Penundaan alert",
   error: "Galat sistem",
 };
 

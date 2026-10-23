@@ -56,6 +56,8 @@ export interface DeliveryFilterParams {
   origin?: string;
   /** true = hanya SJ Langsung yang belum diorder (dikirim sebagai unordered=1). */
   unordered?: boolean;
+  /** Status tanda tangan penerima: "none" (SJ bersopir tanpa status, alert A11) | "signed" | "missing". */
+  signature?: string;
 }
 
 export interface DeliveryListParams extends DeliveryFilterParams {
@@ -74,6 +76,7 @@ export function buildDeliveryListQuery(p: DeliveryListParams): Record<string, un
     to: p.to,
     origin: p.origin,
     unordered: p.unordered ? "1" : undefined,
+    signature: p.signature,
     page: p.page,
     limit: p.limit,
   });

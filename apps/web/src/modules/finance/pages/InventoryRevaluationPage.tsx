@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import {
   Button,
@@ -14,6 +14,7 @@ import {
 } from "@/shared/components/ui";
 import { DescriptionList, DocNumber, Money, Page, Qty } from "@/shared/components/patterns";
 import { ErrorState } from "@/shared/components/feedback/error-state";
+import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate, formatDateTime, formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
 import { formatApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
@@ -36,8 +37,11 @@ export default function InventoryRevaluationPage() {
   const can = useAuthStore((s) => s.can);
   const canCommit = can("finance.close.force");
 
-  const [productId, setProductId] = useState<number | null>(null);
-  const [variantId, setVariantId] = useState<number | null>(null);
+  // ?productId=&variantId= (dari alert kesehatan data A2) mengisi pilihan awal produk.
+  const [params] = useSearchParams();
+  const [fromAlert] = useState(() => Number(params.get("productId")) > 0);
+  const [productId, setProductId] = useState<number | null>(() => Number(params.get("productId")) || null);
+  const [variantId, setVariantId] = useState<number | null>(() => Number(params.get("variantId")) || null);
   const [cost, setCost] = useState("");
   const [costError, setCostError] = useState<string | undefined>(undefined);
   const [date, setDate] = useState(todayWIB());
@@ -130,6 +134,12 @@ export default function InventoryRevaluationPage() {
         title="Revaluasi Harga Modal"
         description="Untuk harga modal yang terlanjur salah (saldo awal atau barang masuk salah harga). Nilai persediaan produk disetel ke stok × harga baru; selisihnya dibukukan ke Selisih Stok, dan barang keluar berikutnya memakai harga baru."
       />
+
+      {fromAlert && (
+        <Notice tone="warning" title="Revaluasi di halaman ini menjurnal lawan 5100 (laba rugi)">
+          Untuk kesalahan stok awal, koordinasikan dengan akuntan lebih dulu (AJE-1, lawan 3100 Koreksi Saldo Awal).
+        </Notice>
+      )}
 
       {last?.applied && <LastResult result={last} />}
 

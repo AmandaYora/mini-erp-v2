@@ -79,6 +79,9 @@ function fakeServer() {
       calls.push("createDelivery");
       if (failAt === "createDelivery") throw new Error("net");
       expect(body.clientRef).toBe(REF);
+      // Serah langsung POS tidak bersopir: driver_name kosong adalah penanda yang dipakai
+      // alert kesehatan data A11 untuk membedakan SJ reguler (ADR-0025).
+      expect(body).not.toHaveProperty("driverName");
       return { id: 20, number: "SJ-1" };
     },
     async confirmDelivery(id, settlement) {

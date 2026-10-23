@@ -21,7 +21,8 @@ import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { dashboardService } from "@/modules/dashboard/services/dashboard.service";
-import { ActionCard } from "@/modules/dashboard/components/ActionCard";
+import { ActionCard, AlertActionCard } from "@/modules/dashboard/components/ActionCard";
+import { dataHealthService } from "@/modules/data-health/services/data-health.service";
 import { OrderStatusCard } from "@/modules/dashboard/components/OrderStatusCard";
 import { TopProductsCard } from "@/modules/dashboard/components/TopProductsCard";
 import { SalesTrendChart } from "@/modules/dashboard/components/SalesTrendChart";
@@ -141,6 +142,10 @@ export default function DashboardPage() {
   const openDirect = useAsyncData(() => (canDelivery ? dashboardService.openDirect() : Promise.resolve(null)), [canDelivery]);
   const directCount = openDirect.data && !openDirect.error ? openDirect.data.count : 0;
   const directAgeDays = directCount > 0 && openDirect.data?.oldestDate ? Math.max(0, overdueDays(openDirect.data.oldestDate, today)) : 0;
+  // Alert kesehatan data (ADR-0025): peran berizin melihat satu daftar 5 teratas; peran lain
+  // (kasir/staf) tetap melihat kartu lama order prioritas + stok kritis.
+  const canAlerts = useAuthStore((s) => s.can("dashboard.alerts.view_all"));
+  const alerts = useAsyncData(() => (canAlerts ? dataHealthService.alerts(5) : Promise.resolve(null)), [canAlerts]);
   const critical = useAsyncData(() => dashboardService.criticalStock(), []);
   const priority = useAsyncData(() => dashboardService.priorityOrders(), []);
   const sellers = useAsyncData(() => dashboardService.topSellers(), []);
@@ -353,13 +358,17 @@ export default function DashboardPage() {
           )}
         </SectionCard>
 
-        <ActionCard
-          orders={priority}
-          critical={critical}
-          criticalCount={data ? data.operations.criticalCount : null}
-          today={today}
-          canReporting={canTrend}
-        />
+        {canAlerts ? (
+          <AlertActionCard alerts={alerts} today={today} />
+        ) : (
+          <ActionCard
+            orders={priority}
+            critical={critical}
+            criticalCount={data ? data.operations.criticalCount : null}
+            today={today}
+            canReporting={canTrend}
+          />
+        )}
       </div>
 
       <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">

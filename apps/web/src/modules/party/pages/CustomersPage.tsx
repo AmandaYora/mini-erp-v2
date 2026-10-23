@@ -46,9 +46,18 @@ export default function CustomersPage() {
   const { data, loading, error, reload } = useAsyncData(
     (signal) =>
       customerService
-        .list({ search: filters.search, status: partyStatusParam(filters.status), page: filters.page, limit: LIMIT }, signal)
+        .list(
+          {
+            search: filters.search,
+            status: partyStatusParam(filters.status),
+            duplicateName: filters.duplicateName,
+            page: filters.page,
+            limit: LIMIT,
+          },
+          signal,
+        )
         .then((res) => ({ items: res.items, total: res.meta.total })),
-    [filters.search, filters.status, filters.page],
+    [filters.search, filters.status, filters.duplicateName, filters.page],
   );
   const items = data?.items ?? null;
   const total = data?.total ?? 0;
@@ -109,6 +118,12 @@ export default function CustomersPage() {
       key: "status",
       label: `Status: ${partyStatusLabel(filters.status)}`,
       onRemove: () => setFilters({ status: PARTY_LIST_DEFAULTS.status }),
+    });
+  if (filters.duplicateName)
+    active.push({
+      key: "duplicateName",
+      label: "Nama pelanggan ganda",
+      onRemove: () => setFilters({ duplicateName: "" }),
     });
   const filtered = active.length > 0 || filters.search !== "";
   const addButton = canCreate ? <Button onClick={openCreate}>Tambah Customer</Button> : undefined;

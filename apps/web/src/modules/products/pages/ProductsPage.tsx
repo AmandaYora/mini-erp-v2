@@ -113,13 +113,15 @@ export default function ProductsPage() {
             status: productStatusParam(filters.status),
             type: filters.type,
             tracked: filters.tracked,
+            priceIssue: filters.priceIssue,
+            duplicateName: filters.duplicateName,
             page: filters.page,
             limit: LIMIT,
           },
           signal,
         )
         .then((res) => ({ items: res.items, total: res.meta.total })),
-    [filters.search, filters.categoryId, filters.status, filters.type, filters.tracked, filters.page],
+    [filters.search, filters.categoryId, filters.status, filters.type, filters.tracked, filters.priceIssue, filters.duplicateName, filters.page],
   );
   const items = data?.items ?? null;
   const total = data?.total ?? 0;
@@ -175,6 +177,18 @@ export default function ProductsPage() {
       key: "tracked",
       label: `Stok: ${TRACKED_LABEL[filters.tracked] ?? filters.tracked}`,
       onRemove: () => setFilters({ tracked: "" }),
+    });
+  if (filters.priceIssue)
+    active.push({
+      key: "priceIssue",
+      label: "Harga minimum di atas harga jual",
+      onRemove: () => setFilters({ priceIssue: "" }),
+    });
+  if (filters.duplicateName)
+    active.push({
+      key: "duplicateName",
+      label: "Nama produk ganda",
+      onRemove: () => setFilters({ duplicateName: "" }),
     });
   const filtered = active.length > 0 || filters.search !== "";
   const resetFilters = () => setFilters({ ...PRODUCT_LIST_DEFAULTS, view: filters.view });

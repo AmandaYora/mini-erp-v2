@@ -34,6 +34,11 @@ import {
   transferListFilterSchema,
 } from "@/modules/stock/schemas/transfer-list-filter.schema";
 
+import { PRODUCT_LIST_DEFAULTS, productListFilterSchema } from "@/modules/products/schemas/product-list-filter.schema";
+import { PARTY_LIST_DEFAULTS, partyListFilterSchema } from "@/modules/party/schemas/party-list-filter.schema";
+import { SALES_LIST_DEFAULTS, salesListFilterSchema } from "@/modules/sales/schemas/sales-list-filter.schema";
+import { USER_LIST_DEFAULTS, userListFilterSchema } from "@/modules/users/schemas/user-list-filter.schema";
+
 const q = (s: string) => new URLSearchParams(s);
 
 describe("filter Pembayaran", () => {
@@ -158,5 +163,29 @@ describe("filter Audit", () => {
       limit: 20,
     });
     expect(buildAuditListQuery({ ...AUDIT_LIST_DEFAULTS, limit: 20 })).toEqual({ page: 1, limit: 20 });
+  });
+});
+
+// Tautan aksi alert kesehatan data (ADR-0025) harus terbaca oleh skema filter halaman tujuannya.
+describe("filter tujuan alert kesehatan data", () => {
+  it("pengiriman signature=none (A11)", () => {
+    const f = parseFilters(deliveryListFilterSchema, DELIVERY_LIST_DEFAULTS, q("status=confirmed&signature=none"));
+    expect(buildDeliveryListQuery({ ...toDeliveryFilterParams(f), page: 1, limit: 20 })).toMatchObject({
+      status: "confirmed",
+      signature: "none",
+    });
+    expect(parseFilters(deliveryListFilterSchema, DELIVERY_LIST_DEFAULTS, q("signature=bogus")).signature).toBe("");
+  });
+
+  it("produk priceIssue/duplicateName, pelanggan duplicateName, order paymentStatus=received, pengguna search", () => {
+    expect(parseFilters(productListFilterSchema, PRODUCT_LIST_DEFAULTS, q("priceIssue=min_above_selling&duplicateName=1"))).toMatchObject({
+      priceIssue: "min_above_selling",
+      duplicateName: "1",
+    });
+    expect(parseFilters(partyListFilterSchema, PARTY_LIST_DEFAULTS, q("duplicateName=1")).duplicateName).toBe("1");
+    expect(
+      parseFilters(salesListFilterSchema, SALES_LIST_DEFAULTS, q("status=confirmed&paymentStatus=received&sort=date&dir=asc")),
+    ).toMatchObject({ status: "confirmed", paymentStatus: "received", sort: "date", dir: "asc" });
+    expect(parseFilters(userListFilterSchema, USER_LIST_DEFAULTS, q("search=superadmin")).search).toBe("superadmin");
   });
 });

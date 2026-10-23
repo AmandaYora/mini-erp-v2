@@ -21,6 +21,7 @@ export const deliveryListFilterSchema = z.object({
   documentKind: enumOrEmpty(["order", "replacement"] as const),
   origin: enumOrEmpty(["order", "direct"] as const),
   unordered: enumOrEmpty(["1"] as const),
+  signature: enumOrEmpty(["none", "signed", "missing"] as const),
   from: dateFilter,
   to: dateFilter,
   page: pageFilter,
@@ -36,6 +37,7 @@ export const DELIVERY_LIST_DEFAULTS: DeliveryListFilter = {
   documentKind: "",
   origin: "",
   unordered: "",
+  signature: "",
   from: "",
   to: "",
   page: 1,
@@ -50,6 +52,7 @@ export function toDeliveryFilterParams(f: DeliveryListFilter): DeliveryFilterPar
     documentKind: f.documentKind,
     origin: f.origin,
     unordered: f.unordered === "1",
+    signature: f.signature,
     from: f.from,
     to: f.to,
   };

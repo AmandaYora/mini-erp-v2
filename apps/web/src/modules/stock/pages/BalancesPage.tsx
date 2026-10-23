@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Badge,
   Checkbox,
@@ -60,7 +60,20 @@ export default function BalancesPage() {
   const [productId, setProductId] = useState<number | null>(null);
   const [variantId, setVariantId] = useState<number | null>(null);
   const [locationId, setLocationId] = useState<number | null>(null);
-  const [negativeOnly, setNegativeOnly] = useState(false);
+  // "Hanya saldo negatif" hidup di URL (?negative=1) agar alert kesehatan data A6 bisa
+  // menautkan langsung ke daftar terfilter.
+  const [params, setParams] = useSearchParams();
+  const negativeOnly = params.get("negative") === "1";
+  const setNegativeOnly = (v: boolean) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (v) next.set("negative", "1");
+        else next.delete("negative");
+        return next;
+      },
+      { replace: true },
+    );
   const [criticalOnly, setCriticalOnly] = useState(false);
   const [includeDamaged, setIncludeDamaged] = useState(false);
   const [hideZero, setHideZero] = useState(false);

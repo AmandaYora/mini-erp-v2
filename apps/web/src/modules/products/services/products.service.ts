@@ -20,6 +20,10 @@ export interface ProductListParams {
   type?: string;
   /** "true" | "false" | "" (semua). */
   tracked?: string;
+  /** "min_above_selling" = harga minimum di atas harga jual (alert A8). */
+  priceIssue?: string;
+  /** "1" = nama dipakai lebih dari satu produk aktif (alert A9). */
+  duplicateName?: string;
   page?: number;
   limit?: number;
 }
@@ -48,6 +52,8 @@ function cleanParams(p: ProductListParams): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (p.search && p.search.trim() !== "") out.search = p.search.trim();
   if (p.categoryId) out.categoryId = p.categoryId;
+  if (p.priceIssue) out.priceIssue = p.priceIssue;
+  if (p.duplicateName) out.duplicateName = p.duplicateName;
   // "all" = Semua status (tanpa filter); kosong juga tanpa filter.
   if (p.status && p.status !== "" && p.status !== "all") out.status = p.status;
   if (p.type && p.type !== "") out.type = p.type;

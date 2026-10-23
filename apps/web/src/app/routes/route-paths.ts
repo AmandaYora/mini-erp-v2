@@ -50,6 +50,8 @@ export const ROUTE_PATHS = {
   financeCostRestatement: "/finance/cost-restatement",
   financeRevaluations: "/finance/inventory-revaluations",
   opsIntegrity: "/ops/integrity",
+  /** Alert kesehatan data (ADR-0025), izin dashboard.alerts.view_all. */
+  dataHealth: "/data-health",
   financeOpening: "/finance/opening",
   taxAdjustments: "/finance/tax-adjustments",
   reporting: "/reporting",
