@@ -63,8 +63,20 @@ function PermissionStatus({ pos }: { pos: PosCartApi }) {
   );
 }
 
-/** Panel keranjang tetap di kanan: pelanggan, baris, ringkasan, TOTAL besar, BAYAR. */
-export function CartPanel({ pos }: { pos: PosCartApi }) {
+/**
+ * Keranjang: pelanggan, baris, ringkasan, TOTAL besar, BAYAR. `aside` = panel tetap di kanan
+ * (tablet ≥ 1024, tidak berubah); `sheet` = isi sheet layar penuh di HP (brief desain-pos-hp §4c),
+ * dengan `onBeforeCheckout` menutup sheet dulu agar checkout tidak bertumpuk di atasnya.
+ */
+export function CartPanel({
+  pos,
+  variant = "aside",
+  onBeforeCheckout,
+}: {
+  pos: PosCartApi;
+  variant?: "aside" | "sheet";
+  onBeforeCheckout?: () => void;
+}) {
   const [customerOpen, setCustomerOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const { cart, totals, started, completed, readiness } = pos;
@@ -72,7 +84,11 @@ export function CartPanel({ pos }: { pos: PosCartApi }) {
   return (
     <aside
       aria-label="Keranjang"
-      className="flex min-h-0 w-90 flex-none flex-col border-l border-border bg-card xl:w-100"
+      className={
+        variant === "aside"
+          ? "flex min-h-0 w-90 flex-none flex-col border-l border-border bg-card xl:w-100"
+          : "flex min-h-0 flex-1 flex-col bg-card"
+      }
     >
       <PosCustomerPanel
         customer={pos.customerDetail}
@@ -103,7 +119,13 @@ export function CartPanel({ pos }: { pos: PosCartApi }) {
           <Notice tone="info" title="Checkout sedang berjalan">
             Isi keranjang terkunci agar sama dengan order di server. Lanjutkan pembayaran, atau batalkan transaksi ini.
             <div className="mt-2 flex gap-2">
-              <Button className="h-12 flex-1 text-base" onClick={pos.openCheckout}>
+              <Button
+                className="h-12 flex-1 text-base"
+                onClick={() => {
+                  onBeforeCheckout?.();
+                  pos.openCheckout();
+                }}
+              >
                 Lanjutkan
               </Button>
               <Button variant="secondary" className="h-12 flex-1 text-base" onClick={() => void pos.abandonTransaction()}>
@@ -119,7 +141,11 @@ export function CartPanel({ pos }: { pos: PosCartApi }) {
           <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
             <ShoppingCart aria-hidden className="size-10" />
             <p className="text-base font-semibold text-foreground">Keranjang kosong</p>
-            <p className="text-sm">Ketuk produk di kiri atau pindai QR produk untuk menambah.</p>
+            <p className="text-sm">
+              {variant === "aside"
+                ? "Ketuk produk di kiri atau pindai QR produk untuk menambah."
+                : "Ketuk produk atau pindai QR produk untuk menambah."}
+            </p>
           </div>
         ) : (
           <ul className="divide-y divide-border">
@@ -166,9 +192,18 @@ export function CartPanel({ pos }: { pos: PosCartApi }) {
           <Button
             className="h-14 flex-1 text-lg font-semibold"
             disabled={cart.length === 0 || !readiness.canCheckout}
-            onClick={pos.openCheckout}
+            onClick={() => {
+              onBeforeCheckout?.();
+              pos.openCheckout();
+            }}
           >
-            {started ? "Lanjutkan Checkout" : "Bayar"} · {formatIDR(totals.total)}
+            {started ? "Lanjutkan Checkout" : "Bayar"}
+            {variant === "aside" ? (
+              <> · {formatIDR(totals.total)}</>
+            ) : (
+              // Di HP total sudah tampil besar tepat di atas tombol.
+              <span className="max-sm:hidden">· {formatIDR(totals.total)}</span>
+            )}
             <ChevronRight aria-hidden className="size-5" />
           </Button>
         </div>

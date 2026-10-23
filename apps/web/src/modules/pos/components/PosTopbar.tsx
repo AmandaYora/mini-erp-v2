@@ -11,12 +11,15 @@ export function PosTopbar({
   query,
   onQueryChange,
   onScan,
+  compact = false,
 }: {
   /** undefined = tanpa layout (tampil inline); null = slot belum terpasang. */
-  slot: HTMLElement | null | undefined;
+  slot?: HTMLElement | null;
   query: string;
   onQueryChange: (q: string) => void;
   onScan: () => void;
+  /** Tata letak ringkas (< 1024px): Pindai pindah ke dok; tanpa slot, cari tampil sebaris penuh di bawah topbar. */
+  compact?: boolean;
 }) {
   const content = (
     <>
@@ -45,17 +48,21 @@ export function PosTopbar({
           </button>
         )}
       </div>
-      <button
-        type="button"
-        onClick={onScan}
-        aria-label="Pindai dengan kamera"
-        className="flex h-12 flex-none touch-manipulation items-center gap-2 rounded-lg bg-sidebar-primary px-5 text-base font-semibold text-sidebar-primary-foreground transition-transform duration-100 select-none active:scale-[0.98]"
-      >
-        <ScanLine aria-hidden className="size-5" />
-        Pindai
-      </button>
+      {!compact && (
+        <button
+          type="button"
+          onClick={onScan}
+          aria-label="Pindai dengan kamera"
+          className="flex h-12 flex-none touch-manipulation items-center gap-2 rounded-lg bg-sidebar-primary px-5 text-base font-semibold text-sidebar-primary-foreground transition-transform duration-100 select-none active:scale-[0.98]"
+        >
+          <ScanLine aria-hidden className="size-5" />
+          Pindai
+        </button>
+      )}
     </>
   );
   if (slot === null) return null;
-  return slot ? createPortal(content, slot) : <div className="flex items-center gap-3 bg-sidebar p-3">{content}</div>;
+  if (slot) return createPortal(content, slot);
+  if (compact) return <div className="flex flex-none items-center gap-3 bg-sidebar px-3 pb-3">{content}</div>;
+  return <div className="flex items-center gap-3 bg-sidebar p-3">{content}</div>;
 }

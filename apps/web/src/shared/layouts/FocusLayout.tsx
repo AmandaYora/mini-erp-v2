@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { ArrowLeft, Maximize, Minimize, MoreHorizontal, LogOut, LayoutDashboard, RotateCw } from "lucide-react";
+import { cn } from "@/shared/lib/cn";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { clearAllDrafts } from "@/shared/lib/draft-storage";
@@ -79,7 +80,8 @@ function useWakeLock() {
   }, []);
 }
 
-/** Cegah tarik-untuk-muat-ulang dan ubah ukuran tampilan mengikuti keyboard layar, hanya selama layout aktif. */
+/** Cegah tarik-untuk-muat-ulang, ubah ukuran tampilan mengikuti keyboard layar, dan izinkan isi sampai tepi
+ * layar (viewport-fit=cover: env(safe-area-inset-*) bernilai di iPhone) — hanya selama layout aktif. */
 function useTouchShell() {
   useEffect(() => {
     const html = document.documentElement;
@@ -90,8 +92,12 @@ function useTouchShell() {
 
     const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
     const prevContent = meta?.getAttribute("content") ?? null;
-    if (meta && prevContent && !prevContent.includes("interactive-widget")) {
-      meta.setAttribute("content", `${prevContent}, interactive-widget=resizes-content`);
+    if (meta && prevContent) {
+      const extra = [
+        !prevContent.includes("interactive-widget") && "interactive-widget=resizes-content",
+        !prevContent.includes("viewport-fit") && "viewport-fit=cover",
+      ].filter(Boolean);
+      if (extra.length > 0) meta.setAttribute("content", [prevContent, ...extra].join(", "));
     }
     return () => {
       html.style.overscrollBehavior = prev.html;
@@ -106,8 +112,10 @@ const TOPBAR_BUTTON =
 
 /**
  * Layar penuh tanpa sidebar untuk alur kerja sentuh (Mode Kasir, PLAN §8 pos / T10).
- * Topbar 64px berwarna bingkai navy: kembali, judul + cabang + pengguna, slot halaman, jam,
- * layar penuh, menu. Di lebar < 1024 tampil ajakan memutar tablet ke posisi mendatar.
+ * Topbar berwarna bingkai navy (64px; 56px di bawah 1024): kembali, judul + cabang + pengguna, slot
+ * halaman, jam, layar penuh, menu. Di bawah 1024 (HP, tablet tegak) jam disembunyikan, layar penuh
+ * pindah ke menu, dan slot hanya tampil saat mendatar; halaman memasang tata letak ringkasnya sendiri (brief desain-pos-hp, temuan 5 —
+ * ajakan "putar tablet" dihapus).
  */
 export default function FocusLayout({ title }: { title: string }) {
   const navigate = useNavigate();
@@ -137,16 +145,17 @@ export default function FocusLayout({ title }: { title: string }) {
   return (
     <>
       <div className="fixed inset-0 flex touch-manipulation flex-col overflow-hidden overscroll-none bg-background">
-        <header className="flex h-16 flex-none items-center gap-3 bg-sidebar px-3 text-sidebar-strong">
+        <header className="flex h-14 flex-none items-center gap-3 bg-sidebar px-3 text-sidebar-strong lg:h-16">
           <Link to={ROUTE_PATHS.dashboard} aria-label="Kembali ke dashboard" className={TOPBAR_BUTTON}>
             <ArrowLeft aria-hidden className="size-6" />
           </Link>
-          <div className="min-w-0 flex-none">
+          <div className="min-w-0 flex-none max-lg:portrait:flex-1">
             <h1 className="font-display text-lg leading-tight font-semibold text-sidebar-strong">{title}</h1>
-            {who && <p className="max-w-56 truncate text-xs text-sidebar-muted">{who}</p>}
+            {who && <p className="max-w-56 truncate text-xs text-sidebar-muted max-lg:portrait:max-w-none">{who}</p>}
           </div>
-          <div ref={setSlot} className="flex min-w-0 flex-1 items-center gap-3" />
-          <p className="tabular flex-none px-1 font-display text-lg font-medium" aria-label={`Pukul ${clock}`}>
+          {/* Di bawah 1024 slot hanya dipakai saat mendatar (HP diputar); tegak, halaman memasang isinya sendiri. */}
+          <div ref={setSlot} className="flex min-w-0 flex-1 items-center gap-3 max-lg:portrait:hidden" />
+          <p className="tabular flex-none px-1 font-display text-lg font-medium max-lg:hidden" aria-label={`Pukul ${clock}`}>
             {clock}
           </p>
           {fullscreen.supported && (
@@ -155,7 +164,7 @@ export default function FocusLayout({ title }: { title: string }) {
               onClick={fullscreen.toggle}
               aria-label={fullscreen.active ? "Keluar dari layar penuh" : "Layar penuh"}
               aria-pressed={fullscreen.active}
-              className={TOPBAR_BUTTON}
+              className={cn(TOPBAR_BUTTON, "max-lg:hidden")}
             >
               {fullscreen.active ? <Minimize aria-hidden className="size-5" /> : <Maximize aria-hidden className="size-5" />}
             </button>
@@ -171,6 +180,12 @@ export default function FocusLayout({ title }: { title: string }) {
                 <LayoutDashboard aria-hidden className="size-5" />
                 Ke dashboard
               </DropdownMenuItem>
+              {fullscreen.supported && (
+                <DropdownMenuItem className="h-12 gap-3 text-base lg:hidden" onSelect={fullscreen.toggle}>
+                  {fullscreen.active ? <Minimize aria-hidden className="size-5" /> : <Maximize aria-hidden className="size-5" />}
+                  {fullscreen.active ? "Keluar dari layar penuh" : "Layar penuh"}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem className="h-12 gap-3 text-base" onSelect={() => window.location.reload()}>
                 <RotateCw aria-hidden className="size-5" />
                 Muat ulang halaman
@@ -193,21 +208,6 @@ export default function FocusLayout({ title }: { title: string }) {
             <Outlet context={{ topbarSlot: slot } satisfies FocusLayoutContext} />
           </Suspense>
         </main>
-
-        {/* Salah orientasi: layout portrait sengaja tidak dibangun (PLAN U8). */}
-        <div
-          role="alert"
-          className="fixed inset-0 z-60 flex flex-col items-center justify-center gap-4 bg-sidebar p-8 text-center text-sidebar-strong lg:hidden"
-        >
-          <RotateCw aria-hidden className="size-14 text-sidebar-primary" />
-          <p className="font-display text-2xl font-semibold">Putar tablet ke posisi mendatar</p>
-          <p className="max-w-sm text-base text-sidebar-foreground">
-            Mode Kasir dirancang untuk layar mendatar (landscape). Putar perangkat untuk melanjutkan; keranjang Anda tetap tersimpan.
-          </p>
-          <Link to={ROUTE_PATHS.dashboard} className="mt-2 text-base font-medium text-sidebar-primary underline underline-offset-4">
-            Kembali ke dashboard
-          </Link>
-        </div>
       </div>
       <ToastViewport />
     </>

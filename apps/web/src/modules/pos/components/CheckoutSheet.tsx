@@ -459,7 +459,7 @@ export function CheckoutSheet({ pos }: { pos: PosCartApi }) {
         showCloseButton={false}
         onInteractOutside={(e) => locked && e.preventDefault()}
         onEscapeKeyDown={(e) => locked && e.preventDefault()}
-        className="flex w-90 gap-0 bg-card p-0 sm:max-w-none xl:w-100"
+        className="flex w-full gap-0 bg-card p-0 sm:max-w-none lg:w-90 xl:w-100"
       >
         <SheetHeader className="flex-row items-start justify-between gap-3 border-b border-border p-4 text-left">
           <div className="min-w-0">

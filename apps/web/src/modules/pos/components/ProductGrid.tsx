@@ -137,7 +137,7 @@ export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCat
     <section aria-label="Produk" className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex flex-none items-center gap-3 border-b border-border bg-background px-4 py-3">
         <form
-          className="relative w-48 flex-none xl:w-56"
+          className="relative w-48 flex-none max-lg:hidden xl:w-56"
           onSubmit={(e) => {
             e.preventDefault();
             void pos.submitBarcode();
@@ -163,7 +163,7 @@ export function ProductGrid({ pos, catalog }: { pos: PosCartApi; catalog: PosCat
         />
       </div>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 max-lg:p-3">
         {pos.scanNotice && (
           <div className="mb-3">
             <Notice tone="warning" title={pos.scanNotice} />
