@@ -355,7 +355,7 @@ func (r *Repository) EnsureBalanceTx(ctx context.Context, tx *sql.Tx, branchID, 
 // AddBalanceTx shifts on_hand/reserved. Callers must have ensured the row.
 func (r *Repository) AddBalanceTx(ctx context.Context, tx *sql.Tx, branchID, productID, variantID, locationID int64, onHandDelta, reservedDelta float64) error {
 	_, err := tx.ExecContext(ctx,
-		`UPDATE stock_balances SET on_hand = on_hand + ?, reserved = reserved + ?
+		`UPDATE stock_balances SET on_hand = on_hand + ?, reserved = reserved + ?, updated_at = UTC_TIMESTAMP(6)
 		 WHERE branch_id = ? AND product_id = ? AND variant_id = ? AND location_id = ?`,
 		onHandDelta, reservedDelta, branchID, productID, variantID, locationID)
 	return err
