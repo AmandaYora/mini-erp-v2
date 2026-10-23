@@ -27,11 +27,11 @@ merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui fi
 | sqlc | 17 dari 19 modul bertabel `migrated`; `finance` dan `stock` masih `pending` | `scripts/sqlc-migration-status.json` |
 | Halaman frontend | 90 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
 | Go non-test (`internal/modules`) | ±81 ribu baris | `find apps/api/internal/modules -name '*.go' ! -name '*_test.go' \| xargs cat \| wc -l` |
-| Test backend | 208 berkas `*_test.go` (129 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
-| Test frontend | 204 berkas (1.202 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
+| Test backend | 209 berkas `*_test.go` (130 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
+| Test frontend | 205 berkas (1.205 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
 | Spec E2E | 26 (E01–E23, V00 visual, V01 a11y, V02 responsif); gerbang terakhir 116 lulus / 0 dilewati / 0 gagal | `ls apps/e2e/specs` |
 
-Gerbang penuh terakhir: 2026-10-23 sesudah perbaikan temuan pengguna 1/2/4/5/6 (`npm run verify` hijau termasuk integrasi Go, vitest 1.202 test, `npm run test:e2e` 116 lulus).
+Gerbang penuh terakhir: 2026-10-23 sesudah perbaikan temuan pengguna 1/2/4/5/6 (`npm run verify` hijau termasuk integrasi Go, vitest 1.205 test, `npm run test:e2e` 116 lulus; diulang sesudah uji dampak variantfix).
 Gerbang 2026-10-21 hijau: `verify.mjs --api` termasuk integrasi Go, vitest, dan `npm run test:e2e`.
 Toolchain web butuh Node 22+ (`.nvmrc`; CI ikut dinaikkan).
 Sebelum rilis, ulangi sekali pada pohon kerja yang bersih.
