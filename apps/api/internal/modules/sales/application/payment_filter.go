@@ -26,7 +26,7 @@ const maxPaymentScan = 30000
 // preparePaymentFilter validates the filter value and turns it into the SQL
 // pre-filter. Requested statuses are intersected with the live ones.
 func (s *Service) preparePaymentFilter(f *ListFilter) error {
-	if err := listquery.ValidateEnum("paymentStatus", f.PaymentStatus, PayUnpaid, PayPartial, PayPaid, PayOverdue); err != nil {
+	if err := listquery.ValidateEnum("paymentStatus", f.PaymentStatus, PayUnpaid, PayPartial, PayPaid, PayOverdue, PayReceived); err != nil {
 		return err
 	}
 	f.OverdueBefore = ""
@@ -59,6 +59,8 @@ func matchesPayment(sum PaymentSummary, want string) bool {
 	switch want {
 	case PayOverdue:
 		return sum.IsOverdue
+	case PayReceived:
+		return sum.PaymentStatus == PayPartial || sum.PaymentStatus == PayPaid
 	case "":
 		return true
 	default:

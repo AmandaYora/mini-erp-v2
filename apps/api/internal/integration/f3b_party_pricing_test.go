@@ -115,7 +115,7 @@ func TestF3bPartyAutoCode(t *testing.T) {
 	if _, err := svc.CreateCustomer(ctx(), 0, partyapp.PartyInput{Name: "Cari", Email: "cari@contoh.id", Address: "Jl. Mawar 7"}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := svc.List(ctx(), "customer", "mawar", "", 1, 10)
+	res, err := svc.List(ctx(), partyapp.ListFilter{Type: "customer", Search: "mawar"}, 1, 10)
 	if err != nil || res.Total != 1 {
 		t.Fatalf("search by address: %+v %v", res, err)
 	}

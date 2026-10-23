@@ -36,3 +36,9 @@ UPDATE parties SET status = sqlc.arg(status), archived_at = sqlc.arg(archived_at
 -- name: RestoreParty :exec
 UPDATE parties SET status = sqlc.arg(status), archived_at = NULL,
   updated_at = sqlc.arg(now), updated_by = ? WHERE id = ?;
+
+-- name: ListDuplicatePartyNameGroups :many
+SELECT LOWER(TRIM(name)) AS norm_name, COUNT(*) AS rows_count
+FROM parties WHERE party_type = ? AND status = 'active'
+GROUP BY norm_name HAVING COUNT(*) > 1
+ORDER BY rows_count DESC, norm_name ASC;

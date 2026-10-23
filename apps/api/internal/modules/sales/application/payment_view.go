@@ -18,6 +18,9 @@ const (
 	// PayOverdue is a filter value only: a net order past its due date that
 	// still has a balance. In the view it is the isOverdue flag.
 	PayOverdue = "overdue"
+	// PayReceived is a filter value only: money was received on the order
+	// (partial or paid) — data-health A12 lists those not fully shipped.
+	PayReceived = "received"
 )
 
 // PaymentSummary is the paid/outstanding picture of one order (F2a-10d),

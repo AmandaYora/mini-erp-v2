@@ -900,6 +900,51 @@ func (q *Queries) ListOpenDirect(ctx context.Context, arg ListOpenDirectParams) 
 	return items, nil
 }
 
+const listUnsignedConfirmed = `-- name: ListUnsignedConfirmed :many
+SELECT id, number, sales_order_id, confirmed_at FROM delivery_notes
+WHERE branch_id = ? AND status = 'confirmed' AND document_kind = 'order'
+  AND recipient_signature_status IS NULL AND COALESCE(driver_name, '') <> ''
+ORDER BY confirmed_at ASC, id ASC
+`
+
+type ListUnsignedConfirmedRow struct {
+	ID           int64
+	Number       string
+	SalesOrderID int64
+	ConfirmedAt  sql.NullTime
+}
+
+// Data-health A11 (ADR-0025): regular order notes (a driver is set; POS
+// counter hand-overs carry none) confirmed without any recipient-signature
+// status. A recorded "missing" with its reason is a decision, not a gap.
+func (q *Queries) ListUnsignedConfirmed(ctx context.Context, branchID int64) ([]ListUnsignedConfirmedRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnsignedConfirmed, branchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnsignedConfirmedRow{}
+	for rows.Next() {
+		var i ListUnsignedConfirmedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.SalesOrderID,
+			&i.ConfirmedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const noteIDByClientRef = `-- name: NoteIDByClientRef :one
 SELECT id FROM delivery_notes WHERE branch_id = ? AND client_ref = ?
 `

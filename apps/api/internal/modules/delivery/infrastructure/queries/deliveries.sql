@@ -216,3 +216,12 @@ WHERE id = sqlc.arg(id);
 -- name: OrderIDsByNotes :many
 SELECT id, sales_order_id FROM delivery_notes
 WHERE id IN (sqlc.slice('ids'));
+
+-- name: ListUnsignedConfirmed :many
+-- Data-health A11 (ADR-0025): regular order notes (a driver is set; POS
+-- counter hand-overs carry none) confirmed without any recipient-signature
+-- status. A recorded "missing" with its reason is a decision, not a gap.
+SELECT id, number, sales_order_id, confirmed_at FROM delivery_notes
+WHERE branch_id = ? AND status = 'confirmed' AND document_kind = 'order'
+  AND recipient_signature_status IS NULL AND COALESCE(driver_name, '') <> ''
+ORDER BY confirmed_at ASC, id ASC;

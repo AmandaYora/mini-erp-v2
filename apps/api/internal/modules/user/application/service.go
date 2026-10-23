@@ -35,6 +35,8 @@ type Service struct {
 	revoker authcontracts.SessionRevoker
 	// branches names branch ids for the admin list (U-01). Nil = names omitted.
 	branches BranchDirectory
+	// seedPasswords caches the data-health A1 bcrypt verdicts per hash.
+	seedPasswords seedPasswordCache
 }
 
 // BranchDirectory is the slice of branch.BranchClient the user list needs.

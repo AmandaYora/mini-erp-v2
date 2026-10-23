@@ -77,3 +77,14 @@ WHERE id IN (sqlc.slice('ids')) AND purchase_price > 0;
 
 -- name: ListPurchasePricesByIDs :many
 SELECT id, purchase_price FROM products WHERE id IN (sqlc.slice('ids'));
+
+-- name: ListMinPriceAboveSelling :many
+SELECT id, code, name, selling_price, min_selling_price FROM products
+WHERE status = 'active' AND min_selling_price > selling_price
+ORDER BY name ASC, id ASC;
+
+-- name: ListDuplicateNameGroups :many
+SELECT LOWER(TRIM(name)) AS norm_name, COUNT(*) AS rows_count, MIN(name) AS sample_name
+FROM products WHERE status = 'active'
+GROUP BY norm_name HAVING COUNT(*) > 1
+ORDER BY rows_count DESC, norm_name ASC;

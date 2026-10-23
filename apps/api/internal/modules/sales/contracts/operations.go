@@ -128,3 +128,10 @@ type OrderReport struct {
 	Total      int64           `json:"total"`
 	GrandTotal int64           `json:"grandTotal"`
 }
+
+// HealthClient is the sales module's read-only data-health surface (ADR-0025).
+type HealthClient interface {
+	// UnshippedOrderTotals pages the draft/confirmed orders (not fully
+	// shipped) after a cursor id; the dashboard keeps those already paid (A12).
+	UnshippedOrderTotals(ctx context.Context, branchID, afterID int64, limit int) ([]OrderTotal, error)
+}

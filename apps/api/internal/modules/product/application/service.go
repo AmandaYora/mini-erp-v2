@@ -959,6 +959,9 @@ type ListResult struct {
 // ListFilter is the product list filter set.
 type ListFilter = infrastructure.ProductFilter
 
+// PriceIssueMinAboveSelling is the list's priceIssue value for data-health A8.
+const PriceIssueMinAboveSelling = infrastructure.PriceIssueMinAboveSelling
+
 // List searches products per word with optional filters.
 func (s *Service) List(ctx context.Context, f ListFilter, page, limit int) (*ListResult, error) {
 	total, err := s.repo.CountProducts(ctx, f)

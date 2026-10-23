@@ -464,6 +464,61 @@ func (q *Queries) ListPriorityOrders(ctx context.Context, arg ListPriorityOrders
 	return items, nil
 }
 
+const listUnshippedOrderTotals = `-- name: ListUnshippedOrderTotals :many
+SELECT id, number, party_id, grand_total, order_date, due_date
+FROM sales_orders FORCE INDEX (ix_sales_orders_branch_id)
+WHERE branch_id = ? AND status IN ('draft', 'confirmed') AND id > ?
+ORDER BY id ASC
+LIMIT ?
+`
+
+type ListUnshippedOrderTotalsParams struct {
+	BranchID int64
+	ID       int64
+	Limit    int32
+}
+
+type ListUnshippedOrderTotalsRow struct {
+	ID         int64
+	Number     string
+	PartyID    int64
+	GrandTotal int64
+	OrderDate  time.Time
+	DueDate    sql.NullTime
+}
+
+// Data-health A12 (ADR-0025): the draft/confirmed (not yet fully shipped)
+// orders by ascending id after a cursor; same forced index as above.
+func (q *Queries) ListUnshippedOrderTotals(ctx context.Context, arg ListUnshippedOrderTotalsParams) ([]ListUnshippedOrderTotalsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUnshippedOrderTotals, arg.BranchID, arg.ID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnshippedOrderTotalsRow{}
+	for rows.Next() {
+		var i ListUnshippedOrderTotalsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.PartyID,
+			&i.GrandTotal,
+			&i.OrderDate,
+			&i.DueDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const orderPartiesByIDs = `-- name: OrderPartiesByIDs :many
 SELECT id, party_id
 FROM sales_orders

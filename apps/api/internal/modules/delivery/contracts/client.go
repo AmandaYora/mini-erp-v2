@@ -4,6 +4,7 @@ import (
 	"context"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
+	"mini-erp/internal/shared/health"
 )
 
 // Statuses: draft → confirmed (stock out) → completed? No — confirmed is
@@ -231,6 +232,14 @@ type DeliveryClient interface {
 type OrderTransport struct {
 	Drivers string
 	Plates  string
+}
+
+// HealthClient is the delivery module's read-only data-health surface (ADR-0025).
+type HealthClient interface {
+	// UnsignedSummary counts confirmed regular notes with no recipient-signature
+	// status (A11); AmountRp = linked orders' grand total, OldestAt = oldest
+	// confirmation day.
+	UnsignedSummary(ctx context.Context, branchID int64, sample int) (health.Result, error)
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

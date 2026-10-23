@@ -189,10 +189,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		response.FailErr(w, err)
 		return
 	}
+	if err := listquery.ValidateEnum("signature", q.Get("signature"), "none", "signed", "missing"); err != nil {
+		response.FailErr(w, err)
+		return
+	}
 	res, err := h.svc.ListFiltered(r.Context(), authcontracts.BranchID(r), application.ListFilter{
 		Search: c.Search, Statuses: c.Statuses, SalesOrderID: soID, SalesReturnID: srID,
 		DocumentKind: q.Get("documentKind"), From: c.From, To: c.To,
 		Origin: q.Get("origin"), Unordered: q.Get("unordered") == "1" || q.Get("unordered") == "true",
+		Signature: q.Get("signature"),
 	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)

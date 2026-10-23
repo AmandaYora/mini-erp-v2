@@ -422,13 +422,17 @@ type ListResult struct {
 	Total   int64
 }
 
+// ListFilter is the party list filter set (type, per-word search, status,
+// duplicate names).
+type ListFilter = infrastructure.PartyFilter
+
 // List searches parties per word (code/name/phone, KI-65) with status filter.
-func (s *Service) List(ctx context.Context, partyType, search, status string, page, limit int) (*ListResult, error) {
-	total, err := s.repo.CountParties(ctx, partyType, search, status)
+func (s *Service) List(ctx context.Context, f ListFilter, page, limit int) (*ListResult, error) {
+	total, err := s.repo.CountPartiesFiltered(ctx, f)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
-	parties, err := s.repo.ListParties(ctx, partyType, search, status, limit, (page-1)*limit)
+	parties, err := s.repo.ListPartiesFiltered(ctx, f, limit, (page-1)*limit)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}

@@ -84,7 +84,12 @@ func toInput(in partyPayload) application.PartyInput {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, partyType, label string) {
 	q := r.URL.Query()
 	page, limit := pagination.Parse(q.Get("page"), q.Get("limit"))
-	res, err := h.svc.List(r.Context(), partyType, q.Get("search"), q.Get("status"), page, limit)
+	f := application.ListFilter{Type: partyType, Search: q.Get("search"), Status: q.Get("status")}
+	switch q.Get("duplicateName") {
+	case "1", "true":
+		f.DuplicateName = true
+	}
+	res, err := h.svc.List(r.Context(), f, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
 		return

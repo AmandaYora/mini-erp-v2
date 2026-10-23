@@ -22,7 +22,14 @@ type ListFilter struct {
 	// only direct notes that have no order yet.
 	Origin    string
 	Unordered bool
+	// Signature narrows by recipient-signature status: "signed", "missing",
+	// or "none" = a regular note (driver set) with no status recorded
+	// (data-health A11).
+	Signature string
 }
+
+// SignatureNone is ListFilter.Signature for notes with no signature status.
+const SignatureNone = "none"
 
 // where is the single source of the filter, shared by ListFiltered and CountFiltered.
 func (f ListFilter) where(branchID int64) (string, []any) {
@@ -37,6 +44,12 @@ func (f ListFilter) where(branchID int64) (string, []any) {
 		Like(f.Search, "number", "recipient_name", "driver_name", "vehicle_plate")
 	if f.Unordered {
 		w.Raw("origin = 'direct' AND sales_order_id = 0 AND status <> 'cancelled'")
+	}
+	switch f.Signature {
+	case SignatureNone:
+		w.Raw("recipient_signature_status IS NULL AND COALESCE(driver_name, '') <> ''")
+	case "signed", "missing":
+		w.Raw("recipient_signature_status = ?", f.Signature)
 	}
 	return w.SQL()
 }

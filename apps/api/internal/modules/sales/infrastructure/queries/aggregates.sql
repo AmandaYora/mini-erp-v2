@@ -146,3 +146,12 @@ WHERE branch_id = sqlc.arg(branch_id)
   AND (sqlc.narg('to_at') IS NULL OR order_date <= sqlc.narg('to_at'))
 ORDER BY id DESC
 LIMIT ? OFFSET ?;
+
+-- name: ListUnshippedOrderTotals :many
+-- Data-health A12 (ADR-0025): the draft/confirmed (not yet fully shipped)
+-- orders by ascending id after a cursor; same forced index as above.
+SELECT id, number, party_id, grand_total, order_date, due_date
+FROM sales_orders FORCE INDEX (ix_sales_orders_branch_id)
+WHERE branch_id = ? AND status IN ('draft', 'confirmed') AND id > ?
+ORDER BY id ASC
+LIMIT ?;

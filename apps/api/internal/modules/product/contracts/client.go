@@ -6,6 +6,7 @@ import (
 	"time"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
+	"mini-erp/internal/shared/health"
 )
 
 // Category groups products (optionally nested via parent).
@@ -149,6 +150,16 @@ type PricingInfo struct {
 	PurchasePrice   int64
 	PurchaseFactor  float64
 	SalesFactor     float64
+}
+
+// HealthClient is the product module's read-only data-health surface (ADR-0025).
+type HealthClient interface {
+	// MinPriceAboveSelling counts active products whose minimum selling price
+	// is above the selling price (A8).
+	MinPriceAboveSelling(ctx context.Context, sample int) (health.Result, error)
+	// DuplicateNames counts groups of active products sharing a name, case and
+	// outer spaces ignored (A9); Meta.rows = products in those groups.
+	DuplicateNames(ctx context.Context, sample int) (health.Result, error)
 }
 
 // ProductClient is the public surface of the product module.

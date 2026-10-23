@@ -34,6 +34,9 @@ func (m *Module) Products() contracts.ProductClient {
 // after product because it depends on product's contract).
 func (m *Module) SetStockState(p contracts.StockStateProvider) { m.svc.SetStockState(p) }
 
+// Health exposes the read-only data-health checks (ADR-0025).
+func (m *Module) Health() contracts.HealthClient { return m.svc }
+
 // Service exposes use cases to the dev seed (composition root privilege).
 func (m *Module) Service() *application.Service {
 	return m.svc

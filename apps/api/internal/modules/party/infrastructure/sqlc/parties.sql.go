@@ -161,6 +161,41 @@ func (q *Queries) InsertParty(ctx context.Context, arg InsertPartyParams) (sql.R
 	)
 }
 
+const listDuplicatePartyNameGroups = `-- name: ListDuplicatePartyNameGroups :many
+SELECT LOWER(TRIM(name)) AS norm_name, COUNT(*) AS rows_count
+FROM parties WHERE party_type = ? AND status = 'active'
+GROUP BY norm_name HAVING COUNT(*) > 1
+ORDER BY rows_count DESC, norm_name ASC
+`
+
+type ListDuplicatePartyNameGroupsRow struct {
+	NormName  string
+	RowsCount int64
+}
+
+func (q *Queries) ListDuplicatePartyNameGroups(ctx context.Context, partyType string) ([]ListDuplicatePartyNameGroupsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDuplicatePartyNameGroups, partyType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDuplicatePartyNameGroupsRow{}
+	for rows.Next() {
+		var i ListDuplicatePartyNameGroupsRow
+		if err := rows.Scan(&i.NormName, &i.RowsCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPartyLabels = `-- name: ListPartyLabels :many
 SELECT id, code, name FROM parties WHERE id IN (/*SLICE:ids*/?)
 `

@@ -222,6 +222,13 @@ func filterFromQuery(q url.Values) application.ListFilter {
 			f.CategoryID = &id
 		}
 	}
+	if q.Get("priceIssue") == application.PriceIssueMinAboveSelling {
+		f.PriceIssue = application.PriceIssueMinAboveSelling
+	}
+	switch strings.ToLower(q.Get("duplicateName")) {
+	case "true", "1":
+		f.DuplicateName = true
+	}
 	switch strings.ToLower(q.Get("tracked")) {
 	case "true", "1":
 		t := true

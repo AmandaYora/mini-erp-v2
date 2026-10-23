@@ -36,6 +36,9 @@ func (m *Module) Pricing() contracts.PricingClient {
 	return m.svc
 }
 
+// Health exposes the read-only data-health check (ADR-0025).
+func (m *Module) Health() contracts.HealthClient { return m.svc }
+
 // Service exposes use cases to the dev seed (composition root privilege).
 func (m *Module) Service() *application.Service {
 	return m.svc

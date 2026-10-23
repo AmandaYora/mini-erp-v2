@@ -6,15 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"mini-erp/internal/etl/report"
 	"mini-erp/internal/etl/row"
+	usercontracts "mini-erp/internal/modules/user/contracts"
 )
-
-// seedPasswords are the default passwords the legacy seed created (design V13).
-// An account whose hash still matches one of them is locked.
-var seedPasswords = []string{"superadmin123", "owner123", "admin123", "staff123", "kasir 123"}
 
 func (s *state) master() error {
 	s.branches()
@@ -138,17 +133,16 @@ func (s *state) users() {
 		if r.Str("status") != "active" {
 			status = "inactive"
 		}
-		for _, p := range seedPasswords {
-			if bcrypt.CompareHashAndPassword([]byte(hash), []byte(p)) == nil {
-				// The developer superadmin keeps working as in legacy (owner's
-				// decision, ADR-0018 D13); every other seed account is locked.
-				if uname == "superadmin" {
-					s.find(report.Warn, "USER_SUPERADMIN_SEED_PASSWORD", "users", lid, "akun superadmin masih memakai kata sandi bawaan seed: tetap aktif, segera ganti sandinya")
-					break
-				}
+		// An account whose hash still matches a legacy seed password (design
+		// V13; one list shared with data-health A1) is locked.
+		if usercontracts.MatchesLegacySeedPassword(hash) {
+			// The developer superadmin keeps working as in legacy (owner's
+			// decision, ADR-0018 D13); every other seed account is locked.
+			if uname == "superadmin" {
+				s.find(report.Warn, "USER_SUPERADMIN_SEED_PASSWORD", "users", lid, "akun superadmin masih memakai kata sandi bawaan seed: tetap aktif, segera ganti sandinya")
+			} else {
 				status = "inactive"
 				s.find(report.Warn, "USER_SEED_PASSWORD", "users", lid, "akun %q masih memakai kata sandi bawaan seed: dikunci, perlu reset", uname)
-				break
 			}
 		}
 		if !strings.HasPrefix(hash, "$2") {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
+	"mini-erp/internal/shared/health"
 )
 
 // Party types in the single parties table.
@@ -123,6 +124,13 @@ type Label struct {
 type PricingClient interface {
 	// Quote prices lines for a customer (0 = walk-in, standard prices).
 	Quote(ctx context.Context, customerID int64, productIDs []int64) (*QuoteResult, error)
+}
+
+// HealthClient is the party module's read-only data-health surface (ADR-0025).
+type HealthClient interface {
+	// DuplicateNames counts groups of active parties of one type sharing a
+	// name, case and outer spaces ignored (A10); Meta.rows = parties in them.
+	DuplicateNames(ctx context.Context, partyType string, sample int) (health.Result, error)
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

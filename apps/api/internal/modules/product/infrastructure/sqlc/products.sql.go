@@ -171,6 +171,42 @@ func (q *Queries) InsertProduct(ctx context.Context, arg InsertProductParams) (s
 	)
 }
 
+const listDuplicateNameGroups = `-- name: ListDuplicateNameGroups :many
+SELECT LOWER(TRIM(name)) AS norm_name, COUNT(*) AS rows_count, MIN(name) AS sample_name
+FROM products WHERE status = 'active'
+GROUP BY norm_name HAVING COUNT(*) > 1
+ORDER BY rows_count DESC, norm_name ASC
+`
+
+type ListDuplicateNameGroupsRow struct {
+	NormName   string
+	RowsCount  int64
+	SampleName interface{}
+}
+
+func (q *Queries) ListDuplicateNameGroups(ctx context.Context) ([]ListDuplicateNameGroupsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDuplicateNameGroups)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDuplicateNameGroupsRow{}
+	for rows.Next() {
+		var i ListDuplicateNameGroupsRow
+		if err := rows.Scan(&i.NormName, &i.RowsCount, &i.SampleName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExistingCodes = `-- name: ListExistingCodes :many
 SELECT code FROM products WHERE code IN (/*SLICE:codes*/?)
 `
@@ -238,6 +274,49 @@ func (q *Queries) ListLabelsByIDs(ctx context.Context, ids []int64) ([]ListLabel
 	for rows.Next() {
 		var i ListLabelsByIDsRow
 		if err := rows.Scan(&i.ID, &i.Code, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMinPriceAboveSelling = `-- name: ListMinPriceAboveSelling :many
+SELECT id, code, name, selling_price, min_selling_price FROM products
+WHERE status = 'active' AND min_selling_price > selling_price
+ORDER BY name ASC, id ASC
+`
+
+type ListMinPriceAboveSellingRow struct {
+	ID              int64
+	Code            string
+	Name            string
+	SellingPrice    int64
+	MinSellingPrice int64
+}
+
+func (q *Queries) ListMinPriceAboveSelling(ctx context.Context) ([]ListMinPriceAboveSellingRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMinPriceAboveSelling)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMinPriceAboveSellingRow{}
+	for rows.Next() {
+		var i ListMinPriceAboveSellingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Code,
+			&i.Name,
+			&i.SellingPrice,
+			&i.MinSellingPrice,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

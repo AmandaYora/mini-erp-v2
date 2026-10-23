@@ -256,6 +256,46 @@ func (q *Queries) InsertUserRole(ctx context.Context, arg InsertUserRoleParams) 
 	return err
 }
 
+const listActiveRoleHolderHashes = `-- name: ListActiveRoleHolderHashes :many
+SELECT u.id, u.username, u.password_hash
+FROM users u
+JOIN user_roles ur ON ur.user_id = u.id
+JOIN roles r ON r.id = ur.role_id
+WHERE r.code = ? AND u.status = 'active'
+ORDER BY u.id ASC
+`
+
+type ListActiveRoleHolderHashesRow struct {
+	ID           int64
+	Username     string
+	PasswordHash string
+}
+
+// Data-health A1 (ADR-0025): the active holders of one role with their hash.
+// The hash never leaves the user module.
+func (q *Queries) ListActiveRoleHolderHashes(ctx context.Context, code string) ([]ListActiveRoleHolderHashesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveRoleHolderHashes, code)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveRoleHolderHashesRow{}
+	for rows.Next() {
+		var i ListActiveRoleHolderHashesRow
+		if err := rows.Scan(&i.ID, &i.Username, &i.PasswordHash); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBranchAccessByUser = `-- name: ListBranchAccessByUser :many
 SELECT branch_id, is_default FROM user_branch_access WHERE user_id = ? ORDER BY branch_id ASC
 `

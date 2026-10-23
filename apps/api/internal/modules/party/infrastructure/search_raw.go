@@ -19,25 +19,44 @@ import (
 // email and address join code/name/phone).
 var partySearchCols = []string{"code", "name", "phone", "email", "address_text"}
 
+// PartyFilter is the party list filter set.
+type PartyFilter struct {
+	Type   string // "" matches both kinds
+	Search string
+	Status string
+	// DuplicateName keeps parties whose name (case and outer spaces ignored)
+	// is shared by another ACTIVE party of type Type (data-health A10).
+	DuplicateName bool
+}
+
 // partyWhere is the single source of truth of the party list filter, shared
 // by ListParties and CountParties (and SearchIDs). prefix is a table alias
-// with trailing dot ("p.") or "". partyType "" matches both kinds.
-func partyWhere(prefix, partyType, search, status string) (string, []any) {
+// with trailing dot ("p.") or "".
+func partyWhere(prefix string, f PartyFilter) (string, []any) {
 	cols := make([]string, len(partySearchCols))
 	for i, c := range partySearchCols {
 		cols[i] = prefix + c
 	}
 	w := listquery.New().
-		Eq(prefix+"party_type", partyType).
-		Eq(prefix+"status", status).
-		Like(search, cols...)
+		Eq(prefix+"party_type", f.Type).
+		Eq(prefix+"status", f.Status).
+		Like(f.Search, cols...)
+	if f.DuplicateName {
+		w.Raw("LOWER(TRIM("+prefix+"name)) IN (SELECT n FROM (SELECT LOWER(TRIM(name)) AS n FROM parties"+
+			" WHERE status = 'active' AND party_type = ? GROUP BY n HAVING COUNT(*) > 1) d)", f.Type)
+	}
 	return w.SQL()
 }
 
 // ListParties searches code/name/phone per word, filtered by type + status.
-// Member codes ride along via LEFT JOIN — one query, no per-row lookup.
 func (r *Repository) ListParties(ctx context.Context, partyType, search, status string, limit, offset int) ([]*contracts.Party, error) {
-	where, args := partyWhere("p.", partyType, search, status)
+	return r.ListPartiesFiltered(ctx, PartyFilter{Type: partyType, Search: search, Status: status}, limit, offset)
+}
+
+// ListPartiesFiltered lists one page of the filter set. Member codes ride
+// along via LEFT JOIN — one query, no per-row lookup.
+func (r *Repository) ListPartiesFiltered(ctx context.Context, f PartyFilter, limit, offset int) ([]*contracts.Party, error) {
+	where, args := partyWhere("p.", f)
 	args = append(args, limit, offset)
 	// raw-sql: variable-arity per-word LIKE filter (listquery) shared with CountParties/SearchIDs
 	rows, err := r.db.QueryContext(ctx,
@@ -67,7 +86,12 @@ func (r *Repository) ListParties(ctx context.Context, partyType, search, status 
 
 // CountParties counts the List filter set.
 func (r *Repository) CountParties(ctx context.Context, partyType, search, status string) (int64, error) {
-	where, args := partyWhere("", partyType, search, status)
+	return r.CountPartiesFiltered(ctx, PartyFilter{Type: partyType, Search: search, Status: status})
+}
+
+// CountPartiesFiltered counts the ListPartiesFiltered filter set.
+func (r *Repository) CountPartiesFiltered(ctx context.Context, f PartyFilter) (int64, error) {
+	where, args := partyWhere("", f)
 	var total int64
 	// raw-sql: same variable-arity filter as ListParties
 	err := r.db.QueryRowContext(ctx,
@@ -78,7 +102,7 @@ func (r *Repository) CountParties(ctx context.Context, partyType, search, status
 // SearchIDs returns up to limit ids of parties matching term (all statuses),
 // oldest id first. partyType "" = both kinds.
 func (r *Repository) SearchIDs(ctx context.Context, partyType, term string, limit int) ([]int64, error) {
-	where, args := partyWhere("", partyType, term, "")
+	where, args := partyWhere("", PartyFilter{Type: partyType, Search: term})
 	args = append(args, limit)
 	// raw-sql: same variable-arity filter as ListParties
 	rows, err := r.db.QueryContext(ctx,

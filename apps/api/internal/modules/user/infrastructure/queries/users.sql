@@ -82,3 +82,13 @@ WHERE EXISTS (
 
 -- name: NamesByIDs :many
 SELECT id, full_name, username FROM users WHERE id IN (sqlc.slice('ids'));
+
+-- name: ListActiveRoleHolderHashes :many
+-- Data-health A1 (ADR-0025): the active holders of one role with their hash.
+-- The hash never leaves the user module.
+SELECT u.id, u.username, u.password_hash
+FROM users u
+JOIN user_roles ur ON ur.user_id = u.id
+JOIN roles r ON r.id = ur.role_id
+WHERE r.code = ? AND u.status = 'active'
+ORDER BY u.id ASC;

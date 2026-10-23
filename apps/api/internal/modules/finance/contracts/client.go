@@ -4,6 +4,7 @@ import (
 	"context"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
+	"mini-erp/internal/shared/health"
 )
 
 // Account types with their normal balance side.
@@ -183,6 +184,28 @@ type FinanceClient interface {
 	// (catalog-price) rows: their margin is indicative until a real purchase
 	// cost is known (DB-01 cost-basis status). One grouped read.
 	UncostedCount(ctx context.Context, branchID int64) (int64, error)
+}
+
+// HealthClient is finance's read-only data-health surface (ADR-0025): grouped
+// reads over the cost ledger, periods and journals. Unlike Readiness and the
+// posting queue it never drains costing, takes the cost lock or writes, so the
+// dashboard may call it on a timer.
+type HealthClient interface {
+	// CostAbovePrice counts stocked products whose ledger cost per base unit is
+	// above ratio × selling price per base unit (A2); AmountRp = their ledger
+	// value, Meta.archivedCount the archived ones.
+	CostAbovePrice(ctx context.Context, branchID int64, ratio float64, sample int) (health.Result, error)
+	CostAbovePriceItems(ctx context.Context, branchID int64, ratio float64, page, limit int) ([]health.Item, int64, error)
+	// OpeningUnverified counts products whose stock is still only the opening
+	// balance (A7); Meta carries positions and the archived split.
+	OpeningUnverified(ctx context.Context, branchID int64, sample int) (health.Result, error)
+	OpeningUnverifiedItems(ctx context.Context, branchID int64, page, limit int) ([]health.Item, int64, error)
+	// UnclosedPastPeriods lists the YYYYMM months before currentYM that saw
+	// activity or have an open period row and are not closed (A5), ascending.
+	UnclosedPastPeriods(ctx context.Context, branchID int64, currentYM int) ([]int, error)
+	// UnbalancedJournals counts journals dated on/after from (YYYY-MM-DD) whose
+	// legs do not balance (A4).
+	UnbalancedJournals(ctx context.Context, branchID int64, from string, sample int) (health.Result, error)
 }
 
 // DailyPoint is one calendar day of revenue/expense/profit, using the same

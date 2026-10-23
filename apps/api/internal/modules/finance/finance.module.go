@@ -70,6 +70,9 @@ func (m *Module) Finance() contracts.FinanceClient {
 	return m.svc
 }
 
+// Health exposes the read-only data-health checks (ADR-0025).
+func (m *Module) Health() contracts.HealthClient { return m.svc }
+
 // Reverser exposes the cancelled-document reversal (payments/returns call it).
 func (m *Module) Reverser() contracts.SourceReverser { return m.svc }
 

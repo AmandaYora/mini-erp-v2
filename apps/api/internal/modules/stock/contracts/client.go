@@ -5,6 +5,7 @@ import (
 	"time"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
+	"mini-erp/internal/shared/health"
 )
 
 // Location is a warehouse/bin. Movements only ever touch leaf locations
@@ -108,6 +109,13 @@ type PostRequest struct {
 
 // PostResult reports how many positions were written vs already present.
 type PostResult struct{ Posted, Replayed int }
+
+// HealthClient is stock's read-only data-health surface (ADR-0025).
+type HealthClient interface {
+	// NegativeSummary counts positions with on_hand < 0 (A6); Meta.products
+	// is the distinct product count.
+	NegativeSummary(ctx context.Context, branchID int64, sample int) (health.Result, error)
+}
 
 // StockClient is the public surface of the stock module. Every balance
 // change the stock module makes is paired with a movement row (contract §7.5).

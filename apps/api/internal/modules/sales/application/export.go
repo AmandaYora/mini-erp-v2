@@ -229,7 +229,7 @@ func filterLines(f ListFilter) [][]any {
 	add("Status order", strings.Join(f.Statuses, ", "))
 	add("Kanal", labelOr(exportChannelLabel, f.Channel))
 	add("Termin", labelOr(exportTermsLabel, f.PaymentTerms))
-	add("Status bayar", labelOr(map[string]string{PayUnpaid: "Belum bayar", PayPartial: "Sebagian", PayPaid: "Lunas", PayOverdue: "Jatuh tempo"}, f.PaymentStatus))
+	add("Status bayar", labelOr(map[string]string{PayUnpaid: "Belum bayar", PayPartial: "Sebagian", PayPaid: "Lunas", PayOverdue: "Jatuh tempo", PayReceived: "Sudah dibayar"}, f.PaymentStatus))
 	if f.From != "" || f.To != "" {
 		add("Periode order", strings.TrimSpace(f.From+" s.d. "+f.To))
 	}

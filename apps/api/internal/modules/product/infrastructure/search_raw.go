@@ -21,10 +21,19 @@ type ProductFilter struct {
 	Tracked    *bool
 	// ID narrows to one product (hydrating a selected option without searching again).
 	ID *int64
+	// PriceIssue "min_above_selling" keeps products whose minimum selling
+	// price is above the selling price (data-health A8).
+	PriceIssue string
+	// DuplicateName keeps products whose name (case and outer spaces ignored)
+	// is shared by another ACTIVE product (data-health A9).
+	DuplicateName bool
 	// Ranked orders a non-empty search by relevance (exact code, code prefix,
 	// name prefix, then the rest, each by name) instead of plain name order.
 	Ranked bool
 }
+
+// PriceIssueMinAboveSelling is the only ProductFilter.PriceIssue value.
+const PriceIssueMinAboveSelling = "min_above_selling"
 
 // likeEscape neutralises LIKE wildcards in a user-typed prefix.
 func likeEscape(s string) string {
@@ -68,6 +77,13 @@ func (f ProductFilter) where(prefix string) (string, []any) {
 	if f.CategoryID != nil {
 		conds = append(conds, prefix+"category_id = ?")
 		args = append(args, *f.CategoryID)
+	}
+	if f.PriceIssue == PriceIssueMinAboveSelling {
+		conds = append(conds, prefix+"min_selling_price > "+prefix+"selling_price")
+	}
+	if f.DuplicateName {
+		conds = append(conds, "LOWER(TRIM("+prefix+"name)) IN (SELECT n FROM (SELECT LOWER(TRIM(name)) AS n FROM products"+
+			" WHERE status = 'active' GROUP BY n HAVING COUNT(*) > 1) d)")
 	}
 	for _, word := range strings.Fields(f.Search) {
 		like := "%" + word + "%"

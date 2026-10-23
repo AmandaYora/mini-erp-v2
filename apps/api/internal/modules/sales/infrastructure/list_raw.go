@@ -26,7 +26,7 @@ type ListFilter struct {
 	Statuses       []string
 	Channel        string
 	PaymentTerms   string
-	// PaymentStatus (unpaid|partial|paid|overdue) is resolved by the service
+	// PaymentStatus (unpaid|partial|paid|overdue|received) is resolved by the service
 	// against the payment contract — the SQL never sees it; the service turns it
 	// into Statuses/OverdueBefore below and filters the paid amounts in memory.
 	PaymentStatus string
