@@ -7,8 +7,12 @@
 // tetap tercetak dengan id barang. SJ Langsung tanpa order (ADR-0022): nama
 // pelanggan, penerima, telepon, dan alamat dari SJ sendiri; No Nota dan
 // Tanggal Nota kosong; tata letak tidak berubah (ADR-0018 D12).
+//
+// Multi-halaman (temuan 3): barang dipecah per 8 dan SETIAP lembar adalah dokumen lengkap — kop,
+// judul + nomor, pihak, 8 slot barang (pengisi di lembar terakhir), STATUS, tanda tangan, dan
+// "Halaman X dari Y" — karena lembar karbon disobek per lembar (brief desain-cetak-sj-paging).
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { formatNumber } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
@@ -36,13 +40,14 @@ import {
   deliveryItemLine,
   deliveryPartyBlock,
   deliveryStatusLabel,
+  paginateDeliveryLines,
   productLinesForNote,
 } from "@/modules/print/lib/delivery-document";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { continuousDeliveryStyles, deliveryStyles } from "@/modules/print/styles";
 
-/** Baris minimal tabel surat jalan A4; kertas kontinu tanpa pengisi. */
-const SJ_MIN_ROWS = 5;
+/** Catatan cetak bebas dibatasi agar muat di kaki setiap lembar (±3 baris). */
+const PRINT_NOTES_MAX = 160;
 
 // Konvensi karbon tetap (keputusan bisnis, bukan bug): dikunci agar tak terbalik.
 const COPY_NOTE = "PUTIH : SOPIR   MERAH : PELANGGAN";
@@ -86,8 +91,6 @@ export default function DeliveryNotePrintPage() {
   const unorderedDirect = note.origin === "direct" && note.salesOrderId === 0;
   const paperMode: PrintPaperMode = readPaperMode(searchParams, paper.isDefault ? "continuous" : "a4");
   const isContinuous = paperMode === "continuous";
-  // Form kontinu pendek (5,5") — tidak perlu baris pengisi ala A4.
-  const fillerRows = isContinuous ? 0 : Math.max(0, SJ_MIN_ROWS - note.items.length);
   const hideStoreStatic = readHideLetterhead(searchParams, !paper.showLetterhead);
   const showStoreStatic = !isContinuous || !hideStoreStatic;
 
@@ -109,31 +112,16 @@ export default function DeliveryNotePrintPage() {
   const staffName = order?.createdByName?.trim() || "—";
   const userName = user?.fullName?.trim() || "—";
   const statusText = deliveryStatusLabel(note.status, order?.paymentStatus, order?.paymentTerms, unorderedDirect);
+  const rows = note.items.map((item) => {
+    const line = deliveryItemLine(item, nameLines);
+    return { item, name: line !== null ? printItemName(line) : `#${item.productId}/${item.variantId}` };
+  });
+  const sheets = paginateDeliveryLines(rows, { nameOf: (r) => r.name, paper: paperMode, notes: note.notes });
+  const printedAt = formatDocDateTime(new Date().toISOString());
 
-  return (
-    <PrintLayout
-      baseCss={deliveryStyles()}
-      continuousCss={isContinuous ? continuousDeliveryStyles(paper) : null}
-      paperMode={paperMode}
-      onPaperModeChange={(m) => setSearchParams(withPaperModeParam(searchParams, m), { replace: true })}
-      letterheadToggle={{
-        hidden: hideStoreStatic,
-        onChange: (hidden) => setSearchParams(withHideLetterheadParam(searchParams, hidden), { replace: true }),
-      }}
-      notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
-      extraToolbar={
-        <label className="print-toolbar-option" style={{ alignItems: "flex-start" }}>
-          <span>Notes (opsional, hanya tampil di hasil cetak — tidak disimpan):</span>
-          <textarea
-            rows={2}
-            value={printNotes}
-            onChange={(e) => setPrintNotes(e.target.value)}
-            placeholder="Tulis catatan tambahan untuk surat jalan ini..."
-          />
-        </label>
-      }
-      mainClassName={isContinuous ? "sj-page continuous" : "sj-page"}
-    >
+  // Bagian yang sama di setiap lembar.
+  const header: ReactNode = (
+    <>
       <div className="sj-head">
         {showStoreStatic ? <Letterhead identity={identity} /> : <div />}
         <div>
@@ -165,80 +153,128 @@ export default function DeliveryNotePrintPage() {
           ) : null}
         </div>
       </div>
-
-      <table className="doc-table sj-table">
-        <colgroup>
-          <col style={{ width: "4%" }} />
-          <col style={{ width: "8%" }} />
-          <col style={{ width: "9%" }} />
-          <col />
-          <col style={{ width: "26%" }} />
-        </colgroup>
-        <thead>
-          <tr>
-            <th>No</th>
-            <th>Qty</th>
-            <th>Satuan</th>
-            <th>Produk</th>
-            <th>Keterangan</th>
-          </tr>
-        </thead>
-        <tbody>
-          {note.items.map((item, idx) => {
-            const line = deliveryItemLine(item, nameLines);
-            return (
-              <tr key={item.id}>
-                <td className="t-c">{idx + 1}</td>
-                <td className="t-r">{formatNumber(item.qty)}</td>
-                <td className="t-c">{item.uom}</td>
-                <td>{line !== null ? printItemName(line) : `#${item.productId}/${item.variantId}`}</td>
-                <td />
-              </tr>
-            );
-          })}
-          {Array.from({ length: fillerRows }).map((_, index) => (
-            <tr key={`filler-${index}`}>
-              <td>&nbsp;</td>
-              <td />
-              <td />
-              <td />
-              <td />
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div className="sj-status">STATUS : {statusText}</div>
-      {note.notes.trim() !== "" ? (
-        <div style={{ fontSize: "9pt", marginBottom: "4px" }}>Catatan : {note.notes}</div>
-      ) : null}
-
-      <div className="sj-foot">
-        <div style={{ whiteSpace: "pre-wrap" }}>{printNotes}</div>
-        <div>
-          <div className="sj-cityline">{identity.cityLine !== "" ? `${identity.cityLine}, ` : ""}................</div>
-          <div className="sj-sign-grid">
-            <div className="sj-sign-box">
-              <div className="sj-sign-role">Petugas Gudang</div>
-              <div className="sj-sign-line">{note.warehouseStaffName.trim() || "—"}</div>
-            </div>
-            <div className="sj-sign-box">
-              <div className="sj-sign-role">Sopir</div>
-              <div className="sj-sign-line">{note.driverName}</div>
-            </div>
-            <div className="sj-sign-box">
-              <div className="sj-sign-role">Pembeli</div>
-              <div className="sj-sign-line">{partyName}</div>
-            </div>
+    </>
+  );
+  const foot: ReactNode = (
+    <div className="sj-foot">
+      <div style={{ whiteSpace: "pre-wrap" }}>{printNotes}</div>
+      <div>
+        <div className="sj-cityline">{identity.cityLine !== "" ? `${identity.cityLine}, ` : ""}................</div>
+        <div className="sj-sign-grid">
+          <div className="sj-sign-box">
+            <div className="sj-sign-role">Petugas Gudang</div>
+            <div className="sj-sign-line">{note.warehouseStaffName.trim() || "—"}</div>
+          </div>
+          <div className="sj-sign-box">
+            <div className="sj-sign-role">Sopir</div>
+            <div className="sj-sign-line">{note.driverName}</div>
+          </div>
+          <div className="sj-sign-box">
+            <div className="sj-sign-role">Pembeli</div>
+            <div className="sj-sign-line">{partyName}</div>
           </div>
         </div>
       </div>
+    </div>
+  );
 
-      <div className="sj-footbar">
-        <span>Dicetak: {formatDocDateTime(new Date().toISOString())}</span>
-        <span>{COPY_NOTE}</span>
-        <span>USER : {userName}</span>
-      </div>
+  return (
+    <PrintLayout
+      baseCss={deliveryStyles()}
+      continuousCss={isContinuous ? continuousDeliveryStyles(paper) : null}
+      paperMode={paperMode}
+      onPaperModeChange={(m) => setSearchParams(withPaperModeParam(searchParams, m), { replace: true })}
+      letterheadToggle={{
+        hidden: hideStoreStatic,
+        onChange: (hidden) => setSearchParams(withHideLetterheadParam(searchParams, hidden), { replace: true }),
+      }}
+      notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
+      extraToolbar={
+        <>
+          <label className="print-toolbar-option" style={{ alignItems: "flex-start" }}>
+            <span>Notes (opsional, hanya tampil di hasil cetak — tidak disimpan):</span>
+            <textarea
+              rows={2}
+              maxLength={PRINT_NOTES_MAX}
+              value={printNotes}
+              onChange={(e) => setPrintNotes(e.target.value)}
+              placeholder="Tulis catatan tambahan untuk surat jalan ini..."
+            />
+          </label>
+          <span className="text-sm text-muted-foreground">{sheets.length} halaman</span>
+        </>
+      }
+      mainClassName={isContinuous ? "sj-page continuous" : "sj-page"}
+    >
+      {sheets.map((sheet) => {
+        const last = sheet.index === sheet.total - 1;
+        return (
+          <section key={sheet.index} className="sj-sheet" aria-label={`Halaman ${sheet.index + 1} dari ${sheet.total}`}>
+            {header}
+
+            <table className="doc-table sj-table">
+              <colgroup>
+                <col style={{ width: "4%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "9%" }} />
+                <col />
+                <col style={{ width: "26%" }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>Qty</th>
+                  <th>Satuan</th>
+                  <th>Produk</th>
+                  <th>Keterangan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sheet.items.map(({ item, name }, idx) => (
+                  <tr key={item.id}>
+                    <td className="t-c">{sheet.firstNo + idx}</td>
+                    <td className="t-r">{formatNumber(item.qty)}</td>
+                    <td className="t-c">{item.uom}</td>
+                    <td>{name}</td>
+                    <td />
+                  </tr>
+                ))}
+                {Array.from({ length: sheet.fillers }).map((_, index) => (
+                  <tr key={`filler-${index}`} className="sj-filler">
+                    <td>&nbsp;</td>
+                    <td />
+                    <td />
+                    <td />
+                    <td />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="sj-statusbar">
+              <span className="sj-status">STATUS : {statusText}</span>
+              {rows.length > 0 ? (
+                <span className="sj-range">
+                  Barang {sheet.firstNo}–{sheet.lastNo} dari {rows.length}
+                </span>
+              ) : null}
+              {!last ? <span className="sj-cont">Bersambung ke halaman {sheet.index + 2}</span> : null}
+            </div>
+            {note.notes.trim() !== "" ? <div className="sj-note">Catatan : {note.notes}</div> : null}
+
+            {foot}
+
+            <div className="sj-footbar">
+              <span>Dicetak: {printedAt}</span>
+              <span>{COPY_NOTE}</span>
+              <span>USER : {userName}</span>
+              <span className="sj-pageno">
+                Halaman {sheet.index + 1} dari {sheet.total}
+              </span>
+            </div>
+          </section>
+        );
+      })}
     </PrintLayout>
   );
 }

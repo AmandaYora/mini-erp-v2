@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveIdentity } from "@/modules/print/document";
@@ -225,6 +225,39 @@ describe("surat jalan (sama dengan sistem lama)", () => {
     expect(screen.getByText("—")).toBeTruthy();
     expect(screen.getByText("PUTIH : SOPIR MERAH : PELANGGAN", { normalizer: (t) => t.replace(/\s+/g, " ").trim() })).toBeTruthy();
     expect(screen.queryByText("REKENING TRANSFER MELALUI:")).toBeNull();
+  });
+
+  it("20 barang = 3 lembar lengkap (kop, pihak, tanda tangan, Halaman X dari 3); No berlanjut; Bersambung kecuali terakhir", async () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, productId: 11, variantId: 110, locationId: 1, uom: "sak", uomFactor: 1, qty: i + 1, qtyBase: i + 1 }));
+    fetchDelivery.mockResolvedValue({ note: note({ items }), order: order() });
+    const { container } = renderAt("/print/delivery/3", "/print/delivery/:id", <DeliveryNotePrintPage />);
+    await screen.findAllByText("SURAT JALAN");
+    const sheets = Array.from(container.querySelectorAll<HTMLElement>(".sj-sheet"));
+    expect(sheets).toHaveLength(3);
+    sheets.forEach((sheet, i) => {
+      const t = within(sheet);
+      expect(t.getByText("SURAT JALAN")).toBeTruthy();
+      expect(t.getByText("SJ-0003")).toBeTruthy();
+      expect(t.getByText("Sari Admin")).toBeTruthy();
+      expect(sheet.querySelectorAll(".sj-sign-box")).toHaveLength(3);
+      expect(t.getByText(`Halaman ${i + 1} dari 3`)).toBeTruthy();
+      expect(sheet.querySelectorAll("tbody tr")).toHaveLength(8); // 8 slot, pengisi di lembar terakhir
+      expect(t.queryByText(/Bersambung ke halaman/) !== null).toBe(i < 2);
+    });
+    expect(sheets[1].querySelector("tbody td")?.textContent).toBe("9");
+    expect(within(sheets[1]).getByText("Barang 9–16 dari 20")).toBeTruthy();
+    expect(within(sheets[2]).getByText("Barang 17–20 dari 20")).toBeTruthy();
+    expect(sheets[2].querySelectorAll("tr.sj-filler")).toHaveLength(4);
+    expect(screen.getByText("3 halaman")).toBeTruthy();
+  });
+
+  it("satu barang tetap Halaman 1 dari 1 dengan 8 slot", async () => {
+    fetchDelivery.mockResolvedValue({ note: note(), order: order() });
+    const { container } = renderAt("/print/delivery/3", "/print/delivery/:id", <DeliveryNotePrintPage />);
+    expect(await screen.findByText("Halaman 1 dari 1")).toBeTruthy();
+    expect(container.querySelectorAll(".sj-sheet")).toHaveLength(1);
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
+    expect(screen.queryByText(/Bersambung/)).toBeNull();
   });
 
   it("varian nyata tercetak; surat jalan batal ditandai DIBATALKAN", async () => {

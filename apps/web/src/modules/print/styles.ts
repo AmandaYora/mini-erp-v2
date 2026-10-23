@@ -52,13 +52,19 @@ export function deliveryStyles(): string {
   @media print {
     .no-print { display: none !important; }
     html, body { background: #fff !important; }
-    .sj-page { box-shadow: none !important; margin: 0 !important; max-width: none !important; }
+    .sj-sheet { box-shadow: none !important; margin: 0 !important; max-width: none !important; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
   body { background: #f3f4f6; }
   ${TOOLBAR_CSS}
   ${DOC_TABLE_CSS}
-  .sj-page { background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .12); color: #111; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; line-height: 1.3; margin: 16px auto; max-width: 1040px; padding: 16px 20px; }
+  .sj-page { color: #111; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; line-height: 1.3; }
+  /* Satu lembar = satu halaman fisik (temuan 3): dokumen lengkap per lembar, dipisah break-after.
+     Tinggi = area konten A4 landscape (194 mm) − 0,5 mm agar pembulatan tak memicu halaman kosong.
+     Tanpa overflow:hidden — luapan harus terlihat sebagai halaman tambahan (ditangkap tes PDF). */
+  .sj-sheet { background: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .12); display: flex; flex-direction: column; margin: 16px auto; max-width: 1040px; min-height: calc(194mm - 0.5mm); padding: 16px 20px; }
+  .sj-sheet:not(:last-child) { break-after: page; page-break-after: always; }
+  .sj-sheet .sj-table tr { break-inside: avoid; page-break-inside: avoid; }
   .sj-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
   .sj-title { font-size: 18pt; font-weight: 800; text-transform: uppercase; text-align: right; white-space: nowrap; }
   .sj-meta { font-size: 9.5pt; text-align: right; }
@@ -67,15 +73,19 @@ export function deliveryStyles(): string {
   .sj-kv .lbl { font-weight: 700; text-transform: uppercase; }
   .sj-table { font-size: 9.5pt; }
   .sj-table th { font-size: 8.5pt; }
-  .sj-status { font-size: 9pt; font-weight: 700; margin: 8px 0 4px; }
+  .sj-statusbar { display: flex; align-items: baseline; gap: 16px; margin: 8px 0 4px; }
+  .sj-status { font-size: 9pt; font-weight: 700; }
+  .sj-range, .sj-cont { font-size: 8pt; }
+  .sj-cont { font-style: italic; margin-left: auto; }
   .sj-note { font-size: 9pt; margin-bottom: 4px; }
-  .sj-foot { display: grid; grid-template-columns: 1fr 2fr; gap: 18px; margin-top: 10px; align-items: start; }
+  .sj-foot { display: grid; grid-template-columns: 1fr 2fr; gap: 18px; margin-top: auto; padding-top: 10px; align-items: start; }
   .sj-cityline { text-align: right; font-size: 9pt; margin-bottom: 6px; }
   .sj-sign-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .sj-sign-box { border: 1px solid #111; padding: 8px; text-align: center; font-size: 9pt; }
   .sj-sign-role { font-weight: 700; text-transform: uppercase; }
   .sj-sign-line { border-top: 1px solid #111; margin-top: 42px; padding-top: 3px; font-weight: 700; }
   .sj-footbar { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; font-size: 8pt; color: #374151; }
+  .sj-pageno { font-size: 7pt; white-space: nowrap; }
   @media screen and (max-width: 760px) {
     .sj-head, .sj-parties, .sj-foot { display: grid; grid-template-columns: 1fr; }
     .sj-title, .sj-meta, .sj-cityline { text-align: left; }
@@ -91,16 +101,21 @@ export function continuousDeliveryStyles(
   return `
   ${continuousPageRule(profile)}
   @media print {
-    .sj-page.continuous { box-shadow: none !important; margin: 0 !important; max-width: none !important; width: ${w}mm !important; }
+    .sj-page.continuous .sj-sheet { box-shadow: none !important; margin: 0 !important; max-width: none !important; width: ${w}mm !important; }
   }
-  .sj-page.continuous { display: flex; flex-direction: column; font-size: 9pt; line-height: 1.15; margin: 16px auto; max-width: none; min-height: ${h}mm; padding: 0; width: ${w}mm; --print-name-size: 11pt; --print-detail-size: 7.5pt; }
+  .sj-page.continuous { font-size: 9pt; line-height: 1.15; --print-name-size: 11pt; --print-detail-size: 7.5pt; }
+  /* Lembar = tinggi area konten profil − 0,5 mm: tanda tangan di dasar setiap lembar, satu lembar per halaman. */
+  .sj-page.continuous .sj-sheet { height: calc(${h}mm - 0.5mm); margin: 16px auto; max-width: none; min-height: 0; padding: 0; width: ${w}mm; }
   .sj-page.continuous .sj-title { font-size: 13pt; }
   .sj-page.continuous .sj-meta { font-size: 8pt; }
   .sj-page.continuous .sj-parties { font-size: 8.5pt; margin: 6px 0 6px; }
   .sj-page.continuous .sj-table { font-size: 8.5pt; }
   .sj-page.continuous .sj-table th { font-size: 7.5pt; }
   .sj-page.continuous .sj-table th, .sj-page.continuous .sj-table td { padding: 2px 5px; }
-  .sj-page.continuous .sj-status { font-size: 8pt; margin: 4px 0 3px; }
+  .sj-page.continuous .sj-statusbar { margin: 4px 0 3px; }
+  .sj-page.continuous .sj-status { font-size: 8pt; }
+  .sj-page.continuous .sj-range, .sj-page.continuous .sj-cont { font-size: 7.5pt; }
+  .sj-page.continuous .sj-note { font-size: 8pt; margin-bottom: 2px; }
   .sj-page.continuous .sj-foot { font-size: 7.5pt; gap: 10px; margin-top: auto; padding-top: 6px; }
   .sj-page.continuous .sj-cityline { font-size: 7.5pt; margin-bottom: 3px; }
   .sj-page.continuous .sj-sign-grid { gap: 6px; }
