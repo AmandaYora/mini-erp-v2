@@ -147,3 +147,34 @@ describe("halaman Buat Retur Jual: galat validasi server", () => {
     expect(await screen.findByText("Validasi gagal — melebihi sisa yang bisa diretur")).toBeInTheDocument();
   });
 });
+
+describe("halaman Buat Retur Jual: pilih satuan (temuan 1)", () => {
+  it("baris ber-DUS bisa diretur per PCS dengan batas sisa dalam PCS", async () => {
+    context.mockResolvedValue({
+      salesOrderId: 7,
+      orderNumber: "SO-0007",
+      status: "completed",
+      lines: [
+        {
+          productId: 10, variantId: 11, productCode: "PIP-10", productName: "Pipa", uom: "dus", uomFactor: 12,
+          orderedQty: 2, delivered: 2, returned: 0, remaining: 2, remainingBase: 24, baseUom: "pcs",
+          uoms: [{ uom: "dus", factor: 12 }, { uom: "pcs", factor: 1 }],
+        },
+      ],
+      locations: [{ id: 3, code: "GD-1", name: "Gudang Utama" }],
+    });
+    render(
+      <MemoryRouter initialEntries={["/sales-returns/new?from=7"]}>
+        <Routes>
+          <Route path="/sales-returns/new" element={<SalesReturnCreatePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Pipa");
+    const qty = screen.getByLabelText("Qty retur Pipa") as HTMLInputElement;
+    expect(qty.max).toBe("2");
+    await userEvent.selectOptions(screen.getByLabelText("Satuan retur Pipa"), "pcs");
+    expect(qty.max).toBe("24");
+    expect(screen.getByText(/Sisa/).textContent).toMatch(/24\s*pcs/);
+  });
+});

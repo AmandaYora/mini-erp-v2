@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  remainingInUnit,
+  switchUom,
   activeLines,
   clampQty,
   parseQty,
@@ -64,5 +66,19 @@ describe("validateReturnDate (RT-04 earliest)", () => {
     expect(validateReturnDate("2026-09-09", "2026-10-18", "2026-09-10 00:00:00")).toMatch(/lebih awal/);
     expect(validateReturnDate("2026-09-10", "2026-10-18", "2026-09-10")).toBeNull();
     expect(validateReturnDate("2026-09-09", "2026-10-18")).toBeNull();
+  });
+});
+
+describe("satuan retur (temuan 1)", () => {
+  const row = { qty: "2", uom: "dus", uomFactor: 12, remaining: 2, remainingBase: 24, uoms: [{ uom: "dus", factor: 12 }, { uom: "pcs", factor: 1 }] };
+  it("sisa mengikuti satuan terpilih", () => {
+    expect(remainingInUnit(row)).toBe(2);
+    expect(remainingInUnit({ ...row, uomFactor: 1 })).toBe(24);
+    expect(remainingInUnit({ remaining: 5 })).toBe(5);
+  });
+  it("ganti satuan mengonversi qty lewat satuan dasar dan membatasinya", () => {
+    expect(switchUom(row, "pcs")).toEqual({ uom: "pcs", uomFactor: 1, qty: "24" });
+    expect(switchUom({ ...row, uom: "pcs", uomFactor: 1, qty: "18" }, "dus")).toEqual({ uom: "dus", uomFactor: 12, qty: "1.5" });
+    expect(switchUom(row, "kg")).toEqual({});
   });
 });

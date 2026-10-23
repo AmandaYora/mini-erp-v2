@@ -306,6 +306,30 @@ func aggregateSO(so *salescontracts.SalesOrder) map[string]*soAggregate {
 	return soAgg
 }
 
+// price values qty units of uom (factor base units each) from the stored
+// source-line economics. The source's own unit is exact; any other unit of the
+// product is pro-rated by base quantity from the source unit holding the most
+// base units, and its unit price converted the same way.
+func (a *soAggregate) price(uom string, factor, qty float64) (gross, net, base, tax, unitPrice int64, pct float64) {
+	if e, ok := a.econ[uom]; ok {
+		gross, net, base, tax = e.Part(qty)
+		return gross, net, base, tax, e.UnitPrice(), e.DiscountPct()
+	}
+	var src string
+	var srcBase float64
+	for u, e := range a.econ {
+		if b := e.Qty * a.uoms[u]; src == "" || b > srcBase || (b == srcBase && u < src) {
+			src, srcBase = u, b
+		}
+	}
+	e, srcFactor := a.econ[src], a.uoms[src]
+	if e == nil || srcFactor <= 0 {
+		return 0, 0, 0, 0, 0, 0
+	}
+	gross, net, base, tax = e.Part(qty * factor / srcFactor)
+	return gross, net, base, tax, money.PriceForUnit(e.UnitPrice(), factor, srcFactor), e.DiscountPct()
+}
+
 // computedReturn is the validated + priced result shared by Create and
 // Preview: the same builder feeds both, so a preview can never drift from
 // what Create would persist (D5, same pattern as finance Preview/Post).
@@ -352,9 +376,16 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "produk tidak ada di SO"}})
 		}
 		uom := strings.TrimSpace(line.UOM)
+		// Satuan baris sumber, atau satuan lain milik produk (mis. retur per PCS
+		// atas baris ber-DUS): kuota tetap dihitung dalam satuan dasar.
 		factor, ok := agg.uoms[uom]
 		if !ok {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "satuan harus sama dengan SO"}})
+			if p := loadedProducts[line.ProductID]; p != nil {
+				factor, _, ok = p.UOMFactor(uom)
+			}
+			if !ok || factor <= 0 {
+				return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "satuan bukan milik produk ini"}})
+			}
 		}
 		key := lineKey(line.ProductID, line.VariantID)
 		delivered, ok := deliveredCache[key]
@@ -415,9 +446,7 @@ func (s *Service) computeReturn(ctx context.Context, branchID, soID int64, so *s
 		// match a source line are rejected above; never fall back to live
 		// catalog prices (that would refund today's price instead of the price
 		// actually paid).
-		econ := agg.econ[uom]
-		gross, net, base, tax := econ.Part(line.Qty)
-		unitPrice, pct := econ.UnitPrice(), econ.DiscountPct()
+		gross, net, base, tax, unitPrice, pct := agg.price(uom, factor, line.Qty)
 		nominalPart := max(0, gross-net-money.Round(float64(gross)*pct/100))
 		lineTotal := base + tax
 		subtotal += base
@@ -1262,6 +1291,10 @@ func (s *Service) ReturnContext(ctx context.Context, branchID, soID int64) (map[
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
+	products, err := s.products.GetByIDs(ctx, itemProductIDs(so.Items))
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
 	lines := make([]any, 0, len(so.Items))
 	for _, l := range so.Items {
 		delivered, err := s.delivery.DeliveredQty(ctx, soID, l.ProductID, l.VariantID)
@@ -1278,11 +1311,20 @@ func (s *Service) ReturnContext(ctx context.Context, branchID, soID int64) (map[
 		if remaining < 0 {
 			remaining = 0
 		}
+		// delivered/returned/remaining in the LINE's unit (the label the form
+		// shows); remainingBase + uoms let the form return in any unit of the
+		// product (temuan 1: a DUS line returned per PCS).
+		f := l.UOMFactor
+		if f <= 0 {
+			f = 1
+		}
+		base, uoms := returnUOMs(products[l.ProductID], l.UOM, f)
 		lines = append(lines, map[string]any{
 			"productId": l.ProductID, "variantId": l.VariantID,
 			"productCode": l.ProductCode, "productName": l.ProductName,
 			"uom": l.UOM, "uomFactor": l.UOMFactor, "orderedQty": l.Qty,
-			"delivered": delivered, "returned": returned, "remaining": remaining,
+			"delivered": delivered / f, "returned": returned / f, "remaining": remaining / f,
+			"remainingBase": remaining, "baseUom": base, "uoms": uoms,
 		})
 	}
 	locs, err := s.stock.ListLocations(ctx, branchID, "active")

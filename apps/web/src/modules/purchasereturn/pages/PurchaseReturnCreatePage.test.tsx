@@ -102,3 +102,47 @@ describe("halaman Buat Retur Beli: langkah Tinjau menampilkan penyelesaian (K-04
     expect(within(list).getByText(/Seluruh nilai retur mengurangi hutang/)).toBeTruthy();
   });
 });
+
+describe("halaman Buat Retur Beli: pilih satuan (temuan 1)", () => {
+  it("baris ber-DUS: sisa dalam satuan baris, ganti ke PCS mengubah batas dan qty, payload membawa PCS", async () => {
+    context.mockResolvedValue({
+      purchaseOrderId: 9,
+      orderNumber: "PO-0009",
+      status: "confirmed",
+      lines: [
+        {
+          productId: 10, variantId: 11, productCode: "PIP-10", productName: "Pipa", uom: "dus", uomFactor: 12,
+          orderedQty: 2, received: 2, returned: 0, remaining: 2, remainingBase: 24, baseUom: "pcs",
+          uoms: [{ uom: "dus", factor: 12 }, { uom: "pcs", factor: 1 }],
+        },
+      ],
+      locations: [{ id: 3, code: "GD-1", name: "Gudang Utama" }],
+    });
+    preview.mockResolvedValue({ message: "ok", data: previewData() });
+    render(
+      <MemoryRouter initialEntries={["/purchase-returns/new?from=9"]}>
+        <Routes>
+          <Route path="/purchase-returns/new" element={<PurchaseReturnCreatePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Pipa");
+    const qty = screen.getByLabelText("Qty retur Pipa") as HTMLInputElement;
+    expect(qty.value).toBe("2");
+    expect(qty.max).toBe("2");
+    await userEvent.selectOptions(screen.getByLabelText("Satuan retur Pipa"), "pcs");
+    expect(qty.value).toBe("24");
+    expect(qty.max).toBe("24");
+    await userEvent.clear(qty);
+    await userEvent.type(qty, "30");
+    expect(qty.value).toBe("24");
+    await userEvent.clear(qty);
+    await userEvent.type(qty, "6");
+    await userEvent.selectOptions(screen.getByLabelText("Lokasi keluar Pipa"), "3");
+    await userEvent.click(screen.getByRole("button", { name: "Lanjut" }));
+    await userEvent.type(await screen.findByPlaceholderText(/Mis\. barang cacat/), "Retur sebagian isi dus");
+    await userEvent.click(screen.getByRole("button", { name: "Pratinjau" }));
+    await waitFor(() => expect(preview).toHaveBeenCalled());
+    expect(preview.mock.calls[0][0].items).toEqual([{ productId: 10, variantId: 11, locationId: 3, uom: "pcs", qty: 6 }]);
+  });
+});

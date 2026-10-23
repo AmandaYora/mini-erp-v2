@@ -247,6 +247,30 @@ func aggregatePO(po *purchasingcontracts.PurchaseOrder) map[string]*poAggregate 
 	return poAgg
 }
 
+// price values qty units of uom (factor base units each) from the stored
+// source-line economics. The source's own unit is exact; any other unit of the
+// product is pro-rated by base quantity from the source unit holding the most
+// base units, and its unit price converted the same way.
+func (a *poAggregate) price(uom string, factor, qty float64) (gross, net, base, tax, unitPrice int64, pct float64) {
+	if e, ok := a.econ[uom]; ok {
+		gross, net, base, tax = e.Part(qty)
+		return gross, net, base, tax, e.UnitPrice(), e.DiscountPct()
+	}
+	var src string
+	var srcBase float64
+	for u, e := range a.econ {
+		if b := e.Qty * a.uoms[u]; src == "" || b > srcBase || (b == srcBase && u < src) {
+			src, srcBase = u, b
+		}
+	}
+	e, srcFactor := a.econ[src], a.uoms[src]
+	if e == nil || srcFactor <= 0 {
+		return 0, 0, 0, 0, 0, 0
+	}
+	gross, net, base, tax = e.Part(qty * factor / srcFactor)
+	return gross, net, base, tax, money.PriceForUnit(e.UnitPrice(), factor, srcFactor), e.DiscountPct()
+}
+
 // computedReturn is the validated + priced result shared by Create and
 // Preview so a preview can never drift from what Create would persist.
 type computedReturn struct {
@@ -291,9 +315,16 @@ func (s *Service) computeReturn(ctx context.Context, branchID, poID int64, po *p
 			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "produk tidak ada di PO"}})
 		}
 		uom := strings.TrimSpace(line.UOM)
+		// Satuan baris sumber, atau satuan lain milik produk (mis. retur per PCS
+		// atas baris ber-DUS): kuota tetap dihitung dalam satuan dasar.
 		factor, ok := agg.uoms[uom]
 		if !ok {
-			return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "satuan harus sama dengan PO"}})
+			if p := loadedProducts[line.ProductID]; p != nil {
+				factor, _, ok = p.UOMFactor(uom)
+			}
+			if !ok || factor <= 0 {
+				return nil, apperror.Validation("", []apperror.FieldError{{Field: "items", Message: tag + "satuan bukan milik produk ini"}})
+			}
 		}
 		key := lineKey(line.ProductID, line.VariantID)
 		received, ok := receivedCache[key]
@@ -333,9 +364,7 @@ func (s *Service) computeReturn(ctx context.Context, branchID, poID int64, po *p
 		// and tax split (taxable flag, own rate) pro-rate in; duplicate PO
 		// lines average by quantity. Unmatched lines are rejected above; never
 		// fall back to live catalog prices.
-		econ := agg.econ[uom]
-		gross, net, base, tax := econ.Part(line.Qty)
-		unitPrice, pct := econ.UnitPrice(), econ.DiscountPct()
+		gross, net, base, tax, unitPrice, pct := agg.price(uom, factor, line.Qty)
 		nominalPart := max(0, gross-net-money.Round(float64(gross)*pct/100))
 		lineTotal := base + tax
 		subtotal += base
@@ -852,6 +881,10 @@ func (s *Service) ReturnContext(ctx context.Context, branchID, poID int64) (map[
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
+	products, err := s.products.GetByIDs(ctx, itemProductIDs(po.Items))
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
 	lines := make([]any, 0, len(po.Items))
 	for _, l := range po.Items {
 		received, err := s.goodsreceipt.ReceivedQty(ctx, poID, l.ProductID, l.VariantID)
@@ -868,11 +901,20 @@ func (s *Service) ReturnContext(ctx context.Context, branchID, poID int64) (map[
 		if remaining < 0 {
 			remaining = 0
 		}
+		// received/returned/remaining in the LINE's unit (the label the form
+		// shows); remainingBase + uoms let the form return in any unit of the
+		// product (temuan 1: a DUS line returned per PCS).
+		f := l.UOMFactor
+		if f <= 0 {
+			f = 1
+		}
+		base, uoms := returnUOMs(products[l.ProductID], l.UOM, f)
 		line := map[string]any{
 			"productId": l.ProductID, "variantId": l.VariantID,
 			"productCode": l.ProductCode, "productName": l.ProductName,
 			"uom": l.UOM, "uomFactor": l.UOMFactor, "orderedQty": l.Qty,
-			"received": received, "returned": returned, "remaining": remaining,
+			"received": received / f, "returned": returned / f, "remaining": remaining / f,
+			"remainingBase": remaining, "baseUom": base, "uoms": uoms,
 		}
 		// RT-04: the source location defaults to where the goods were last received.
 		if loc := hints.Locations[lineKey(l.ProductID, l.VariantID)]; loc > 0 {

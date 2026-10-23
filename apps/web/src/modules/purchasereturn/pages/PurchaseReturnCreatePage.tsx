@@ -17,7 +17,8 @@ import type { LineColumn } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { ReturnLinesTable } from "@/shared/components/ui/return-lines-table";
 import { formatIDR, todayWIB } from "@/shared/lib/format";
-import { parseQty, validateReason, validateReturnDate } from "@/shared/lib/return-lines";
+import { parseQty, switchUom, validateReason, validateReturnDate } from "@/shared/lib/return-lines";
+import type { ReturnUom } from "@/shared/lib/return-lines";
 import { formatApiError, toApiError } from "@/shared/services/http-client";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { toast } from "@/shared/stores/toast.store";
@@ -43,6 +44,11 @@ interface LineDraft {
   fulfilled: number;
   returned: number;
   remaining: number;
+  /** Satuan baris sumber; `uom` = satuan retur terpilih (temuan 1: bisa per PCS atas baris DUS). */
+  orderUom: string;
+  uomFactor?: number;
+  remainingBase?: number;
+  uoms?: ReturnUom[];
   unitPrice: number;
   qty: string;
   locationId: number | null;
@@ -111,6 +117,10 @@ export default function PurchaseReturnCreatePage() {
             productCode: it.productCode,
             productName: it.productName,
             uom: it.uom,
+            orderUom: it.uom,
+            uomFactor: it.uomFactor > 0 ? it.uomFactor : 1,
+            remainingBase: it.remainingBase,
+            uoms: it.uoms,
             orderedQty: it.orderedQty,
             fulfilled: it.received,
             returned: it.returned,
@@ -139,6 +149,7 @@ export default function PurchaseReturnCreatePage() {
               productCode: it.productCode,
               productName: it.productName,
               uom: it.uom,
+              orderUom: it.uom,
               orderedQty: it.qty,
               fulfilled: it.qty,
               returned: 0,
@@ -373,6 +384,10 @@ export default function PurchaseReturnCreatePage() {
                 fulfilledLabel="diterima"
                 emptyDescription="Pilih order beli sumber untuk memuat baris item."
                 onQtyChange={(key, qty) => patchLine(key, { qty })}
+                onUomChange={(key, uom) => {
+                  const row = lines.find((l) => l.key === key);
+                  if (row) patchLine(key, switchUom(row, uom));
+                }}
                 extraColumns={[
                   {
                     header: "Lokasi keluar",

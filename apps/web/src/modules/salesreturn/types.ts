@@ -225,6 +225,11 @@ export interface SalesReturnContextLine {
   delivered: number;
   returned: number;
   remaining: number;
+  /** Sisa dalam satuan dasar; `remaining` sendiri dalam satuan baris (`uom`). */
+  remainingBase?: number;
+  baseUom?: string;
+  /** Satuan yang boleh dipakai retur (dasar, jual, beli, satuan baris) dengan faktornya. */
+  uoms?: { uom: string; factor: number }[];
 }
 
 export interface SalesReturnContextLocation {

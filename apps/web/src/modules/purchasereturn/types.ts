@@ -160,6 +160,11 @@ export interface PurchaseReturnContextLine {
   received: number;
   returned: number;
   remaining: number;
+  /** Sisa dalam satuan dasar; `remaining` sendiri dalam satuan baris (`uom`). */
+  remainingBase?: number;
+  baseUom?: string;
+  /** Satuan yang boleh dipakai retur (dasar, jual, beli, satuan baris) dengan faktornya. */
+  uoms?: { uom: string; factor: number }[];
   /** Lokasi penerimaan terbaru barang ini — lokasi asal bawaan retur (RT-04). */
   defaultLocationId?: number;
 }
