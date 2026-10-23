@@ -28,10 +28,10 @@ merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui fi
 | Halaman frontend | 90 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
 | Go non-test (`internal/modules`) | ±81 ribu baris | `find apps/api/internal/modules -name '*.go' ! -name '*_test.go' \| xargs cat \| wc -l` |
 | Test backend | 205 berkas `*_test.go` (127 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
-| Test frontend | 172 berkas (942 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
-| Spec E2E | 22 (E01–E19, V00 visual, V01 a11y, V02 responsif) | `ls apps/e2e/specs` |
+| Test frontend | 200 berkas (1.188 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
+| Spec E2E | 23 (E01–E20, V00 visual, V01 a11y, V02 responsif); gerbang terakhir 112 lulus / 0 dilewati / 0 gagal | `ls apps/e2e/specs` |
 
-Gerbang penuh terakhir: 2026-10-19/20 (`node scripts/verify.mjs`, `verify.mjs --web`, `npm run test:e2e`).
+Gerbang penuh terakhir: 2026-10-23 (`node scripts/verify.mjs` hijau termasuk integrasi Go, `verify.mjs --web` sesudah checkbox SJ, `npm run test:e2e` 112 lulus).
 Gerbang 2026-10-21 hijau: `verify.mjs --api` termasuk integrasi Go, vitest, dan `npm run test:e2e`.
 Toolchain web butuh Node 22+ (`.nvmrc`; CI ikut dinaikkan).
 Sebelum rilis, ulangi sekali pada pohon kerja yang bersih.
