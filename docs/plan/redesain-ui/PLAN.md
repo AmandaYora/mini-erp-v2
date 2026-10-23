@@ -47,7 +47,8 @@ Ratchet UI: ukuran arbitrer 242→1, `Memuat…` manual 58→1, input mentah 30�
    yang diganti adalah cangkangnya menjadi Popover Radix (`select-popover.tsx`) agar bisa hidup di dalam Dialog.
 3. **`ConfirmDialog` kini `role=alertdialog`**; sheet dan dialog menutup dengan label "Tutup"/"Tutup panel".
 4. **Ratchet** hanya mengukur kode fitur (bukan `shared/components`, `shared/layouts`, `primitives`, `print`).
-5. **Tile POS** tanpa foto/stok (API daftar produk tidak mengirimnya; tanpa endpoint baru, U11); popover diskon tanpa
+5. **Tile POS** tanpa stok (tanpa endpoint baru, U11). *Catatan 2026-10-23:* foto **sudah** tampil (temuan pengguna 4;
+   API daftar produk ternyata mengirim `primaryImageUrl`, cadangan inisial bila tidak ada/gagal); popover diskon tanpa
    kolom "alasan" (tidak ada di model keranjang); tanpa pintasan F-key (POS lama tidak punya).
 6. **Rel Dokumen** mengikuti status nyata backend (mis. retur: Draf → Barang kembali → Diselesaikan) dan hanya menampilkan
    dokumen terkait yang sudah ada di data halaman.

@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ScanQrCode } from "lucide-react";
 import { EmptyState } from "@/shared/components/feedback/empty-state";
 import { Notice } from "@/shared/components/feedback/notice";
@@ -19,6 +19,28 @@ function initials(name: string): string {
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+/**
+ * Foto produk di tile (paritas legacy "foto square lazy", temuan 4) dengan cadangan inisial:
+ * tanpa foto, atau gambar gagal dimuat (mis. URL bertanda tangan kedaluwarsa pada katalog yang
+ * lama terbuka). Ukuran kotak sama untuk keduanya agar kisi tidak bergeser.
+ */
+export function TileThumb({ name, src }: { name: string; src?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  const box = "flex size-14 flex-none items-center justify-center overflow-hidden rounded-lg bg-muted";
+  if (src && !failed) {
+    return (
+      <span aria-hidden className={box}>
+        <img src={src} alt="" loading="lazy" decoding="async" className="size-full object-cover" onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  return (
+    <span aria-hidden className={cn(box, "font-display text-sm font-semibold text-muted-foreground")}>
+      {initials(name)}
+    </span>
+  );
 }
 
 // memo + onAdd stabil (bukan closure per tile): ubah keranjang hanya me-render tile yang berubah,
@@ -49,12 +71,7 @@ const Tile = memo(function Tile({
       )}
     >
       <span className="flex items-start justify-between gap-2">
-        <span
-          aria-hidden
-          className="flex size-10 flex-none items-center justify-center rounded-lg bg-muted font-display text-sm font-semibold text-muted-foreground"
-        >
-          {initials(product.name)}
-        </span>
+        <TileThumb key={product.primaryImageUrl ?? ""} name={product.name} src={product.primaryImageUrl} />
         {inCart > 0 && (
           <span className="tabular rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
             ×{inCart}

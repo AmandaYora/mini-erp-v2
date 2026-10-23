@@ -116,6 +116,8 @@ export interface PosProductListItem {
   categoryName: string | null;
   sellingPrice: number;
   status: string;
+  /** Foto utama (URL /media bertanda tangan, kedaluwarsa setelah TTL); null = tanpa foto. */
+  primaryImageUrl?: string | null;
 }
 
 /** Satu baris hasil POST /api/v1/pricing/quote. */
