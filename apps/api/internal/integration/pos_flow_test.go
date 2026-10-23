@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -248,7 +249,7 @@ func TestHoldUpsertAndSweeper(t *testing.T) {
 	if err := hold(500, "pos:u:1"); err == nil {
 		t.Fatal("raising a hold beyond availability was accepted")
 	}
-	// Released keys cannot be revived; branch-scoped release ignores a stranger.
+	// Branch-scoped release ignores a stranger.
 	if err := stock.Release(ctx(), 0, fx.branchID+999, "pos:u:1"); err != nil {
 		t.Fatalf("foreign release: %v", err)
 	}
@@ -258,8 +259,37 @@ func TestHoldUpsertAndSweeper(t *testing.T) {
 	if err := stock.Release(ctx(), 0, fx.branchID, "pos:u:1"); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	if err := hold(1, "pos:u:1"); err == nil {
-		t.Fatal("a released key was revived")
+	// A released key is revived by the same cart line (POS: line removed, then
+	// added back): reserved counts it once, the hold is active again.
+	if _, r := balanceAt(t, fx, fx.locationID); r != 0 {
+		t.Fatalf("reserved after release = %v, want 0", r)
+	}
+	if err := hold(3, "pos:u:1"); err != nil {
+		t.Fatalf("revive released hold: %v", err)
+	}
+	if _, r := balanceAt(t, fx, fx.locationID); r != 3 {
+		t.Fatalf("reserved after reviving a released hold = %v, want 3", r)
+	}
+	var status string
+	if err := testMods.db.QueryRow(`SELECT status FROM stock_reservations WHERE reservation_key = 'pos:u:1'`).Scan(&status); err != nil || status != "active" {
+		t.Fatalf("revived hold status = %q, %v; want active", status, err)
+	}
+	if err := stock.Release(ctx(), 0, fx.branchID, "pos:u:1"); err != nil {
+		t.Fatalf("release again: %v", err)
+	}
+	// Reviving still checks availability: 50 on hand, nothing reserved.
+	if err := hold(51, "pos:u:1"); err == nil || !strings.Contains(err.Error(), "Stok tersedia tidak mencukupi") {
+		t.Fatalf("reviving beyond availability = %v, want insufficient stock", err)
+	}
+	if _, r := balanceAt(t, fx, fx.locationID); r != 0 {
+		t.Fatalf("reserved after refused revive = %v, want 0", r)
+	}
+	// A consumed hold (its stock already left) stays final.
+	if _, err := testMods.db.Exec(`UPDATE stock_reservations SET status = 'consumed', qty_remaining = 0 WHERE reservation_key = 'pos:u:1'`); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if err := hold(1, "pos:u:1"); err == nil || !strings.Contains(err.Error(), "Reservasi sudah consumed") {
+		t.Fatalf("hold on a consumed key = %v, want conflict", err)
 	}
 	// Sweeper.
 	if err := hold(7, "pos:u:2"); err != nil {

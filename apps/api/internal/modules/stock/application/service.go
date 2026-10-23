@@ -316,8 +316,10 @@ func assertLocationActiveTx(ctx context.Context, tx *sql.Tx, repo *infrastructur
 // Hold reserves qty under key (upsert). The same key on the same position
 // changes the held quantity in place (the delta is checked against what is
 // available) and extends the TTL, so a POS cart can follow its basket; a key
-// owned by another position/branch, or already consumed/released, conflicts.
-// An expired hold of the same position is revived.
+// owned by another position/branch, or already consumed, conflicts. An
+// expired or released hold of the same position is revived: the POS keys a
+// hold per cart line, and a line removed (released) then added back reuses
+// the same key.
 func (s *Service) Hold(ctx context.Context, actorID, branchID, productID, variantID, locationID int64, qty float64, key string, ttlMinutes int) (int64, error) {
 	key = strings.TrimSpace(key)
 	if qty <= 0 {
@@ -424,7 +426,8 @@ func (s *Service) holdOnce(ctx context.Context, actorID, branchID, productID, va
 				}
 			}
 			id, changed = cur.ID, delta != 0
-		case "expired":
+		case "expired", "released":
+			// Nothing of a finished hold is reserved any more: hold qty afresh.
 			if bal.Available() < qty {
 				return apperror.Conflict("Stok tersedia tidak mencukupi")
 			}
