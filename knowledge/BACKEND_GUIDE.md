@@ -24,7 +24,8 @@ apps/api/internal/modules/<nama>/
 
 Daftar modul, lapisan, dan dependensinya: [MODULE_MAP.md](MODULE_MAP.md). Program pendukung di
 `apps/api/cmd/`: `server`, `seed` (`init`, `admin`), `etl` (migrasi data legacy), `costrebuild`
-(restatement biaya persediaan, lihat RUNBOOK §6b).
+(restatement biaya persediaan, lihat RUNBOOK §6b), `variantfix` (data varian hasil ETL, §6d), `stockfix` (koreksi stok
+penyeimbang lewat stock service, §6e).
 
 ## Go Toolchain
 

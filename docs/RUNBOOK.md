@@ -374,3 +374,44 @@ Langkah di production (saat deploy rilis yang memuat perbaikan POS/order):
 4. Terapkan: `mysql minierp_db < varian-fix.sql` (satu transaksi). Jalankan sekali lagi: `rencana` harus 0 semua.
 5. Cek: `SELECT COUNT(*) FROM product_variants WHERE status='active' AND is_hidden=0` ≈ 1.704 + varian baru sejak go-live;
    buka POS, ketuk produk cat (mis. PARAGON EMULSION TD 1KG) → lembar "Pilih varian" berisi warna tanpa "Standar".
+
+## 6e. Menetralkan koreksi stok yang salah (`stockfix`, temuan 6 — 2026-10-23)
+
+Kapan dipakai: koreksi stok yang **terbukti** salah — mis. dibuat kasir/gudang karena bug tahanan POS ("Reservasi sudah
+released", 409; diperbaiki `3677290`), bukan karena selisih fisik — dan pemilik menyetujui perbaikannya. Baris DB tidak pernah
+diubah/dihapus: `stockfix` membuat **koreksi penyeimbang** lewat stock service (jalur yang sama dengan menu Stok → Koreksi:
+aturan persetujuan, audit `stock_adjustments.create`, ledger biaya, jurnal tutup harian). Koreksi asal dan penyeimbang sama-sama
+tampil di kartu stok; bila keduanya diposting pada tutup harian yang sama, jurnal "Koreksi stok (lebih)" dan "(kurang)" saling
+meniadakan.
+
+Masukan: berkas `.json` (array atau `{"lines": [...]}`) atau `.csv` (judul = nama kolom) berisi baris
+`{productCode|productId, variantId, locationId, direction (in|out), qty, reason, refMovementId}`. Produk/varian/lokasi boleh
+dikosongkan (diambil dari `refMovementId`) tetapi bila diisi harus cocok. Dry-run (bawaan) menolak seluruh berkas bila ada
+satu baris yang: movement rujukannya bukan koreksi (`adjustment`) di cabang itu, arahnya tidak berlawanan, qty-nya melebihi
+movement rujukan, saldo sesudahnya negatif, stok tersedianya (di luar tahanan) kurang, atau `refMovementId` ganda. Alasan
+diberi penanda `[stockfix:<refMovementId>]`; baris yang penandanya sudah ada di kartu stok dilaporkan "sudah dinetralkan" dan
+tidak ditulis ulang (idempoten). `--actor` = username nyata yang aktif, punya izin `stock.adjust` dan akses cabang;
+`--approver` = pemegang `stock.approve` (wajib bila "selalu butuh persetujuan" aktif — bawaan; mode `strict` menolak penyetuju
+= actor). Kata sandi penyetuju hanya lewat env `STOCKFIX_APPROVER_PASSWORD` atau stdin, tidak lewat argumen.
+
+Langkah di server (biner `stockfix` ada di image bersama `api`/`seed`/`costrebuild`):
+
+```bash
+# 0. Salin berkas baris ke kontainer (contoh temuan 6: ~/mini-erp-ops/stockfix/stockfix-temuan6.json, rujukan 38533 & 38544).
+docker cp stockfix-temuan6.json minierp-app:/tmp/stockfix.json
+# 1. DRY-RUN: saldo sebelum -> sesudah per baris, tidak menulis apa pun. Semua baris harus RENCANA.
+docker exec minierp-app ./stockfix --file /tmp/stockfix.json --branch-id 1 --actor <username> --approver <penyetuju>
+# 2. Backup DB (bagian 2), lalu COMMIT. Kata sandi penyetuju diketik saat diminta (atau -e STOCKFIX_APPROVER_PASSWORD):
+./scripts/ops/backup.sh --db-only
+docker exec -it minierp-app ./stockfix --file /tmp/stockfix.json --branch-id 1 --actor <username> --approver <penyetuju> --commit
+# 3. Jalankan dry-run sekali lagi: semua baris "SUDAH DINETRALKAN". Arsipkan keluarannya (tambahkan --json bila perlu).
+# Lokal: cd apps/api && go run ./cmd/stockfix --file F --branch-id 1 --actor U [--approver A] [--commit] [--json]
+```
+
+Cek sesudahnya: kartu stok produk memuat koreksi asal dan penyeimbang; Saldo = saldo yang direncanakan; audit memuat dua entri
+`stock_adjustments.create` bertanda `[stockfix:…]`. Lakukan **sebelum tutup harian** hari koreksi asal bila bisa.
+
+Uji di salinan rehearsal (2026-10-23, skenario temuan 6 diulang lewat API: KBL 8 → +42 → +50, PKU-BTN-MRB-BH-007 6 → +50):
+dry-run 100 → 50 dan 56 → 6; commit menulis 2 mutasi + 2 audit dengan penanda dan penyetuju; jalan kedua "sudah
+dinetralkan"; tutup harian menjurnal +50/−50 KBL (Rp17.539.063) dan PKU-BH (Rp14.650) yang saling meniadakan, koreksi +42 tetap;
+rekonsiliasi buku-vs-ledger kembali ke keadaan awal (tak terjelaskan −299 sebelum dan sesudah). Bukti: `~/mini-erp-ops/stockfix/`.
