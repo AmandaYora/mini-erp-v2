@@ -75,7 +75,9 @@ func (f *fakeHealthSrc) NegativeSummary(context.Context, int64, int) (health.Res
 func (f *fakeHealthSrc) MinPriceAboveSelling(context.Context, int) (health.Result, error) {
 	return f.minPrice, nil
 }
-func (f *fakeHealthSrc) DuplicateNames(context.Context, int) (health.Result, error) { return f.dupProd, nil }
+func (f *fakeHealthSrc) DuplicateNames(context.Context, int) (health.Result, error) {
+	return f.dupProd, nil
+}
 func (f *fakeHealthSrc) UnsignedSummary(context.Context, int64, int) (health.Result, error) {
 	return f.unsigned, nil
 }
