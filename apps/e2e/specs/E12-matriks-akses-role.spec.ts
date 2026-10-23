@@ -25,6 +25,8 @@ const ROLES: { role: Exclude<Role, "adminCb2">; letter: string }[] = [
 
 const ACCESS: Record<string, string> = {
   "dashboard.view": "akgu",
+  // Alert kesehatan data (ADR-0025): admin seed = owner; peran khusus gudang/akuntan dan kasir tidak.
+  "dashboard.alerts.view_all": "a",
   "sales.create": "ak",
   "sales.view": "akgu",
   "delivery.view": "akg",
@@ -63,6 +65,7 @@ const ACCESS: Record<string, string> = {
 // Endpoint kunci (GET aman) -> izin yang dituntut guard-nya.
 const ENDPOINTS: { path: string; perm: string }[] = [
   { path: "/dashboard/summary", perm: "dashboard.view" },
+  { path: "/dashboard/alerts?limit=1", perm: "dashboard.alerts.view_all" },
   { path: "/sales-orders?limit=1", perm: "sales.view" },
   { path: "/purchase-orders?limit=1", perm: "purchasing.view" },
   { path: "/deliveries?limit=1", perm: "delivery.view" },

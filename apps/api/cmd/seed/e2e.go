@@ -209,6 +209,31 @@ func runE2E(cfg *config.Config) {
 		}))
 	}
 
+	// Data-health fixtures (ADR-0025, E19): one product whose minimum price is
+	// above its selling price (the product form refuses it, legacy data carries
+	// it — so it is written directly) and two active products sharing a name.
+	// No stock: they never enter the stock or POS flows of other specs.
+	for _, h := range []struct {
+		code, name string
+		sell, buy  int64
+		minSelling int64
+	}{
+		{"P021", "Semen Uji Harga", 50000, 40000, 60000},
+		{"P022", "Paku Kayu 5cm", 20000, 15000, 0},
+		{"P023", "paku kayu 5cm ", 21000, 15000, 0},
+	} {
+		prod, err := products.CreateProduct(ctx, 0, productapp.ProductInput{
+			Code: h.code, Name: h.name, CategoryID: &cat.ID, Type: "barang", Tracked: true,
+			BaseUOM: "pcs", PurchaseUOM: "pcs", SalesUOM: "pcs", PurchaseFactor: 1, SalesFactor: 1,
+			PurchasePrice: h.buy, SellingPrice: h.sell,
+		})
+		check(err)
+		if h.minSelling > 0 {
+			_, err = db.ExecContext(ctx, `UPDATE products SET min_selling_price = ? WHERE id = ?`, h.minSelling, prod.ID)
+			check(err)
+		}
+	}
+
 	// Parties: walk-in "Tunai" + five customers, three suppliers.
 	for i, n := range []string{"Tunai", "Budi Santoso", "Siti Aminah", "Toko Maju Jaya", "CV Sentosa", "PT Abadi Makmur"} {
 		code := fmt.Sprintf("C%03d", i+1)
