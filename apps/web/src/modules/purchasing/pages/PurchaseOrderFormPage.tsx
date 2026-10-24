@@ -716,8 +716,10 @@ export default function PurchaseOrderFormPage() {
         const variants = saved ? [...sellable, saved] : sellable;
         const showVariant =
           row.productId !== null && (loadingDetail || variants.length !== 1 || Boolean(err(`lines.${idx}.variantId`)));
+        // Mode tabel: kolom tidak melebar mengikuti nama barang (label terpotong elipsis) agar
+        // Satuan/Qty tetap terlihat di layar sempit; mode kartu tetap lebar penuh.
         return (
-          <div className="min-w-0">
+          <div className="min-w-0 [td_&]:max-w-72">
             <AsyncSearchSelect
               aria-label={`Produk baris ${idx + 1}`}
               loadOptions={loadActiveProductPage}
