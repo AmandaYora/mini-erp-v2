@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import {
+  AsyncSearchSelect,
   Button,
   Checkbox,
   Collapsible,
@@ -12,13 +13,12 @@ import {
   ErrorState,
   FormField,
   PageHeader,
-  SearchSelect,
   SectionCard,
   SelectInput,
   TextArea,
   TextInput,
 } from "@/shared/components/ui";
-import type { SearchSelectOption } from "@/shared/components/ui";
+import type { AsyncSearchOption } from "@/shared/components/ui";
 import { LineItemsEditor, Money, Page, StickyFooter, type LineColumn } from "@/shared/components/patterns";
 import { PartySearchSelect } from "@/modules/party/components/PartySearchSelect";
 import { UserSearchSelect } from "@/modules/users/components/UserSearchSelect";
@@ -39,6 +39,7 @@ import {
 } from "@/modules/purchasing/services/purchase-order.service";
 import { calcLineEstimate } from "@/modules/purchasing/lib/estimate";
 import { sellableVariants, soleSellableVariant } from "@/modules/products/lib/variants";
+import { loadActiveProductPage } from "@/modules/products/lib/product-picker";
 import type {
   PurchaseOrder,
   PurchasePaymentTerms,
@@ -302,18 +303,15 @@ export default function PurchaseOrderFormPage() {
 
   // --- lookups ---
 
-  // Supplier dicari server-side (PartySearchSelect); hanya opsi produk yang
-  // dimuat di muka.
-  const { data: lookupData } = useAsyncData(
-    () =>
-      purchasingLookupService.productOptions().then(
-        (opts): SearchSelectOption[] =>
-          opts.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
-        (): SearchSelectOption[] => [],
-      ),
-    [],
-  );
-  const productOptions = lookupData ?? [];
+  // Supplier dan produk dicari server-side; produk berhalaman (dimuat lagi saat
+  // daftar digulir). Label baris tersimpan (mode ubah / draf) dari detail produk,
+  // karena barangnya belum tentu ada di halaman pertama. Objek stabil per detail:
+  // AsyncSearchSelect menyinkronkan selectedOption berdasarkan identitas.
+  const productLabels = useMemo(() => {
+    const out: Record<number, AsyncSearchOption> = {};
+    for (const d of Object.values(details)) out[d.id] = { value: d.id, label: `${d.code} — ${d.name}` };
+    return out;
+  }, [details]);
 
   const ensureDetail = useCallback((productId: number) => {
     const cached = detailsRef.current[productId];
@@ -720,12 +718,15 @@ export default function PurchaseOrderFormPage() {
           row.productId !== null && (loadingDetail || variants.length !== 1 || Boolean(err(`lines.${idx}.variantId`)));
         return (
           <div className="min-w-0">
-            <SearchSelect
+            <AsyncSearchSelect
               aria-label={`Produk baris ${idx + 1}`}
-              options={productOptions}
+              loadOptions={loadActiveProductPage}
+              paged
+              selectedOption={row.productId !== null ? productLabels[row.productId] ?? null : null}
               value={row.productId}
               onChange={(v) => void handleProductChange(row.key, typeof v === "number" ? v : null)}
               placeholder="Cari produk…"
+              searchPlaceholder="Kode / nama produk…"
               allowClear
               disabled={readOnly}
             />

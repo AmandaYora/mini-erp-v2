@@ -1,6 +1,6 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AsyncSearchSelect,
   type AsyncSearchOption,
@@ -135,5 +135,163 @@ describe("AsyncSearchSelect", () => {
     );
     expect(loadOptions).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Ketik minimal 2 huruf untuk mencari")).not.toBeInTheDocument();
+  });
+});
+
+// Observer palsu: tes memicu "sentinel terlihat" sendiri (jsdom tidak punya layout).
+class FakeObserver {
+  static live: FakeObserver[] = [];
+  constructor(private readonly cb: IntersectionObserverCallback) {
+    FakeObserver.live.push(this);
+  }
+  observe() {}
+  unobserve() {}
+  takeRecords() {
+    return [];
+  }
+  disconnect() {
+    FakeObserver.live = FakeObserver.live.filter((o) => o !== this);
+  }
+  fire() {
+    this.cb([{ isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+}
+
+/** Sentinel terlihat (gulir mendekati bawah daftar). */
+function scrollToEnd(times = 1) {
+  const observer = FakeObserver.live.at(-1);
+  expect(observer).toBeDefined();
+  act(() => {
+    for (let i = 0; i < times; i++) observer?.fire();
+  });
+}
+
+const opt = (n: number): AsyncSearchOption => ({ value: n, label: `Barang ${n}` });
+const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => opt(from + i));
+
+describe("AsyncSearchSelect paged (auto-load saat gulir)", () => {
+  beforeEach(() => {
+    FakeObserver.live = [];
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("memuat halaman berikutnya saat digulir, membuang duplikat, berhenti saat habis", async () => {
+    const user = userEvent.setup();
+    const pages: Record<number, { options: AsyncSearchOption[]; hasMore: boolean }> = {
+      1: { options: range(1, 3), hasMore: true },
+      2: { options: [opt(3), ...range(4, 5)], hasMore: true },
+      3: { options: [opt(6)], hasMore: false },
+    };
+    const loadOptions = vi.fn(async (_q: string, _s?: AbortSignal, page = 1) => pages[page]);
+    render(<AsyncSearchSelect loadOptions={loadOptions} paged debounceMs={0} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    expect(await screen.findByText("Barang 3")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenLastCalledWith("", expect.any(AbortSignal), 1);
+    // Mode paged tidak menampilkan "ketik lebih spesifik".
+    expect(screen.queryByText("Ketik lebih spesifik untuk melihat hasil lainnya")).not.toBeInTheDocument();
+
+    scrollToEnd();
+    expect(await screen.findByText("Barang 5")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenLastCalledWith("", expect.any(AbortSignal), 2);
+    expect(screen.getAllByText("Barang 3")).toHaveLength(1);
+
+    scrollToEnd();
+    expect(await screen.findByText("Barang 6")).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(6);
+    // Habis: sentinel dilepas, tidak ada request lagi.
+    await waitFor(() => expect(FakeObserver.live).toHaveLength(0));
+    expect(loadOptions).toHaveBeenCalledTimes(3);
+  });
+
+  it("indikator memuat dan pemicu ganda hanya mengirim satu request", async () => {
+    const user = userEvent.setup();
+    let release: (() => void) | undefined;
+    const loadOptions = vi.fn((_q: string, _s?: AbortSignal, page = 1) =>
+      page === 1
+        ? Promise.resolve({ options: range(1, 2), hasMore: true })
+        : new Promise<{ options: AsyncSearchOption[]; hasMore: boolean }>((resolve) => {
+            release = () => resolve({ options: range(3, 4), hasMore: false });
+          }),
+    );
+    render(<AsyncSearchSelect loadOptions={loadOptions} paged debounceMs={0} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await screen.findByText("Barang 2");
+    scrollToEnd(2);
+    expect(await screen.findByText("Memuat lainnya…")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenCalledTimes(2);
+    await act(async () => release?.());
+    expect(await screen.findByText("Barang 4")).toBeInTheDocument();
+    expect(screen.queryByText("Memuat lainnya…")).not.toBeInTheDocument();
+  });
+
+  it("kata kunci baru mengulang dari halaman 1 dan halaman berikutnya memakai kata kunci itu", async () => {
+    const user = userEvent.setup();
+    const loadOptions = vi.fn(async (q: string, _s?: AbortSignal, page = 1) =>
+      q === ""
+        ? { options: range(page * 10, page * 10 + 1), hasMore: true }
+        : { options: [opt(100 + page)], hasMore: page < 2 },
+    );
+    render(<AsyncSearchSelect loadOptions={loadOptions} paged debounceMs={0} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await screen.findByText("Barang 10");
+    scrollToEnd();
+    await screen.findByText("Barang 20");
+
+    await user.type(screen.getByPlaceholderText("Cari…"), "x");
+    expect(await screen.findByText("Barang 101")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenLastCalledWith("x", expect.any(AbortSignal), 1);
+    expect(screen.queryByText("Barang 20")).not.toBeInTheDocument();
+
+    scrollToEnd();
+    expect(await screen.findByText("Barang 102")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenLastCalledWith("x", expect.any(AbortSignal), 2);
+  });
+
+  it("galat halaman berikutnya: opsi tetap tampil, Coba lagi memuat ulang halaman itu", async () => {
+    const user = userEvent.setup();
+    let failNext = true;
+    const loadOptions = vi.fn(async (_q: string, _s?: AbortSignal, page = 1) => {
+      if (page === 2 && failNext) {
+        failNext = false;
+        throw new Error("down");
+      }
+      return page === 1 ? { options: range(1, 2), hasMore: true } : { options: range(3, 4), hasMore: false };
+    });
+    render(<AsyncSearchSelect loadOptions={loadOptions} paged debounceMs={0} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await screen.findByText("Barang 2");
+    scrollToEnd();
+    expect(await screen.findByText("Gagal memuat pilihan berikutnya")).toBeInTheDocument();
+    expect(screen.getByText("Barang 1")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Coba lagi" }));
+    expect(await screen.findByText("Barang 4")).toBeInTheDocument();
+    expect(loadOptions).toHaveBeenLastCalledWith("", expect.any(AbortSignal), 2);
+  });
+
+  it("halaman tanpa nilai baru dianggap akhir daftar", async () => {
+    const user = userEvent.setup();
+    const loadOptions = vi.fn(async () => ({ options: range(1, 2), hasMore: true }));
+    render(<AsyncSearchSelect loadOptions={loadOptions} paged debounceMs={0} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    await screen.findByText("Barang 2");
+    scrollToEnd();
+    await waitFor(() => expect(FakeObserver.live).toHaveLength(0));
+    expect(loadOptions).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+  });
+
+  it("label pilihan tersimpan tampil dari selectedOption walau tidak ada di halaman pertama", () => {
+    render(
+      <AsyncSearchSelect
+        loadOptions={vi.fn(async () => ({ options: range(1, 2), hasMore: true }))}
+        paged
+        value={99}
+        selectedOption={{ value: 99, label: "Barang 99" }}
+      />,
+    );
+    expect(screen.getByText("Barang 99")).toBeInTheDocument();
   });
 });

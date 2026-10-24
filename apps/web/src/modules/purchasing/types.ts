@@ -255,17 +255,6 @@ export interface PurchaseOrderPayload {
 
 // --- lookup untuk line editor ---
 
-// GET /api/v1/products/search-options?q= mengembalikan array langsung
-// (response.OK, BUKAN paginasi): [{id, code, name, sellingPrice}].
-// TIDAK ada variants / UOM / purchasePrice di sini — dilengkapi via
-// GET /api/v1/products/:id (productView).
-export interface ProductSearchOption {
-  id: number;
-  code: string;
-  name: string;
-  sellingPrice: number;
-}
-
 // Subset productView yang dibutuhkan line editor.
 export interface PurchasingProductDetail {
   id: number;
