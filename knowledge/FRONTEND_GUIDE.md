@@ -121,6 +121,11 @@ Sumber lengkap: [`docs/plan/redesain-ui/PLAN.md`](../docs/plan/redesain-ui/PLAN.
   opsinya ber-`role="option"`. Event keyboard dari popover (portal) tidak boleh merambat ke baris `LineItemsEditor`.
   Pemilih di dalam baris wajib punya `aria-label` per baris (mis. `Lokasi ${produk}`, `Produk baris ${n}`).
   `ConfirmDialog` memfokuskan "Batal" saat terbuka (Radix `AlertDialog.Cancel`) — jangan ganti dengan tombol biasa.
+- **Pemilih berhalaman**: daftar yang bisa melebihi satu halaman memakai `AsyncSearchSelect paged` (pola katalog POS:
+  `loadOptions(search, signal, page)` → `{options, hasMore}`, halaman berikutnya dimuat saat daftar digulir, tanpa
+  duplikat, kembali ke halaman 1 saat kata kunci berubah). Pemilih barang Order Jual/Beli memakai
+  `modules/products/lib/product-picker` (GET `/products` berhalaman); `search-options` tidak berhalaman (maks. 30).
+  Label pilihan tersimpan yang belum tentu ada di halaman 1 diberikan lewat `selectedOption` (objek stabil).
 - **Penempatan alur**: dialog ≤ 6 isian; `FormSheet` untuk CRUD master & aksi dokumen; halaman penuh untuk dokumen
   ber-baris barang (retur, surat jalan, penerimaan, transfer, jurnal manual: `…/new?from=<id>`).
 - **State**: skeleton (bukan teks "Memuat…"), `ErrorState` dengan `message` API asli + "Coba lagi", Empty dengan aksi.

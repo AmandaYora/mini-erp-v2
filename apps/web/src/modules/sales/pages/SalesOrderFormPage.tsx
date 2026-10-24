@@ -23,7 +23,7 @@ import {
   TextArea,
   TextInput,
 } from "@/shared/components/ui";
-import type { AsyncSearchOption, SearchSelectOption } from "@/shared/components/ui";
+import type { SearchSelectOption } from "@/shared/components/ui";
 import { LineItemsEditor, Money, Page, Qty, StickyFooter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatIDR, formatNumber, statusLabel, todayWIB } from "@/shared/lib/format";
@@ -35,10 +35,7 @@ import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { salesOrderSchema } from "@/modules/sales/schemas/sales-order.schema";
-import {
-  productOptionService,
-  salesService,
-} from "@/modules/sales/services/sales.service";
+import { salesService } from "@/modules/sales/services/sales.service";
 import type { PaymentTerms, SalesOrderPayload } from "@/modules/sales/types";
 import { pricingSourceLabel } from "@/modules/sales/types";
 import { belowMinPrice, estimateLine, priceForUnit } from "@/modules/sales/lib/estimate";
@@ -62,6 +59,7 @@ import type { Party } from "@/modules/party/types";
 import type { Address } from "@/modules/party/types";
 import { productsService } from "@/modules/products/services/products.service";
 import { sellableVariants } from "@/modules/products/lib/variants";
+import { loadActiveProductPage } from "@/modules/products/lib/product-picker";
 import { ScanDialog } from "@/modules/pos/components/ScanDialog";
 import type { ScanOutcome } from "@/modules/pos/lib/scan-session";
 import type { Product } from "@/modules/products/types";
@@ -347,13 +345,6 @@ function SalesOrderStandardForm() {
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const openDirectCount = !isEdit && partyId !== null && openDirect ? openDirect.count : 0;
-
-  // --- opsi produk: pencarian server-side /products/search-options?q= ---
-  const loadProductOptions = (search: string): Promise<AsyncSearchOption[]> =>
-    productOptionService.search(search).then(
-      (list) => list.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
-      (): AsyncSearchOption[] => [],
-    );
 
   // --- prefill edit ---
   const { data: editBundle, loading: editLoading, error: editFetchError } = useAsyncData(
@@ -1173,7 +1164,8 @@ function SalesOrderStandardForm() {
                     <AsyncSearchSelect
                       id="f-product"
                       value={null}
-                      loadOptions={loadProductOptions}
+                      loadOptions={loadActiveProductPage}
+                      paged
                       onChange={(v) => {
                         if (typeof v === "number") void addLine(v);
                       }}

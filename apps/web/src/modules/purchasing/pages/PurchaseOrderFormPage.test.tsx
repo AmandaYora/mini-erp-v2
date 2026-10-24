@@ -4,21 +4,44 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 
 // Pemilih produk diganti tombol per produk; yang diuji hanya pilihan varian baris (temuan 2 + variantfix).
+type Opt = { value: number; label: string };
 vi.mock("@/shared/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/shared/components/ui")>();
+  const { useEffect, useState } = await import("react");
   return {
     ...actual,
-    SearchSelect: ({ options, onChange }: { options: { value: number; label: string }[]; onChange: (v: number) => void }) => (
-      <div>
-        {options.map((o) => (
-          <button key={o.value} type="button" onClick={() => onChange(o.value)}>
-            pilih {o.label}
-          </button>
-        ))}
-      </div>
-    ),
+    AsyncSearchSelect: ({
+      loadOptions,
+      onChange,
+    }: {
+      loadOptions: (q: string, signal?: AbortSignal, page?: number) => Promise<{ options: Opt[] }>;
+      onChange: (v: number) => void;
+    }) => {
+      const [options, setOptions] = useState<Opt[]>([]);
+      useEffect(() => {
+        void loadOptions("", undefined, 1).then((r) => setOptions(r.options));
+      }, [loadOptions]);
+      return (
+        <div>
+          {options.map((o) => (
+            <button key={o.value} type="button" onClick={() => onChange(o.value)}>
+              pilih {o.label}
+            </button>
+          ))}
+        </div>
+      );
+    },
   };
 });
+vi.mock("@/modules/products/lib/product-picker", () => ({
+  loadActiveProductPage: vi.fn().mockResolvedValue({
+    options: [
+      { value: 30, label: "CAT — Cat Tembok" },
+      { value: 40, label: "KBL — Kabel Mika" },
+    ],
+    hasMore: false,
+  }),
+}));
 vi.mock("@/modules/party/components/PartySearchSelect", () => ({ PartySearchSelect: () => <div /> }));
 vi.mock("@/modules/users/components/UserSearchSelect", () => ({ UserSearchSelect: () => <div /> }));
 
@@ -41,10 +64,6 @@ const details: Record<number, unknown> = {
 vi.mock("@/modules/purchasing/services/purchase-order.service", () => ({
   purchaseOrderService: { get: vi.fn(), create: vi.fn(), update: vi.fn() },
   purchasingLookupService: {
-    productOptions: vi.fn().mockResolvedValue([
-      { id: 30, code: "CAT", name: "Cat Tembok" },
-      { id: 40, code: "KBL", name: "Kabel Mika" },
-    ]),
     productDetail: (id: number) => Promise.resolve(details[id]),
   },
 }));

@@ -4,9 +4,8 @@
 //   orderView[] (handler.go: List).
 // - GET /api/v1/suppliers?search&status&page&limit → paginasi partyView[]
 //   (party/presentation/handler.go: list) — dipakai untuk opsi supplier.
-// - GET /api/v1/products/search-options?q= → array langsung
-//   [{id, code, name, sellingPrice}] (product/presentation/handler.go:
-//   SearchOptions, response.OK — BUKAN paginasi).
+// - Opsi produk baris: modules/products/lib/product-picker (GET /products
+//   berhalaman, dimuat lagi saat daftar digulir).
 // - GET /api/v1/products/:id → productView lengkap (variants, baseUom,
 //   purchaseUom, salesUom, purchasePrice) untuk dropdown varian & satuan.
 
@@ -15,7 +14,6 @@ import { compactParams, positiveId, sortParams } from "@/shared/lib/list-query";
 import type { SortDir } from "@/shared/lib/list-query";
 import type {
   PriceCorrectionPayload,
-  ProductSearchOption,
   PurchaseCorrectionPreview,
   PurchaseHeaderPayload,
   PurchaseOrder,
@@ -126,13 +124,6 @@ export const purchaseOrderService = {
 };
 
 export const purchasingLookupService = {
-  /** Opsi produk — array langsung, BUKAN paginasi. */
-  productOptions: (q?: string) =>
-    apiGet<ProductSearchOption[]>(
-      "/api/v1/products/search-options",
-      q?.trim() ? { q: q.trim() } : undefined,
-    ),
-
   /** Detail produk untuk varian, satuan, dan harga beli acuan. */
   productDetail: (id: number) =>
     apiGet<PurchasingProductDetail>(`/api/v1/products/${id}`),
