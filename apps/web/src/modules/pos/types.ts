@@ -213,6 +213,8 @@ export interface PosOrderPayload {
   notes?: string;
   /** Alamat kirim opt-in dari buku alamat pelanggan (SL-07); hanya untuk pelanggan terdaftar. */
   shipToAddressId?: number;
+  /** Rekening tujuan (ADR-0026): rekening transfer kasir; dihilangkan = default perusahaan. */
+  receiptAccountId?: number;
   items: PosOrderLinePayload[];
 }
 
@@ -240,6 +242,8 @@ export interface PosPaymentPayload {
   /** Idempoten: sama dengan clientRef keranjang. */
   clientRef?: string;
   amountTendered?: number;
+  /** Rekening transfer (ADR-0026). */
+  cashAccountId?: number;
 }
 
 export interface PosCreatedPayment {
@@ -283,6 +287,8 @@ export interface PosSettlement {
   method: PayMethod;
   /** Uang diterima — hanya tunai; server menghitung kembalian. */
   amountTendered?: number;
+  /** Rekening transfer (ADR-0026). */
+  cashAccountId?: number;
 }
 
 export type PosNextStep =

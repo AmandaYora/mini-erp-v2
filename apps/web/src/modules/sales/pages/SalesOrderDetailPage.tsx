@@ -41,6 +41,9 @@ import { editAction, headerEditPayload } from "@/modules/sales/lib/order-correct
 import type { HeaderEditValues } from "@/modules/sales/schemas/order-correction.schema";
 import { CancelOrderModal } from "@/modules/sales/components/CancelOrderModal";
 import { HeaderEditModal } from "@/modules/sales/components/HeaderEditModal";
+import { ReceiptAccountModal } from "@/modules/sales/components/ReceiptAccountModal";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { bankAccountByAccountId, bankAccountLabel } from "@/modules/finance/lib/bank-accounts";
 import { ShortCloseModal } from "@/modules/sales/components/ShortCloseModal";
 import { channelLabel, originLabel, paymentTermsLabel, pricingSourceLabel } from "@/modules/sales/types";
 import type { SalesOrder, SalesOrderItem } from "@/modules/sales/types";
@@ -78,6 +81,9 @@ export default function SalesOrderDetailPage() {
   const canDeliver = can("delivery.create");
   const canPay = can("payment.create");
   const canReturn = can("salesreturn.create");
+  const bank = useBankAccounts();
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -164,6 +170,23 @@ export default function SalesOrderDetailPage() {
       const msg = toApiError(err).message;
       setHeaderError(msg);
       toast.danger("Gagal menyimpan info order", msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReceiptAccount(o: SalesOrder, accountId: number) {
+    setBusy(true);
+    setReceiptError(null);
+    try {
+      const res = await salesService.setReceiptAccount(o.id, accountId);
+      toast.fromServer(res.message, "Rekening tujuan disimpan", res.data.number);
+      setReceiptOpen(false);
+      refresh();
+    } catch (err) {
+      const msg = toApiError(err).message;
+      setReceiptError(msg);
+      toast.danger("Gagal menyimpan rekening tujuan", msg);
     } finally {
       setBusy(false);
     }
@@ -570,6 +593,36 @@ export default function SalesOrderDetailPage() {
                     : []),
                   { label: "Dibuat oleh", value: order.createdByName },
                   { label: "Penanggung jawab", value: order.assignedUserName },
+                  ...((order.receiptAccountId ?? 0) > 0 || bank.active.length > 0
+                    ? [
+                        {
+                          label: "Rekening tujuan",
+                          value: (
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              <span>
+                                {(() => {
+                                  const b = bankAccountByAccountId(bank.all, order.receiptAccountId);
+                                  return b ? bankAccountLabel(b) : "-";
+                                })()}
+                              </span>
+                              {canEdit && order.status !== "cancelled" && bank.active.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  aria-label="Ubah rekening tujuan"
+                                  onClick={() => {
+                                    setReceiptError(null);
+                                    setReceiptOpen(true);
+                                  }}
+                                >
+                                  Ubah
+                                </Button>
+                              )}
+                            </span>
+                          ),
+                        },
+                      ]
+                    : []),
                   ...(order.creditApprovedAt
                     ? [
                         {
@@ -618,6 +671,19 @@ export default function SalesOrderDetailPage() {
         />
       )}
 
+      {receiptOpen && (
+        <ReceiptAccountModal
+          number={order.number}
+          current={(order.receiptAccountId ?? 0) > 0 ? (order.receiptAccountId ?? null) : null}
+          options={bank.active}
+          all={bank.all}
+          submitting={busy}
+          serverError={receiptError}
+          onClose={() => setReceiptOpen(false)}
+          onSubmit={(id) => void handleReceiptAccount(order, id)}
+        />
+      )}
+
       {shortCloseOpen && (
         <ShortCloseModal
           orderId={order.id}
@@ -662,6 +728,7 @@ export default function SalesOrderDetailPage() {
         orderNumber={order.number}
         partyId={order.partyId > 0 ? order.partyId : 0}
         outstanding={billing.outstanding}
+        billAccountId={(order.receiptAccountId ?? 0) > 0 ? (order.receiptAccountId ?? null) : null}
       />
     </Page>
   );

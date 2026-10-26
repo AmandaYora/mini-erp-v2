@@ -30,8 +30,9 @@ import { MAPPING_KEYS, mappingKeyLabel, missingMappingKeys } from "@/modules/fin
 import type { Account } from "@/modules/finance/types";
 import { AccountFormSheet } from "@/modules/finance/components/AccountFormSheet";
 import { MappingSheet } from "@/modules/finance/components/MappingSheet";
+import { BankAccountsPanel } from "@/modules/finance/components/BankAccountsPanel";
 
-const TABS = ["bagan", "pemetaan"] as const;
+const TABS = ["bagan", "pemetaan", "rekening"] as const;
 
 // Akun + pemetaan (T4). Bagan akun = pohon golongan (tipe) → akun; Ubah/Arsipkan lewat menu baris.
 // Gate finance.manage (halaman di balik menu "Akun"; tombol juga dicek via can()).
@@ -131,7 +132,7 @@ export default function AccountsPage() {
     <Page>
       <PageHeader
         title="Akun"
-        description="Bagan akun dan pemetaan akun otomatis untuk posting."
+        description="Bagan akun, pemetaan akun otomatis untuk posting, dan rekening bank perusahaan."
         actions={
           canManage ? (
             <Button
@@ -153,6 +154,7 @@ export default function AccountsPage() {
           <TabsTrigger value="pemetaan">
             Pemetaan {missing.length > 0 && <Badge tone="warning">{missing.length}</Badge>}
           </TabsTrigger>
+          <TabsTrigger value="rekening">Rekening bank</TabsTrigger>
         </TabsList>
 
         <TabsContent value="bagan" className="flex flex-col gap-6">
@@ -283,6 +285,14 @@ export default function AccountsPage() {
               ]}
             />
           </SectionCard>
+        </TabsContent>
+        <TabsContent value="rekening" className="flex flex-col gap-6">
+          <BankAccountsPanel
+            accounts={accounts}
+            cashAccountId={mappings.cash?.id ?? null}
+            canManage={canManage}
+            onChartChanged={reload}
+          />
         </TabsContent>
       </Tabs>
 

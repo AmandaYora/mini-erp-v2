@@ -11,6 +11,7 @@ import (
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
 	branchcontracts "mini-erp/internal/modules/branch/contracts"
 	deliverycontracts "mini-erp/internal/modules/delivery/contracts"
+	financecontracts "mini-erp/internal/modules/finance/contracts"
 	partycontracts "mini-erp/internal/modules/party/contracts"
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	productcontracts "mini-erp/internal/modules/product/contracts"
@@ -42,6 +43,40 @@ type Service struct {
 	// dep holds what hangs off an order (shipments, payments, returns). They
 	// are built after the orders, so main wires them through SetDependents.
 	dep dependents
+	// banks validates the bill's rekening tujuan (ADR-0026); finance is built
+	// after sales, so it is wired through SetBankAccounts.
+	banks financecontracts.BankAccountClient
+}
+
+// SetBankAccounts wires finance's rekening surface (composition-root privilege).
+func (s *Service) SetBankAccounts(b financecontracts.BankAccountClient) { s.banks = b }
+
+// resolveReceipt settles an order's rekening tujuan (ADR-0026): the requested
+// rekening when active, else the company default (0 when the company has no
+// rekening). keep is the order's current one: re-sending it — or sending
+// nothing (0, an older client) — keeps it, even if that rekening was archived
+// since, so an unrelated edit never fails or silently re-points the bill.
+func (s *Service) resolveReceipt(ctx context.Context, requested, keep int64) (int64, error) {
+	if keep != 0 && (requested == 0 || requested == keep) {
+		return keep, nil
+	}
+	if s.banks == nil {
+		if requested != 0 {
+			return 0, apperror.Internal(errors.New("sales: bank accounts not wired (SetBankAccounts)"))
+		}
+		return 0, nil
+	}
+	if requested != 0 {
+		if err := s.banks.CheckBankAccount(ctx, requested, "receiptAccountId"); err != nil {
+			return 0, err
+		}
+		return requested, nil
+	}
+	policy, err := s.banks.BankPolicy(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return policy.DefaultAccountID, nil
 }
 
 type dependents struct {
@@ -191,7 +226,10 @@ type OrderInput struct {
 	ShipToPhone     string
 	ShipToAddress   string
 	// AssignedUserID is the person in charge of the order (SL-09); 0 = none.
-	AssignedUserID   int64
+	AssignedUserID int64
+	// ReceiptAccountID is the bill's rekening tujuan (finance cash/bank GL
+	// account id, ADR-0026); 0 = the company default.
+	ReceiptAccountID int64
 	TaxInvoiceNumber string
 	TaxInvoiceDate   string
 	// ClientRef makes creation idempotent per client cart (<= 64 chars).
@@ -525,6 +563,10 @@ func (s *Service) createOrder(ctx context.Context, actorID, branchID int64, in O
 	if err != nil {
 		return nil, err
 	}
+	receipt, err := s.resolveReceipt(ctx, in.ReceiptAccountID, 0)
+	if err != nil {
+		return nil, err
+	}
 	id, err := s.repo.CreateOrder(ctx, &contracts.SalesOrder{
 		Number: number, BranchID: branchID, PartyID: in.PartyID, Channel: in.Channel, Origin: in.Origin,
 		MemberCode: memberCode, OrderDate: timeutil.DateOrToday(in.OrderDate),
@@ -535,6 +577,7 @@ func (s *Service) createOrder(ctx context.Context, actorID, branchID int64, in O
 		ShipToAddressID: shipID, ShipToLabel: shipLabel, ShipToRecipient: shipRecipient,
 		ShipToPhone: shipPhone, ShipToAddress: shipAddr, AssignedUserID: in.AssignedUserID,
 		TaxInvoiceNumber: taxNo, TaxInvoiceDate: taxDate, ClientRef: in.ClientRef,
+		ReceiptAccountID: receipt,
 	}, actorID)
 	if err != nil {
 		if in.ClientRef != "" && dberr.IsDuplicate(err) {
@@ -625,7 +668,7 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 				if depErr != nil {
 					return nil, depErr
 				}
-				return nil, apperror.Conflict("Ubah info order hanya untuk jatuh tempo, catatan, alamat kirim, faktur pajak, dan penanggung jawab")
+				return nil, apperror.Conflict("Ubah info order hanya untuk jatuh tempo, catatan, alamat kirim, faktur pajak, penanggung jawab, dan rekening tujuan")
 			}
 			if fields := lightDueDateErrors(existing.PaymentTerms, in.DueDate); len(fields) > 0 {
 				return nil, apperror.Validation("", fields)
@@ -644,6 +687,11 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 				return nil, apperror.Validation("", fields)
 			}
 			existing.AssignedUserID = in.AssignedUserID
+			receipt, rerr := s.resolveReceipt(ctx, in.ReceiptAccountID, existing.ReceiptAccountID)
+			if rerr != nil {
+				return nil, rerr
+			}
+			existing.ReceiptAccountID = receipt
 			if err := s.repo.UpdateHeaderLight(ctx, existing, actorID); err != nil {
 				return nil, dberr.Map(err)
 			}
@@ -668,6 +716,11 @@ func (s *Service) updateOrderLocked(ctx context.Context, actorID, branchID, id i
 	if err != nil {
 		return nil, err
 	}
+	receipt, err := s.resolveReceipt(ctx, in.ReceiptAccountID, existing.ReceiptAccountID)
+	if err != nil {
+		return nil, err
+	}
+	existing.ReceiptAccountID = receipt
 	existing.PartyID = in.PartyID
 	existing.Channel = in.Channel
 	existing.MemberCode = memberCode
@@ -1036,4 +1089,46 @@ func (s *Service) GetByNumber(ctx context.Context, branchID int64, number string
 		return nil, nil
 	}
 	return s.enrich(ctx, o)
+}
+
+// SetReceiptAccount changes only the rekening tujuan of a bill (ADR-0026) —
+// also on a completed order that still waits for its transfer, where the
+// header is otherwise frozen. Payments already recorded keep their own
+// rekening. Audited with before/after.
+func (s *Service) SetReceiptAccount(ctx context.Context, actorID, branchID, id, accountID int64) (*contracts.SalesOrder, error) {
+	if accountID <= 0 {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "receiptAccountId", Message: "wajib dipilih"}})
+	}
+	err := doclock.Lock("so:"+strconv.FormatInt(id, 10), func() error {
+		o, err := s.mustOwnBranch(ctx, id, branchID)
+		if err != nil {
+			return err
+		}
+		if o.Status == contracts.StatusCancelled {
+			return apperror.Conflict("Order yang dibatalkan tidak bisa diubah")
+		}
+		if o.ReceiptAccountID == accountID {
+			return nil
+		}
+		if s.banks == nil {
+			return apperror.Internal(errors.New("sales: bank accounts not wired (SetBankAccounts)"))
+		}
+		if err := s.banks.CheckBankAccount(ctx, accountID, "receiptAccountId"); err != nil {
+			return err
+		}
+		if err := s.repo.SetReceiptAccount(ctx, id, accountID, actorID); err != nil {
+			return dberr.Map(err)
+		}
+		_ = s.audit.Log(ctx, auditcontracts.Entry{
+			Action: "sales_orders.receipt_account_change", Entity: "sales_order", EntityID: id, BranchID: branchID, ActorID: actorID,
+			Note:   o.Number,
+			Before: map[string]any{"receiptAccountId": o.ReceiptAccountID},
+			After:  map[string]any{"receiptAccountId": accountID},
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetByID(ctx, id)
 }

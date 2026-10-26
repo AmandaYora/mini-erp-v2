@@ -65,6 +65,9 @@ type Payment struct {
 	AmountTendered int64
 	// Reference is the transfer/check reference number.
 	Reference string
+	// CashAccountID is the finance cash/bank GL account of the company
+	// rekening the money moved through (ADR-0026); 0 = the method's mapping.
+	CashAccountID int64
 	// PairID points at the opposite leg of an offset (0 when unpaired).
 	PairID int64
 	// CreditSourceType/ID name the return whose saldo a use-credit pair spends
@@ -117,6 +120,9 @@ type RecordInput struct {
 	AmountTendered int64
 	ClientRef      string
 	Notes          string
+	// CashAccountID names the company rekening of a transfer/check (ADR-0026);
+	// 0 = the order's rekening tujuan, else the default.
+	CashAccountID int64
 }
 
 // OrderBalance is one document's outstanding position.

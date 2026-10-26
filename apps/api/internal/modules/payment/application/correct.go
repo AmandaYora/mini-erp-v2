@@ -50,6 +50,9 @@ type CorrectInput struct {
 	AmountTendered int64
 	Notes          string // empty keeps the original's notes
 	Reason         string
+	// CashAccountID: the rekening of a transfer/check (ADR-0026); 0 keeps the
+	// original's when still active, else the default.
+	CashAccountID int64
 }
 
 func correctionRef(oldID int64) string { return "correct:" + strconv.FormatInt(oldID, 10) }
@@ -151,9 +154,13 @@ func (s *Service) correctLocked(ctx context.Context, in CorrectInput) (*contract
 	if err != nil {
 		return nil, false, err
 	}
+	cashAccount, err := s.resolveCashAccount(ctx, in.Method, in.CashAccountID, old.CashAccountID)
+	if err != nil {
+		return nil, false, err
+	}
 	party := &partycontracts.Party{ID: old.PartyID, Type: old.PartyType}
 	pay, err := s.numberedPayment(ctx, in.BranchID, party, old.Direction, in.Amount, in.Method, paidAt, notes, stored,
-		createOptions{clientRef: ref, amountTendered: in.AmountTendered, reference: in.Reference})
+		createOptions{clientRef: ref, amountTendered: in.AmountTendered, reference: in.Reference, cashAccountID: cashAccount})
 	if err != nil {
 		return nil, false, err
 	}
@@ -165,12 +172,12 @@ func (s *Service) correctLocked(ctx context.Context, in CorrectInput) (*contract
 			Before: map[string]any{
 				"paymentId": old.ID, "number": old.Number, "status": "active",
 				"method": old.Method, "amount": old.Amount, "paidAt": old.PaidAt, "reference": old.Reference,
-				"allocations": oldAllocs,
+				"cashAccountId": old.CashAccountID, "allocations": oldAllocs,
 			},
 			After: map[string]any{
 				"paymentId": id, "number": pay.Number, "originalStatus": "cancelled",
 				"method": pay.Method, "amount": pay.Amount, "paidAt": pay.PaidAt, "reference": pay.Reference,
-				"allocations": stored,
+				"cashAccountId": pay.CashAccountID, "allocations": stored,
 			},
 			Metadata: map[string]any{"reason": in.Reason},
 		}

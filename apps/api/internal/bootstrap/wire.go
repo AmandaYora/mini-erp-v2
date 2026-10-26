@@ -92,6 +92,8 @@ type Modules struct {
 //	                         payment needs the returns, returns need delivery/receipts
 //	payment/salesreturn/purchasereturn.Reverser
 //	                         finance needs payment and the returns
+//	payment/sales.BankAccounts
+//	                         finance needs payment and sales (rekening, ADR-0026)
 //	sales/purchasing.Dependents
 //	                         delivery/receipts need the orders
 //
@@ -156,6 +158,10 @@ func Wire(db *sql.DB, o Options) (*Modules, error) {
 	m.Product.SetStockState(m.Stock.ProductStockState())
 	// A cancelled payment/return takes its journal with it (F2b-5).
 	m.Payment.SetReverser(m.Finance.Reverser())
+	// Rekening perusahaan (ADR-0026): sales validates a bill's rekening
+	// tujuan, payment the rekening a transfer/check moves through.
+	m.Sales.Service().SetBankAccounts(m.Finance.BankAccounts())
+	m.Payment.SetBankAccounts(m.Finance.BankAccounts())
 	m.SalesReturn.SetReverser(m.Finance.Reverser())
 	m.PurchaseReturn.SetReverser(m.Finance.Reverser())
 	m.Purchasing.SetCorrectionGate(m.Finance.PurchaseCorrectionGate())

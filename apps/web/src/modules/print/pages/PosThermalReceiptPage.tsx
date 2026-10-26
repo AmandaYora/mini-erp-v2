@@ -51,7 +51,7 @@ export default function PosThermalReceiptPage() {
   const { orderId } = useParams<{ orderId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const { identity, warning, loading: profileLoading } = usePrintProfile();
+  const { identity, warning, loading: profileLoading, bankAccounts } = usePrintProfile();
 
   const [printing, setPrinting] = useState(false);
 
@@ -97,10 +97,19 @@ export default function PosThermalReceiptPage() {
   const customerName = o.partyId > 0 && o.partyName.trim() !== "" ? o.partyName : "Umum";
   // Kasir = pencatat pembayaran (server: cashierName); pengguna yang mencetak hanya cadangan.
   const cashierName = o.cashierName?.trim() || user?.fullName?.trim() || "-";
-  const rekeningHolders = Array.from(new Set(identity.bankAccounts.map((a) => a.holder.trim()).filter(Boolean)));
-  const rekeningAccounts = identity.bankAccounts.map((a) => `(${a.bank} ${a.number})`).join(" / ");
+  // Transfer (atau piutang) ke rekening tertentu (ADR-0026): cetak rekening itu saja;
+  // selain itu daftar rekening dokumen seperti sistem lama.
+  const chosenAccountId =
+    payments.find((p) => (p.cashAccountId ?? 0) > 0)?.cashAccountId ??
+    (s.statusLabel === "PIUTANG" ? (o.receiptAccountId ?? null) : null);
+  const chosen = chosenAccountId ? (bankAccounts ?? []).find((b) => b.accountId === chosenAccountId) : undefined;
+  const rekeningList = chosen
+    ? [{ bank: chosen.bankName, holder: chosen.accountHolder, number: chosen.accountNumber }]
+    : identity.bankAccounts;
+  const rekeningHolders = Array.from(new Set(rekeningList.map((a) => a.holder.trim()).filter(Boolean)));
+  const rekeningAccounts = rekeningList.map((a) => `(${a.bank} ${a.number})`).join(" / ");
   const rekeningLine =
-    identity.bankAccounts.length > 0
+    rekeningList.length > 0
       ? `REKENING : ${[rekeningHolders.join(" / "), rekeningAccounts].filter(Boolean).join(" ")}`
       : "";
   const returnNote = identity.returnNote !== "" ? identity.returnNote : "Barang yang sudah dibeli mengikuti kebijakan toko.";

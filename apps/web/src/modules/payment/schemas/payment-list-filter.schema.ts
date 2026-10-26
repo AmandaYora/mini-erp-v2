@@ -17,6 +17,8 @@ export const paymentListFilterSchema = z.object({
   partyId: idFilter,
   orderType: enumOrEmpty(["sales", "purchase"] as const),
   orderId: idFilter,
+  /** Rekening perusahaan (ADR-0026): id akun buku besar rekening. */
+  cashAccountId: idFilter,
   from: dateFilter,
   to: dateFilter,
   page: pageFilter,
@@ -32,6 +34,7 @@ export const PAYMENT_LIST_DEFAULTS: PaymentListFilter = {
   partyId: 0,
   orderType: "",
   orderId: 0,
+  cashAccountId: 0,
   from: "",
   to: "",
   page: 1,
@@ -47,6 +50,7 @@ export function toPaymentFilterParams(f: PaymentListFilter): PaymentFilterParams
     partyId: f.partyId,
     orderType: f.orderId > 0 ? f.orderType : "",
     orderId: f.orderType !== "" ? f.orderId : 0,
+    cashAccountId: f.cashAccountId,
     from: f.from,
     to: f.to,
   };

@@ -45,6 +45,10 @@ import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { salesReturnSettlementSchema } from "@/modules/salesreturn/schemas/sales-return.schema";
 import { salesReturnService } from "@/modules/salesreturn/services/sales-return.service";
 import { salesReturnRail } from "@/modules/salesreturn/lib/sales-return-rail";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 import {
   replacementStatusLabel,
   returnConditionLabel,
@@ -118,6 +122,10 @@ export default function SalesReturnDetailPage() {
   // Tagih selisih tukar saat serah (K-04e).
   const [payNow, setPayNow] = useState(false);
   const [payMethod, setPayMethod] = useState<"cash" | "transfer" | "check">("cash");
+  // Rekening transfer/cek tambah bayar (ADR-0026): null = default perusahaan.
+  const bank = useBankAccounts();
+  const [payAccount, setPayAccount] = useState<number | null>(null);
+  const effectivePayAccount = payAccount ?? bank.defaultAccountId;
   const [payAmount, setPayAmount] = useState("");
   const [payRef, setPayRef] = useState("");
   const [payTendered, setPayTendered] = useState("");
@@ -290,12 +298,18 @@ export default function SalesReturnDetailPage() {
         setConfirmError("Uang diterima kurang dari nominal pembayaran.");
         return;
       }
+      const bankError = paymentBankAccountError(bank, payMethod, effectivePayAccount);
+      if (bankError) {
+        setConfirmError(bankError);
+        return;
+      }
       settlement = {
         mode: "pay_now",
         amount,
         method: payMethod,
         reference: payRef.trim() === "" ? undefined : payRef.trim(),
         amountTendered: payMethod === "cash" ? tendered : undefined,
+        cashAccountId: methodUsesBankAccount(payMethod) && effectivePayAccount !== null ? effectivePayAccount : undefined,
       };
     }
     setConfirmError(null);
@@ -854,6 +868,14 @@ export default function SalesReturnDetailPage() {
                       className="tabular text-right"
                     />
                   </FormField>
+                  <PaymentBankAccountField
+                    bank={bank}
+                    method={payMethod}
+                    value={effectivePayAccount}
+                    onChange={setPayAccount}
+                    direction="in"
+                    disabled={confirmBusy}
+                  />
                   <FormField label="Nomor referensi">
                     <TextInput
                       value={payRef}

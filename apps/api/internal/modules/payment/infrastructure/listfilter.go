@@ -23,6 +23,8 @@ type ListFilter struct {
 	// allocation table belongs to this module, so a sub-select is allowed).
 	OrderType string
 	OrderID   int64
+	// CashAccountID keeps the payments of one company rekening (ADR-0026).
+	CashAccountID int64
 }
 
 func (f ListFilter) where(branchID int64) (string, []any) {
@@ -32,6 +34,7 @@ func (f ListFilter) where(branchID int64) (string, []any) {
 		Eq("status", f.Status).
 		Eq("method", f.Method).
 		Eq("direction", f.Direction).
+		Eq("cash_account_id", f.CashAccountID).
 		DateRange("paid_at", f.From, f.To).
 		LikeOrIn(f.Search, []string{"number", "notes", "reference_number"}, "party_id", f.SearchPartyIDs)
 	if f.OrderID != 0 {
@@ -41,7 +44,7 @@ func (f ListFilter) where(branchID int64) (string, []any) {
 }
 
 const paymentColumns = `id, number, branch_id, party_id, party_type, direction,
-	amount, method, paid_at, notes, status, client_ref, amount_tendered, reference_number, pair_id`
+	amount, method, paid_at, notes, status, client_ref, amount_tendered, reference_number, pair_id, cash_account_id`
 
 // ListFiltered returns one page of payments, newest first, via a deferred join.
 func (r *Repository) ListFiltered(ctx context.Context, branchID int64, f ListFilter, limit, offset int) ([]*contracts.Payment, error) {
@@ -61,7 +64,7 @@ func (r *Repository) ListFiltered(ctx context.Context, branchID int64, f ListFil
 		var row sqlc.GetPaymentRow
 		if err := rows.Scan(&row.ID, &row.Number, &row.BranchID, &row.PartyID, &row.PartyType, &row.Direction,
 			&row.Amount, &row.Method, &row.PaidAt, &row.Notes, &row.Status, &row.ClientRef,
-			&row.AmountTendered, &row.ReferenceNumber, &row.PairID); err != nil {
+			&row.AmountTendered, &row.ReferenceNumber, &row.PairID, &row.CashAccountID); err != nil {
 			return nil, err
 		}
 		out = append(out, toPayment(row))

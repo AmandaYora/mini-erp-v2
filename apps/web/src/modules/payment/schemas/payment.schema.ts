@@ -44,9 +44,14 @@ export const paymentFormSchema = z
       .positive("Uang diterima harus lebih dari 0")
       .optional(),
     clientRef: z.string().max(100).optional(),
+    /** Rekening perusahaan transfer/cek (ADR-0026): id akun buku besar. */
+    cashAccountId: z.number().int().positive().optional(),
     allocations: z.array(paymentAllocationSchema).default([]),
   })
   .superRefine((v, ctx) => {
+    if (v.cashAccountId !== undefined && v.method === "cash") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cashAccountId"], message: "Rekening hanya untuk transfer atau cek" });
+    }
     if (v.amountTendered === undefined) return;
     if (v.method !== "cash") {
       ctx.addIssue({
@@ -143,6 +148,8 @@ export const paymentCorrectSchema = z
       .trim()
       .min(5, "Alasan koreksi minimal 5 karakter")
       .max(255, "Alasan maksimal 255 karakter"),
+    /** Rekening transfer/cek (ADR-0026). */
+    cashAccountId: z.number().int().positive().optional(),
   })
   .superRefine((v, ctx) => {
     if (v.amountTendered === undefined) return;

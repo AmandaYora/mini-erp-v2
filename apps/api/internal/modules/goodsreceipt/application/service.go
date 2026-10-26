@@ -67,6 +67,9 @@ type Settlement struct {
 	DueDate     string
 	// Notes is the operator's free text on the payment (GR-02, pay_now).
 	Notes string
+	// CashAccountID is the company rekening the transfer/check leaves from
+	// (ADR-0026); 0 = the default.
+	CashAccountID int64
 }
 
 // NewService wires goodsreceipt use cases. All cross-module links are contracts.

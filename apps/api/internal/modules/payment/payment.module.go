@@ -51,6 +51,9 @@ func (m *Module) Payments() contracts.PaymentClient {
 // SetReverser wires finance's source reverser (built after this module).
 func (m *Module) SetReverser(r financecontracts.SourceReverser) { m.svc.SetReverser(r) }
 
+// SetBankAccounts wires finance's rekening surface (ADR-0026).
+func (m *Module) SetBankAccounts(b financecontracts.BankAccountClient) { m.svc.SetBankAccounts(b) }
+
 // Service exposes use cases to the dev seed (composition root privilege).
 func (m *Module) Service() *application.Service {
 	return m.svc

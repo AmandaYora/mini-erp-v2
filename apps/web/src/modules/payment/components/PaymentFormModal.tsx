@@ -15,6 +15,10 @@ import type { OrderBalance } from "@/modules/payment/types";
 import { referenceLabel } from "@/modules/payment/types";
 import { cashChange, previewFifo } from "@/modules/payment/lib/fifo";
 import { paymentService } from "@/modules/payment/services/payment.service";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
 
 interface AllocRow {
   key: number;
@@ -82,6 +86,13 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
   const [rows, setRows] = useState<AllocRow[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const formId = useId();
+  // Rekening transfer/cek (ADR-0026): null = default perusahaan (alokasi FIFO
+  // tidak menunjuk satu tagihan); server memakai rekening tagihan bila kosong.
+  const bank = useBankAccounts();
+  const [cashAccountId, setCashAccountId] = useState<number | null>(null);
+  const effectiveAccount = cashAccountId ?? bank.defaultAccountId;
+  const refundRows = rows.some((r) => r.orderType.endsWith("_return"));
+  const moneyIn = (partyType === "supplier") === refundRows;
 
   const allocTotal = rows.reduce((sum, r) => {
     const n = Number(r.amount);
@@ -144,6 +155,7 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
       notes: notes.trim() ? notes.trim() : undefined,
       reference: reference.trim() ? reference.trim() : undefined,
       amountTendered: method === "cash" && tendered.trim() ? tendered.trim() : undefined,
+      cashAccountId: methodUsesBankAccount(method) && effectiveAccount !== null ? effectiveAccount : undefined,
       clientRef,
       allocations: filled.map((r) => ({
         orderType: r.orderType,
@@ -151,12 +163,14 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
         amount: r.amount,
       })),
     });
-    if (!parsed.success) {
-      const fieldErrors = parsed.error.flatten().fieldErrors;
+    const bankError = paymentBankAccountError(bank, method, effectiveAccount);
+    if (!parsed.success || bankError) {
+      const fieldErrors: Record<string, string[] | undefined> = parsed.success ? {} : parsed.error.flatten().fieldErrors;
       const mapped: Record<string, string> = {};
       for (const [k, v] of Object.entries(fieldErrors)) {
         if (v && v.length > 0 && v[0]) mapped[k] = v[0];
       }
+      if (bankError) mapped.cashAccountId = bankError;
       setErrors(mapped);
       return;
     }
@@ -255,18 +269,28 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
             </div>
           </div>
         ) : (
-          <FormField
-            label={referenceLabel(method)}
-            errorText={errors.reference}
-            helperText="Opsional, maksimal 100 karakter."
-          >
-            <TextInput
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
-              placeholder={method === "check" ? "cth. CEK-001234" : "cth. TRX-20261009"}
-              maxLength={100}
+          <>
+            <PaymentBankAccountField
+              bank={bank}
+              method={method}
+              value={effectiveAccount}
+              onChange={setCashAccountId}
+              direction={moneyIn ? "in" : "out"}
+              errorText={errors.cashAccountId}
             />
-          </FormField>
+            <FormField
+              label={referenceLabel(method)}
+              errorText={errors.reference}
+              helperText="Opsional, maksimal 100 karakter."
+            >
+              <TextInput
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder={method === "check" ? "cth. CEK-001234" : "cth. TRX-20261009"}
+                maxLength={100}
+              />
+            </FormField>
+          </>
         )}
 
         <FormField label="Catatan" errorText={errors.notes}>

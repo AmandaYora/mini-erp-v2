@@ -372,17 +372,32 @@ func (s *Service) buildPayment(ctx context.Context, branchID, paymentID int64) (
 	if kind.skip {
 		return nil, "", "", apperror.Conflict("Pembayaran offset tidak dijurnal: retur sudah mengurangi tagihan di pembukuan")
 	}
+	// The cash leg posts to the payment's rekening (ADR-0026) when it names
+	// one, otherwise to the method's mapping (cash / bank) as before.
+	cashLeg := rawLeg{key: kind.cashKey, partyID: advanceParty(kind, p), note: p.Number}
+	if p.CashAccountID > 0 && (kind.cashKey == "cash" || kind.cashKey == "bank") {
+		a, err := s.repo.AccountByID(ctx, p.CashAccountID)
+		if err != nil {
+			return nil, "", "", apperror.Internal(err)
+		}
+		if a == nil || a.Status != "active" || a.Type != contracts.AccountAsset || !a.IsCash {
+			return nil, "", "", apperror.Conflict("Akun rekening pembayaran " + p.Number + " tidak aktif atau bukan akun kas/bank")
+		}
+		cashLeg.key, cashLeg.code = "", a.Code
+	}
 	var legs []rawLeg
 	switch p.Direction {
 	case paymentcontracts.DirectionIn: // money comes in: Dr cash/bank, Cr counter-account
+		cashLeg.debit = p.Amount
 		legs = []rawLeg{
-			{key: kind.cashKey, debit: p.Amount, partyID: advanceParty(kind, p), note: p.Number},
+			cashLeg,
 			{key: kind.counterKey, credit: p.Amount, partyID: p.PartyID, note: p.PartyName},
 		}
 	default: // money goes out: Dr counter-account, Cr cash/bank
+		cashLeg.credit = p.Amount
 		legs = []rawLeg{
 			{key: kind.counterKey, debit: p.Amount, partyID: p.PartyID, note: p.PartyName},
-			{key: kind.cashKey, credit: p.Amount, partyID: advanceParty(kind, p), note: p.Number},
+			cashLeg,
 		}
 	}
 	lines, err := s.finish(ctx, legs)

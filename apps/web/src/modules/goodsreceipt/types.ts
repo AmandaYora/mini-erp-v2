@@ -80,6 +80,8 @@ export interface ReceiptSettlementPayload {
   dueDate?: string;
   /** Catatan pembayaran (pay_now, maks 255). */
   notes?: string;
+  /** Rekening perusahaan sumber transfer/cek (ADR-0026); kosong = default. */
+  cashAccountId?: number;
 }
 
 export interface GoodsReceiptPayload {

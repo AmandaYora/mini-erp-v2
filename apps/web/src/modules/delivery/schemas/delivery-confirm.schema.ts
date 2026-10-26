@@ -16,6 +16,8 @@ export const settlementSchema = z
     paymentDate: z.string().default(""),
     reference: z.string().default(""),
     amountTendered: z.string().default(""),
+    /** Rekening transfer/cek (ADR-0026): id akun buku besar; null = rekening order/default. */
+    cashAccountId: z.number().int().positive().nullable().default(null),
     dueDate: z.string().default(""),
   })
   .superRefine((v, ctx) => {
@@ -92,6 +94,7 @@ export function toConfirmPayload(v: DeliveryConfirmFormValues): DeliveryConfirmP
       const s: NonNullable<DeliveryConfirmPayload["settlement"]> = { mode: "pay_now", method: st.method };
       if (st.paymentDate.trim() !== "") s.paymentDate = st.paymentDate.trim();
       if (st.reference.trim() !== "") s.reference = st.reference.trim();
+      if (st.method !== "cash" && st.cashAccountId !== null) s.cashAccountId = st.cashAccountId;
       if (st.amountTendered.trim() !== "" && Number(st.amountTendered) > 0) {
         s.amountTendered = Number(st.amountTendered);
       }

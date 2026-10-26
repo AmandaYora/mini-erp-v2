@@ -126,7 +126,7 @@ export default function PurchaseReturnCreatePage() {
             returned: it.returned,
             remaining: it.remaining,
             unitPrice: 0,
-            qty: it.remaining > 0 ? String(it.remaining) : "",
+            qty: "",
             // RT-04: lokasi asal bawaan = lokasi penerimaan terbaru (boleh diganti).
             locationId: it.defaultLocationId ?? null,
           }),
@@ -155,7 +155,7 @@ export default function PurchaseReturnCreatePage() {
               returned: 0,
               remaining: it.qty,
               unitPrice: it.unitPrice,
-              qty: String(it.qty),
+              qty: "",
               locationId: null,
             }),
           ),

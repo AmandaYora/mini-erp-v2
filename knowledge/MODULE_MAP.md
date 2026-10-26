@@ -19,13 +19,13 @@ modul di lapisan lebih rendah tidak boleh bergantung pada lapisan lebih tinggi.
 | L2 | `party` | Customer/supplier, alamat kirim, member type & pricing | L1, `product` |
 | L3 | `stock` | Lokasi, saldo, mutasi, transfer, opname | L1, `product` |
 | L4 | `purchasing` | Purchase order ke supplier | L1, `party`, `product`, `stock` |
-| L4 | `sales` | Sales order ke customer (kanal reguler & POS) | L1, `party`, `product`, `stock` |
+| L4 | `sales` | Sales order ke customer (kanal reguler & POS); rekening tujuan tagihan (ADR-0026) | L1, `party`, `product`, `stock`; `finance` (rekening, setter) |
 | L5 | `goodsreceipt` | Penerimaan barang atas PO | `purchasing`, `stock` |
 | L5 | `delivery` | Pengiriman atas SO, surat jalan, bukti kirim; SJ Langsung tanpa order (ADR-0022) | `sales`, `stock`, `media`, `party` (pelanggan SJ Langsung) |
-| L5 | `payment` | Pembayaran & alokasi, saldo/ledger pihak | `purchasing`, `sales`, `media` |
+| L5 | `payment` | Pembayaran & alokasi, saldo/ledger pihak; rekening transfer/cek (ADR-0026) | `purchasing`, `sales`, `media`; `finance` (pembalik jurnal + rekening, setter) |
 | L6 | `salesreturn` | Retur customer atas SO/SJ | `sales`, `delivery` |
 | L6 | `purchasereturn` | Retur ke supplier atas PO/penerimaan | `purchasing`, `goodsreceipt` |
-| L7 | `finance` | COA, jurnal, HPP, laporan, tutup periode, ekspor pajak | **semua modul di atas** (lihat SYSTEM_DESIGN §7 — konsumen data terbesar) |
+| L7 | `finance` | COA, rekening perusahaan (ADR-0026), jurnal, HPP, laporan, tutup periode, ekspor pajak | **semua modul di atas** (lihat SYSTEM_DESIGN §7 — konsumen data terbesar) |
 | L8 | `dashboard` | Ringkasan operasional (hari ini + bulan berjalan + saldo kunci — baca finance live) dan alert kesehatan data (dihitung langsung; satu tabel penundaan alert, ADR-0025) | `finance`, `stock`, `sales`, `purchasing`, `payment`, `salesreturn`; untuk alert: `user`, `product`, `party`, `delivery` lewat `HealthClient` read-only + port integritas dari bootstrap |
 | L8 | `reporting` | Tren penjualan harian + nilai persediaan (baca finance live, tanpa agregasi terjadwal — KI-126) | `finance` |
 | L9 | `assistant` | Bot WA (whatsmeow) + 8 intent tooling read-only, whitelist nomor, tanpa RAG/AI/knowledge | `branch`, `product`, `sales`, `purchasing`, `stock`, `finance` |

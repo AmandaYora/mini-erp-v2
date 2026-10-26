@@ -117,6 +117,9 @@ type Settlement struct {
 	Reference      string
 	AmountTendered int64
 	DueDate        string
+	// CashAccountID is the company rekening of a transfer/check (ADR-0026);
+	// 0 = the order's rekening tujuan, else the default.
+	CashAccountID int64
 }
 
 // Sales is the sales surface the delivery module consumes: document reads
@@ -1391,8 +1394,9 @@ func (s *Service) applySettlement(ctx context.Context, actorID, branchID int64, 
 		_, _, err := s.payments.RecordForOrder(ctx, paymentcontracts.RecordInput{
 			ActorID: actorID, BranchID: branchID, OrderType: paymentcontracts.OrderSales, OrderID: so.ID,
 			Method: st.Method, PaidAt: st.PaymentDate, Reference: st.Reference,
-			AmountTendered: st.AmountTendered, ClientRef: "sj:" + strconv.FormatInt(note.ID, 10),
-			Notes: "Pelunasan saat serah " + note.Number,
+			AmountTendered: st.AmountTendered, CashAccountID: st.CashAccountID,
+			ClientRef: "sj:" + strconv.FormatInt(note.ID, 10),
+			Notes:     "Pelunasan saat serah " + note.Number,
 		})
 		return err
 	case SettleSwitchToNet:
@@ -1445,8 +1449,9 @@ func (s *Service) applyReplacementSettlement(ctx context.Context, actorID, branc
 	_, _, err := s.payments.RecordForOrder(ctx, paymentcontracts.RecordInput{
 		ActorID: actorID, BranchID: branchID, OrderType: paymentcontracts.OrderSalesReturn, OrderID: note.SalesReturnID,
 		Amount: st.Amount, Method: method, PaidAt: st.PaymentDate, Reference: st.Reference,
-		AmountTendered: st.AmountTendered, ClientRef: "sjr:" + strconv.FormatInt(note.ID, 10),
-		Notes: "Tambah bayar tukar saat serah " + note.Number,
+		AmountTendered: st.AmountTendered, CashAccountID: st.CashAccountID,
+		ClientRef: "sjr:" + strconv.FormatInt(note.ID, 10),
+		Notes:     "Tambah bayar tukar saat serah " + note.Number,
 	})
 	return err
 }

@@ -264,6 +264,14 @@ func (s *Service) UpdateAccount(ctx context.Context, actorID, id int64, name, ac
 			return nil, apperror.Conflict("Tipe akun berjurnal tidak dapat diubah")
 		}
 	}
+	if !isCash || accType != contracts.AccountAsset {
+		// A rekening (ADR-0026) posts payments to this account as cash/bank.
+		if b, err := s.repo.BankAccountByAccountID(ctx, id); err != nil {
+			return nil, apperror.Internal(err)
+		} else if b != nil {
+			return nil, apperror.Conflict("Akun dipakai rekening " + b.BankName + " " + b.AccountNumber + ": harus tetap aset kas/bank")
+		}
+	}
 	a.Name = strings.TrimSpace(name)
 	a.Type = accType
 	a.IsCash = isCash
@@ -300,6 +308,11 @@ func (s *Service) ArchiveAccount(ctx context.Context, actorID, id int64) error {
 		if mapped.ID == id {
 			return apperror.Conflict("Akun terpetakan sebagai '" + key + "', lepas dulu")
 		}
+	}
+	if b, err := s.repo.BankAccountByAccountID(ctx, id); err != nil {
+		return apperror.Internal(err)
+	} else if b != nil {
+		return apperror.Conflict("Akun dipakai rekening " + b.BankName + " " + b.AccountNumber)
 	}
 	if err := s.repo.SetAccountStatus(ctx, id, "archived"); err != nil {
 		return apperror.Internal(err)

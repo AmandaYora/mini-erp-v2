@@ -64,17 +64,17 @@ Modul `reporting` tidak memiliki tabel; `dashboard` hanya memiliki tabel penunda
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
 | `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql`, `000041_stock_corrections.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
 | `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql`, `000034_purchasing_corrections.up.sql` | `purchase_orders`, `purchase_order_items`, `purchase_order_corrections`, `purchase_order_correction_lines` | 4 |
-| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql`, `000043_sales_origin.up.sql` | `sales_orders`, `sales_order_items` | 2 |
+| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql`, `000043_sales_origin.up.sql`, `000047_sales_receipt_account.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql`, `000039_goodsreceipt_corrections.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql`, `000037_delivery_corrections.up.sql`, `000042_delivery_direct.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
-| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql` | `payments`, `payment_allocations` | 2 |
+| `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql`, `000048_payment_cash_account.up.sql` | `payments`, `payment_allocations` | 2 |
 | `salesreturn` | `000014_salesreturn.up.sql`, `000036_salesreturn_corrections.up.sql` | `sales_returns`, `sales_return_items`, `sales_return_replacement_items`, `sales_return_settlements` | 4 |
 | `purchasereturn` | `000015_purchasereturn.up.sql`, `000040_purchasereturn_corrections.up.sql` | `purchase_returns`, `purchase_return_items`, `purchase_return_settlements` | 3 |
-| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql`, `000035_finance_corrections.up.sql`, `000044_finance_opening_correction.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta`, `finance_inventory_revaluations`, `finance_inventory_revaluation_lines` | 16 |
+| `finance` | `000016_finance.up.sql`, `000031_finance_fn.up.sql`, `000035_finance_corrections.up.sql`, `000044_finance_opening_correction.up.sql`, `000046_finance_bank_accounts.up.sql` | `finance_accounts`, `business_expenses`, `finance_account_daily`, `finance_account_mappings`, `finance_cutover`, `finance_document_sequences`, `finance_inventory_cost_movements`, `finance_journal_entries`, `finance_journal_lines`, `finance_periods`, `finance_tax_periods`, `finance_tax_report_snapshots`, `finance_posting_ignores`, `finance_tax_adjustment_meta`, `finance_inventory_revaluations`, `finance_inventory_revaluation_lines`, `finance_bank_accounts` | 17 |
 | `audit` | `000017_audit.up.sql` | `audit_logs`, `audit_log_details` | 2 |
 | `assistant` | `000018_assistant.up.sql`, `000020_assistant_tool_status.up.sql` | `assistant_authorizations`, `assistant_channel`, `assistant_config`, `assistant_messages`, `assistant_runs`, `assistant_threads`, `assistant_tool_executions` | 7 |
 | `dashboard` | `000045_dashboard_alert_snooze.up.sql` | `dashboard_alert_snoozes` | 1 |
-| **Total** | 19 berkas modul | | **70** |
+| **Total** | 19 berkas modul | | **71** |
 <!-- END GENERATED: tables -->
 
 ### `audit` (L0)
@@ -268,6 +268,7 @@ hutang (`payable_reduction`) yang bisa direfund atau dijadikan saldo supplier.
 | `finance_tax_periods` + `finance_tax_report_snapshots` | Snapshot laporan pajak per periode |
 | `finance_document_sequences` | Penomoran dokumen keuangan (beda dari nomor dokumen cabang) |
 | `business_expenses` | Biaya usaha di luar transaksi jual-beli; `party_id` opsional = pihak lawan (`000031`, FN-10) |
+| `finance_bank_accounts` | Rekening perusahaan (ADR-0026): bank, nomor, atas nama, `show_on_documents`, `is_default`, status — `account_id` UNIQUE FK ke `finance_accounts` (akun aset kas sendiri per rekening). Tidak menyimpan saldo: saldo = saldo akun buku besarnya. `sales_orders.receipt_account_id` dan `payments.cash_account_id` menyimpan id akun itu sebagai ID primitif (`000046`) |
 
 Tanpa antrean posting terpisah: antrean dan pratinjau dihitung dari dokumen sumber on-the-fly;
 satu-satunya keadaan tersimpan adalah penanda abaikan `finance_posting_ignores` (FN-01). Tanpa tabel saldo awal
@@ -330,7 +331,7 @@ warisan. Mekanisme pengganti dicatat agar kemampuan user tidak hilang diam-diam:
 | `order_status_definitions`, `order_status_transitions`, `order_status_history` | Tanpa tabel — mesin status tetap di kode (status baru warisan lahir cacat/KI-35, tak pernah berfungsi penuh) | Diputuskan bersyarat — gugur bila pemilik butuh kelola status (KI-35) |
 | `finance_posting_sources` (antrean posting 2-fase) | Tanpa tabel antrean — pratinjau dihitung on-the-fly. Abaikan/pulihkan (FN-01) = tabel penanda kecil `finance_posting_ignores` milik finance (`branch_id`, `doc_type`, `doc_id`, `reason`, `ignored_by`, `ignored_at`; migrasi `000031`), bukan kolom di modul sumber (tanpa lintas-modul); pulihkan = hapus baris, jejaknya di audit | Diputuskan |
 | `finance_opening_balances`, `finance_opening_inventory_items` | Tanpa tabel — saldo awal stok = mutasi `in` ber-referensi `opening` (mutasinya sendiri catatannya, L3); saldo awal keuangan = jurnal saldo awal | Diputuskan |
-| `finance_cash_accounts` | Kolom penanda kas di `finance_accounts` (saldo kas = saldo akun) | Diputuskan |
+| `finance_cash_accounts` | Kolom penanda kas di `finance_accounts` (saldo kas = saldo akun). Revisi ADR-0026: identitas rekening bank (bank/nomor/atas nama) kini di `finance_bank_accounts` 1:1 ke akun kas — tetap tanpa saldo tersendiri | Diputuskan; direvisi ADR-0026 |
 | `finance_inventory_cost_states` | Tanpa tabel — rata-rata berjalan = baris terakhir `finance_inventory_cost_movements` | Diputuskan |
 | `finance_tax_adjustments` | Tipe jurnal penyesuaian (tetap teraudit, tetap bisa dilaporkan). FN-07 (ADR-0018 D6): jenis koreksi + catatan disimpan di tabel pendamping `finance_tax_adjustment_meta` (1:1 ke jurnal, migrasi `000031`), lampiran di media (`owner_type=tax_adjustment`); model jurnal tidak berubah | Diputuskan |
 | `stock_issue_allocations` | Tanpa tabel — referensi dokumen+lokasi+qty+biaya di `stock_movements` (cukup di bawah HPP moving-average; saran petik FIFO tetap dihitung, bukan disimpan) | Diputuskan |
@@ -360,6 +361,9 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | Migrasi | Tugas | Perubahan | ETL |
 |---|---|---|---|
 | `000045_dashboard_alert_snooze` | ADR-0025 (alert kesehatan data) | tabel baru `dashboard_alert_snoozes` (modul `dashboard`, tanpa FK lintas modul); `dashboard` pindah dari `noSql` ke `migrated` sqlc | tidak dimuat ETL (tabel mulai kosong) |
+| `000046_finance_bank_accounts` | ADR-0026 (rekening tujuan) | tabel baru `finance_bank_accounts` (FK hanya ke `finance_accounts`, modul sama) | tidak dimuat ETL (rekening diatur sesudah cutover) |
+| `000047_sales_receipt_account` | ADR-0026 | `sales_orders.receipt_account_id` (nullable, ID primitif akun rekening finance) | tak terpengaruh (NULL = belum ada rekening tujuan) |
+| `000048_payment_cash_account` | ADR-0026 | `payments.cash_account_id` (nullable) + indeks; NULL = jurnal lewat pemetaan `cash`/`bank` seperti sebelumnya | tak terpengaruh (pembayaran legacy tanpa rekening) |
 | `000019_sales` | SL-09 | `sales_orders.credit_approved_by`, `credit_approved_at` (nullable): siapa/kapan kredit disetujui | memetakan `credit_approved_*` dan `assigned_user_id` legacy |
 | `000020_assistant_tool_status` | AS-02 | `assistant_tool_executions.status` (default `success`), `error_text`: tool gagal tercatat per baris | tak terpengaruh |
 | `000021_stock_parity` | ST-01, ST-02 | `stock_locations.is_picking_area`, `is_primary`, `sort_order`; `stock_transfers.driver_name`, `vehicle_plate`, `transfer_date` (diisi hari WIB kirim/dibuat untuk dokumen lama) | spec load membawa `is_picking_area`/`is_primary`/`sort_order`, `driver_name`/`vehicle_number`/`transfer_date` |

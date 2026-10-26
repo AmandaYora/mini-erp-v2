@@ -110,6 +110,8 @@ export interface SalesOrder {
   createdByName?: string;
   assignedUserId?: number;
   assignedUserName?: string;
+  /** Rekening tujuan tagihan (ADR-0026): id akun buku besar rekening; 0 = belum ada. */
+  receiptAccountId?: number;
   creditApprovedBy?: number;
   creditApprovedByName?: string;
   creditApprovedAt?: string;
@@ -198,6 +200,8 @@ export interface SalesOrderPayload {
   shipToAddress?: string;
   /** Penanggung jawab order (SL-09); 0/dihilangkan = tidak ada. */
   assignedUserId?: number;
+  /** Rekening tujuan (ADR-0026); 0/dihilangkan = default perusahaan (buat) atau tetap (ubah). */
+  receiptAccountId?: number;
   taxInvoiceNumber?: string;
   taxInvoiceDate?: string;
   /** UUID per percobaan simpan; create diulang dengan clientRef sama = replay. */
@@ -333,6 +337,8 @@ export interface FromDeliveriesSettlement {
   paymentDate?: string;
   reference?: string;
   amountTendered?: number;
+  /** Rekening perusahaan transfer/cek (ADR-0026). */
+  cashAccountId?: number;
   /** Wajib untuk switch_to_net. */
   dueDate?: string;
 }
@@ -357,6 +363,8 @@ export interface FromDeliveriesPreviewPayload {
 /** Body POST /sales-orders/from-deliveries: pratinjau + pelunasan + clientRef (wajib, ≤64). */
 export interface FromDeliveriesPayload extends FromDeliveriesPreviewPayload {
   settlement?: FromDeliveriesSettlement;
+  /** Rekening tujuan order (ADR-0026); kosong = default perusahaan. */
+  receiptAccountId?: number;
   clientRef: string;
 }
 

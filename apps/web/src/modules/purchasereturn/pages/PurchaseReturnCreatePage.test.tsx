@@ -72,6 +72,7 @@ async function toReviewStep() {
     </MemoryRouter>,
   );
   await screen.findByText("Semen");
+  await userEvent.click(screen.getByRole("button", { name: "Retur semua sisa" }));
   await userEvent.selectOptions(screen.getByLabelText("Lokasi keluar Semen"), "3");
   await userEvent.click(screen.getByRole("button", { name: "Lanjut" }));
   await userEvent.type(await screen.findByPlaceholderText(/Mis\. barang cacat/), "Barang cacat");
@@ -128,8 +129,10 @@ describe("halaman Buat Retur Beli: pilih satuan (temuan 1)", () => {
     );
     await screen.findByText("Pipa");
     const qty = screen.getByLabelText("Qty retur Pipa") as HTMLInputElement;
-    expect(qty.value).toBe("2");
+    expect(qty.value).toBe("");
     expect(qty.max).toBe("2");
+    await userEvent.click(screen.getByRole("button", { name: "Isi maksimal Pipa" }));
+    expect(qty.value).toBe("2");
     await userEvent.selectOptions(screen.getByLabelText("Satuan retur Pipa"), "pcs");
     expect(qty.value).toBe("24");
     expect(qty.max).toBe("24");

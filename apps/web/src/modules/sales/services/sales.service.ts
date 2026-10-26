@@ -78,6 +78,10 @@ export const salesService = {
   update: (id: number, body: SalesOrderPayload) =>
     apiPutFull<SalesOrder>(`/api/v1/sales-orders/${id}`, body),
 
+  /** Rekening tujuan saja (ADR-0026) — juga untuk order selesai. sales.update. */
+  setReceiptAccount: (id: number, receiptAccountId: number) =>
+    apiPutFull<SalesOrder>(`/api/v1/sales-orders/${id}/receipt-account`, { receiptAccountId }),
+
   confirm: (id: number) =>
     apiPostFull<SalesOrder>(`/api/v1/sales-orders/${id}/confirm`),
 

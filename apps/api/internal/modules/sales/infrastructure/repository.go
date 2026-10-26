@@ -87,7 +87,8 @@ func (r *Repository) CreateOrder(ctx context.Context, o *contracts.SalesOrder, a
 		ShipToAddress:    dbutil.NullString(o.ShipToAddress),
 		TaxInvoiceNumber: dbutil.NullString(o.TaxInvoiceNumber), TaxInvoiceDate: h.invDate,
 		ClientRef: dbutil.NullString(o.ClientRef), CreatedBy: actor(actorID), UpdatedBy: actor(actorID),
-		AssignedUserID: dbutil.NullInt64(o.AssignedUserID),
+		AssignedUserID:   dbutil.NullInt64(o.AssignedUserID),
+		ReceiptAccountID: dbutil.NullInt64(o.ReceiptAccountID),
 	})
 	if err != nil {
 		return 0, err
@@ -123,8 +124,9 @@ func (r *Repository) UpdateOrder(ctx context.Context, o *contracts.SalesOrder, a
 		ShipToRecipient: dbutil.NullString(o.ShipToRecipient), ShipToPhone: dbutil.NullString(o.ShipToPhone),
 		ShipToAddress:    dbutil.NullString(o.ShipToAddress),
 		TaxInvoiceNumber: dbutil.NullString(o.TaxInvoiceNumber), TaxInvoiceDate: h.invDate,
-		AssignedUserID: dbutil.NullInt64(o.AssignedUserID),
-		Now:            now(), UpdatedBy: actor(actorID), ID: o.ID,
+		AssignedUserID:   dbutil.NullInt64(o.AssignedUserID),
+		ReceiptAccountID: dbutil.NullInt64(o.ReceiptAccountID),
+		Now:              now(), UpdatedBy: actor(actorID), ID: o.ID,
 	}); err != nil {
 		return err
 	}
@@ -147,8 +149,16 @@ func (r *Repository) UpdateHeaderLight(ctx context.Context, o *contracts.SalesOr
 		ShipToRecipient: dbutil.NullString(o.ShipToRecipient), ShipToPhone: dbutil.NullString(o.ShipToPhone),
 		ShipToAddress:    dbutil.NullString(o.ShipToAddress),
 		TaxInvoiceNumber: dbutil.NullString(o.TaxInvoiceNumber), TaxInvoiceDate: h.invDate,
-		AssignedUserID: dbutil.NullInt64(o.AssignedUserID),
-		Now:            now(), UpdatedBy: actor(actorID), ID: o.ID,
+		AssignedUserID:   dbutil.NullInt64(o.AssignedUserID),
+		ReceiptAccountID: dbutil.NullInt64(o.ReceiptAccountID),
+		Now:              now(), UpdatedBy: actor(actorID), ID: o.ID,
+	})
+}
+
+// SetReceiptAccount rewrites only the rekening tujuan (ADR-0026); 0 clears it.
+func (r *Repository) SetReceiptAccount(ctx context.Context, id, accountID, actorID int64) error {
+	return r.q.SetReceiptAccount(ctx, sqlc.SetReceiptAccountParams{
+		ReceiptAccountID: dbutil.NullInt64(accountID), Now: now(), UpdatedBy: actor(actorID), ID: id,
 	})
 }
 

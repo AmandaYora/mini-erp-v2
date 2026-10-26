@@ -53,6 +53,10 @@ import {
 } from "@/modules/delivery/types";
 import type { ProductOptionRow } from "@/modules/products/types";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { initialPaymentAccount } from "@/modules/finance/lib/bank-accounts";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 
 // Alur: draft → confirmed (stok keluar saat confirm) / cancelled.
 // - Konfirmasi: POST /:id/confirm, gate delivery.create, hanya draft.
@@ -117,6 +121,9 @@ export default function DeliveryDetailPage() {
   // "" = tanpa pelunasan (SJ parsial / order sudah lunas — server mengabaikan).
   const [settleMode, setSettleMode] = useState<"" | "pay_now" | "switch_to_net">("");
   const [payMethod, setPayMethod] = useState<"cash" | "transfer" | "check">("cash");
+  // Rekening pelunasan transfer/cek (ADR-0026): null = rekening tujuan order, lalu default.
+  const bank = useBankAccounts();
+  const [payAccount, setPayAccount] = useState<number | null>(null);
   const [payDate, setPayDate] = useState(todayWIB());
   const [payRef, setPayRef] = useState("");
   const [payTendered, setPayTendered] = useState("");
@@ -161,6 +168,7 @@ export default function DeliveryDetailPage() {
   // Peringatan lunak dari pembuatan draf (DL-04): dibawa lewat state navigasi.
   const createWarnings = ((useLocation().state as { warnings?: string[] } | null)?.warnings ?? []).filter(Boolean);
   const so: SalesOrderOption | null = data?.so ?? null;
+  const effectivePayAccount = payAccount ?? initialPaymentAccount(bank.all, so?.receiptAccountId ?? null);
   const products: Map<number, ProductOptionRow> = data?.products ?? new Map();
   usePageCrumb(note?.number);
 
@@ -175,6 +183,7 @@ export default function DeliveryDetailPage() {
     const cod = so?.paymentTerms === "cod";
     setSettleMode(cod ? (canPay ? "pay_now" : canSwitchNet ? "switch_to_net" : "") : "");
     setPayMethod("cash");
+    setPayAccount(null);
     setPayDate(todayWIB());
     setPayRef("");
     setPayTendered("");
@@ -197,15 +206,18 @@ export default function DeliveryDetailPage() {
               paymentDate: payDate,
               reference: payRef,
               amountTendered: payTendered,
+              cashAccountId: payMethod === "cash" ? null : effectivePayAccount,
               dueDate,
             },
     });
-    if (!parsed.success) {
+    const bankError = settleMode === "pay_now" ? paymentBankAccountError(bank, payMethod, effectivePayAccount) : null;
+    if (!parsed.success || bankError) {
       const mapped: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
+      for (const issue of parsed.success ? [] : parsed.error.issues) {
         const key = issue.path.filter((p) => typeof p !== "number").join(".");
         mapped[key || "_"] ??= issue.message;
       }
+      if (bankError) mapped.cashAccountId = bankError;
       setConfirmFields(mapped);
       setConfirmError("Periksa kembali isian konfirmasi.");
       return;
@@ -752,6 +764,14 @@ export default function DeliveryDetailPage() {
                   <FormField label="Tanggal Bayar" errorText={confirmFields.paymentDate}>
                     <DateInput value={payDate} onChange={(e) => setPayDate(e.target.value)} />
                   </FormField>
+                  <PaymentBankAccountField
+                    bank={bank}
+                    method={payMethod}
+                    value={effectivePayAccount}
+                    onChange={setPayAccount}
+                    direction="in"
+                    errorText={confirmFields.cashAccountId}
+                  />
                   {payMethod !== "cash" && (
                     <FormField
                       label={payMethod === "check" ? "Nomor Cek" : "Referensi Transfer"}

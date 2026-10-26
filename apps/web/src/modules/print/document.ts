@@ -65,6 +65,30 @@ export function resolveIdentity(
   };
 }
 
+/** Rekening master (ADR-0026) yang aktif dan ditandai tampil di dokumen, format cetak. */
+export function documentBankAccounts(
+  list: { bankName: string; accountHolder: string; accountNumber: string; showOnDocuments: boolean; status: string }[],
+): DocumentBankAccount[] {
+  return list
+    .filter((b) => b.status === "active" && b.showOnDocuments)
+    .map((b) => ({ bank: b.bankName, holder: b.accountHolder, number: b.accountNumber }));
+}
+
+/** "Transfer ke: BCA 123 a.n. PT X" untuk rekening tujuan satu dokumen; "" bila tidak ada.
+ * Label kosong = tanpa awalan ("BCA 123 a.n. PT X"). */
+export function transferToLine(
+  list: { accountId: number; bankName: string; accountHolder: string; accountNumber: string }[] | undefined,
+  accountId: number | null | undefined,
+  label = "Transfer ke",
+): string {
+  if (!accountId || !list) return "";
+  const b = list.find((x) => x.accountId === accountId);
+  if (!b) return "";
+  const holder = b.accountHolder.trim();
+  const text = `${b.bankName} ${b.accountNumber}${holder ? ` a.n. ${holder}` : ""}`;
+  return label ? `${label}: ${text}` : text;
+}
+
 /** Satu baris telepon: "TOKO (0813-...)" atau nomor polos bila tanpa label. */
 export function formatPhoneLine(phone: DocumentPhone): string {
   const label = clean(phone.label);

@@ -56,4 +56,15 @@ describe("deliveryConfirmSchema", () => {
       deliveryConfirmSchema.safeParse({ settlement: { mode: "pay_now", amountTendered: "1.5" } }).success,
     ).toBe(false);
   });
+
+  it("pay_now transfer membawa rekening (ADR-0026); tunai tidak", () => {
+    const tr = deliveryConfirmSchema.safeParse({
+      settlement: { mode: "pay_now", method: "transfer", reference: "TRX-9", cashAccountId: 12 },
+    });
+    expect(tr.success).toBe(true);
+    if (tr.success) expect(toConfirmPayload(tr.data)?.settlement).toEqual({ mode: "pay_now", method: "transfer", reference: "TRX-9", cashAccountId: 12 });
+    const cash = deliveryConfirmSchema.safeParse({ settlement: { mode: "pay_now", method: "cash", cashAccountId: 12 } });
+    expect(cash.success).toBe(true);
+    if (cash.success) expect(toConfirmPayload(cash.data)?.settlement?.cashAccountId).toBeUndefined();
+  });
 });

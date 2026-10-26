@@ -103,8 +103,14 @@ func (s *Service) Summary(ctx context.Context, branchID int64) (*dashboardcontra
 	// Balances as of today (WIB), like the balance sheet of today: journals
 	// dated in the future must not inflate today's cash/receivable/payable.
 	balances, err := s.finance.BalancesByKey(ctx, branchID, []string{
-		"cash", "bank", "receivable", "payable", "inventory",
+		"receivable", "payable", "inventory",
 	}, day)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	// "Kas & Bank" = every cash/bank account, so a company rekening with its
+	// own GL account (ADR-0026) counts even though no mapping key names it.
+	cash, err := s.finance.CashOnHand(ctx, branchID, day)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}
@@ -123,8 +129,8 @@ func (s *Service) Summary(ctx context.Context, branchID int64) (*dashboardcontra
 		Today:       dashboardcontracts.Period{From: day, To: day, Revenue: rev, Expense: exp, Profit: profit},
 		MonthToDate: dashboardcontracts.Period{From: monthStart, To: day, Revenue: mRev, Expense: mExp, Profit: mProfit},
 		Balances: dashboardcontracts.Balances{
-			// "Kas & Bank": cash and bank are both money on hand (N9).
-			Cash:       balances["cash"] + balances["bank"],
+			// "Kas & Bank": cash and every bank account are money on hand (N9).
+			Cash:       cash,
 			Receivable: balances["receivable"],
 			Payable:    -balances["payable"],
 			Inventory:  balances["inventory"],

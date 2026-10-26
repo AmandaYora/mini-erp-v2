@@ -20,6 +20,7 @@ import {
   printItemName,
   resolveShipToContact,
   terbilangRupiah,
+  transferToLine,
 } from "@/modules/print/document";
 import {
   readHideLetterhead,
@@ -56,7 +57,7 @@ export default function SalesInvoicePrintPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
+  const { identity, paper, corrupt, warning, loading: profileLoading, bankAccounts } = usePrintProfile();
 
   const orderId = Number(id);
   // Catatan bebas sebelum cetak — hanya tercetak, tidak pernah disimpan ke order.
@@ -244,7 +245,13 @@ export default function SalesInvoicePrintPage() {
       </div>
 
       <div className="nota-foot">
-        <div style={{ whiteSpace: "pre-wrap" }}>{printNotes}</div>
+        <div>
+          {/* Rekening tujuan tagihan (ADR-0026): satu baris di kaki, tetap tercetak di form preprinted. */}
+          {totals.outstanding > 0 && transferToLine(bankAccounts, order.receiptAccountId) !== "" ? (
+            <div style={{ fontWeight: 700 }}>{transferToLine(bankAccounts, order.receiptAccountId)}</div>
+          ) : null}
+          <div style={{ whiteSpace: "pre-wrap" }}>{printNotes}</div>
+        </div>
         <div className="nota-buyer">
           <div>Pembeli</div>
           <div className="nota-buyer-line">(................)</div>

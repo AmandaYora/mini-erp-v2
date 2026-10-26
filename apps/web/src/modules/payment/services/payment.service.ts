@@ -62,6 +62,8 @@ export interface PaymentFilterParams {
   /** "sales" | "purchase" | "sales_return" | "purchase_return" — wajib bersama orderId. */
   orderType?: string;
   orderId?: number;
+  /** Rekening perusahaan (ADR-0026): id akun buku besar rekening. */
+  cashAccountId?: number;
   /** YYYY-MM-DD (WIB), inklusif, atas tanggal bayar. */
   from?: string;
   to?: string;
@@ -81,6 +83,7 @@ export function buildPaymentListQuery(p: PaymentListParams): Record<string, unkn
     partyId: positiveId(p.partyId),
     orderType: p.orderType,
     orderId: positiveId(p.orderId),
+    cashAccountId: positiveId(p.cashAccountId),
     from: p.from,
     to: p.to,
     page: p.page,

@@ -11,6 +11,9 @@ import {
 } from "@/modules/print/paper";
 import { resolveIdentity, type PrintIdentity } from "@/modules/print/document";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import type { BankAccount } from "@/modules/finance/types";
+import { documentBankAccounts } from "@/modules/print/document";
 import { toApiError } from "@/shared/services/http-client";
 import type { ApiError } from "@/shared/services/http-client";
 
@@ -24,6 +27,8 @@ export interface PrintProfileState {
   /** Pesan bila profil perusahaan gagal dimuat (mis. peran tanpa company.view) — tidak ditelan. */
   warning: string | null;
   loading: boolean;
+  /** Master rekening perusahaan (ADR-0026), termasuk yang diarsipkan — untuk "Transfer ke" per dokumen. */
+  bankAccounts?: BankAccount[];
 }
 
 /**
@@ -75,19 +80,25 @@ export function usePrintProfile(): PrintProfileState {
     };
   }, []);
 
+  const bank = useBankAccounts();
   const { profile } = parseDocumentProfile(raw);
+  const identity = resolveIdentity(profile, {
+    companyName: company?.name,
+    companyCity: company?.city,
+    branchAddress: branch?.address,
+    branchCity: branch?.city,
+  });
+  // Daftar rekening di dokumen: master rekening (tampil di dokumen) bila ada;
+  // daftar teks lama di profil dokumen tetap dipakai selama master kosong.
+  const fromMaster = documentBankAccounts(bank.all);
   return {
     profile,
     paper: resolvePaperProfile(profile.continuousNota),
-    identity: resolveIdentity(profile, {
-      companyName: company?.name,
-      companyCity: company?.city,
-      branchAddress: branch?.address,
-      branchCity: branch?.city,
-    }),
+    identity: fromMaster.length > 0 ? { ...identity, bankAccounts: fromMaster } : identity,
     corrupt,
     warning,
-    loading,
+    loading: loading || bank.loading,
+    bankAccounts: bank.all,
   };
 }
 

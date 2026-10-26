@@ -53,6 +53,10 @@ func (f *fakeFinance) AccountBalances(_ context.Context, _ int64, codes []string
 	return out, nil
 }
 
+func (f *fakeFinance) CashOnHand(_ context.Context, _ int64, _ string) (int64, error) {
+	return 0, nil
+}
+
 func (f *fakeFinance) InventoryTotal(_ context.Context, _ int64) (int64, error) {
 	return 0, nil
 }

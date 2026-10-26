@@ -29,6 +29,8 @@ export interface Payment {
   clientRef: string;
   /** Referensi transfer / nomor cek. */
   reference: string;
+  /** Rekening perusahaan transfer/cek (ADR-0026): id akun buku besar; 0 = akun pemetaan "bank". */
+  cashAccountId?: number;
   /** Uang tunai yang diserahkan (hanya cash); 0 = tidak dicatat. */
   amountTendered: number;
   /** Kembalian turunan (tendered - amount), tidak disimpan. */
@@ -72,6 +74,8 @@ export interface PaymentCreatePayload {
   amountTendered?: number;
   /** Referensi transfer / nomor cek (maks 100 karakter). */
   reference?: string;
+  /** Rekening perusahaan transfer/cek (ADR-0026). Kosong = rekening tujuan tagihan, lalu default. */
+  cashAccountId?: number;
   /** Kosong = backend alokasi FIFO otomatis (handler.go: Create). */
   allocations?: AllocationInput[];
 }
@@ -89,6 +93,8 @@ export interface PaymentCorrectPayload {
   notes?: string;
   /** Wajib, 5–255 karakter; tercatat sebagai alasan batal pembayaran asli dan di audit. */
   reason: string;
+  /** Rekening transfer/cek (ADR-0026); kosong = rekening pembayaran asli bila masih aktif, lalu default. */
+  cashAccountId?: number;
 }
 
 /** Pakai saldo uang muka retur ke tagihan (N-41): kunci persis handler UseCredit. */

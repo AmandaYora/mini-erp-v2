@@ -45,7 +45,8 @@ func orderView(o *contracts.SalesOrder) map[string]any {
 		"partyPhone": o.PartyPhone, "partyAddress": o.PartyAddress,
 		"channel": o.Channel, "origin": o.Origin, "memberCode": o.MemberCode,
 		"orderDate": o.OrderDate, "dueDate": o.DueDate, "paymentTerms": o.PaymentTerms,
-		"taxType": o.TaxType, "taxRate": o.TaxRate,
+		"receiptAccountId": o.ReceiptAccountID,
+		"taxType":          o.TaxType, "taxRate": o.TaxRate,
 		"subtotal": o.Subtotal, "discountTotal": o.DiscountTotal,
 		"taxTotal": o.TaxTotal, "grandTotal": o.GrandTotal,
 		"status": o.Status, "notes": o.Notes,
@@ -93,6 +94,7 @@ type orderPayload struct {
 	ShipToPhone      string        `json:"shipToPhone"`
 	ShipToAddress    string        `json:"shipToAddress"`
 	AssignedUserID   int64         `json:"assignedUserId"`
+	ReceiptAccountID int64         `json:"receiptAccountId"`
 	TaxInvoiceNumber string        `json:"taxInvoiceNumber"`
 	TaxInvoiceDate   string        `json:"taxInvoiceDate"`
 	ClientRef        string        `json:"clientRef"`
@@ -126,6 +128,7 @@ func toInput(in orderPayload) application.OrderInput {
 		ShipToLabel:     in.ShipToLabel, ShipToRecipient: in.ShipToRecipient,
 		ShipToPhone: in.ShipToPhone, ShipToAddress: in.ShipToAddress,
 		AssignedUserID:   in.AssignedUserID,
+		ReceiptAccountID: in.ReceiptAccountID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate,
 		ClientRef: in.ClientRef, Reason: in.Reason, HeaderOnly: in.HeaderOnly,
 	}
@@ -260,6 +263,29 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Sales order disimpan", orderView(o))
 }
 
+// SetReceiptAccount handles PUT /api/v1/sales-orders/{id}/receipt-account:
+// the bill's rekening tujuan only (ADR-0026), completed orders included.
+func (h *Handler) SetReceiptAccount(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathInt(r, "id")
+	if err != nil {
+		response.Fail(w, apperror.NotFound("Sales order"))
+		return
+	}
+	var in struct {
+		ReceiptAccountID int64 `json:"receiptAccountId"`
+	}
+	if fields := httpx.DecodeJSON(r, &in); fields != nil {
+		response.Fail(w, apperror.Validation("", fields))
+		return
+	}
+	o, appErr := h.svc.SetReceiptAccount(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.ReceiptAccountID)
+	if appErr != nil {
+		response.FailErr(w, appErr)
+		return
+	}
+	response.OK(w, "Rekening tujuan disimpan", orderView(o))
+}
+
 // Confirm handles POST /api/v1/sales-orders/{id}/confirm.
 func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
@@ -352,6 +378,7 @@ type fromDeliveriesPayload struct {
 	TaxRate          float64 `json:"taxRate"`
 	Notes            string  `json:"notes"`
 	AssignedUserID   int64   `json:"assignedUserId"`
+	ReceiptAccountID int64   `json:"receiptAccountId"`
 	TaxInvoiceNumber string  `json:"taxInvoiceNumber"`
 	TaxInvoiceDate   string  `json:"taxInvoiceDate"`
 	Lines            []struct {
@@ -373,6 +400,7 @@ type fromDeliveriesPayload struct {
 		Reference      string `json:"reference"`
 		AmountTendered int64  `json:"amountTendered"`
 		DueDate        string `json:"dueDate"`
+		CashAccountID  int64  `json:"cashAccountId"`
 	} `json:"settlement"`
 	ClientRef string `json:"clientRef"`
 }
@@ -381,6 +409,7 @@ func toFromDeliveriesInput(in fromDeliveriesPayload) application.FromDeliveriesI
 	out := application.FromDeliveriesInput{
 		DeliveryIDs: in.DeliveryIDs, OrderDate: in.OrderDate, PaymentTerms: in.PaymentTerms, DueDate: in.DueDate,
 		TaxType: in.TaxType, TaxRate: in.TaxRate, Notes: in.Notes, AssignedUserID: in.AssignedUserID,
+		ReceiptAccountID: in.ReceiptAccountID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate, ClientRef: in.ClientRef,
 	}
 	for _, l := range in.Lines {
@@ -401,6 +430,7 @@ func toFromDeliveriesInput(in fromDeliveriesPayload) application.FromDeliveriesI
 		out.Settlement = &application.FromDeliveriesSettlement{
 			Mode: in.Settlement.Mode, Method: in.Settlement.Method, PaymentDate: in.Settlement.PaymentDate,
 			Reference: in.Settlement.Reference, AmountTendered: in.Settlement.AmountTendered, DueDate: in.Settlement.DueDate,
+			CashAccountID: in.Settlement.CashAccountID,
 		}
 	}
 	return out
@@ -515,6 +545,7 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("POST /api/v1/sales-orders/from-deliveries", perm("sales.create", authcontracts.Guard(h.FromDeliveries, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/{id}", perm("sales.view", authcontracts.Guard(h.Get, branchGuard)))
 	mux.Handle("PUT /api/v1/sales-orders/{id}", perm("sales.update", authcontracts.Guard(h.Update, branchGuard)))
+	mux.Handle("PUT /api/v1/sales-orders/{id}/receipt-account", perm("sales.update", authcontracts.Guard(h.SetReceiptAccount, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/confirm", perm("sales.update", authcontracts.Guard(h.Confirm, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/cancel", perm("sales.archive", authcontracts.Guard(h.Cancel, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/{id}/close-short/preview", perm("sales.archive", authcontracts.Guard(h.ShortClosePreview, branchGuard)))

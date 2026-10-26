@@ -294,6 +294,10 @@ export default function DocumentProfileForm({
 
             <div>
               <p className="text-sm font-semibold text-foreground">Rekening bank</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Bila rekening sudah diatur di Keuangan → Akun → Rekening bank, daftar itulah yang dicetak dan
+                dipilih kasir. Daftar di sini hanya dipakai selama daftar rekening keuangan masih kosong.
+              </p>
               <div className="mt-2 space-y-2">
                 {draft.banks.map((b, i) => (
                   <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-4">

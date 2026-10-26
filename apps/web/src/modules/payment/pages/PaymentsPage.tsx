@@ -25,6 +25,9 @@ import { formatDate } from "@/shared/lib/format";
 import { formatApiError, isAbort, toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { bankAccountByAccountId, bankAccountLabel } from "@/modules/finance/lib/bank-accounts";
+import { BankAccountSelect } from "@/modules/finance/components/BankAccountSelect";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { paymentService } from "@/modules/payment/services/payment.service";
 import type { OpenParty, Payment } from "@/modules/payment/types";
@@ -70,6 +73,7 @@ const TABS = ["daftar", "saldo"] as const;
 export default function PaymentsPage() {
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
+  const bank = useBankAccounts();
   const canCreate = can("payment.create");
 
   const [tab, setTab] = useUrlTab(TABS, "daftar");
@@ -138,6 +142,14 @@ export default function PaymentsPage() {
       label: `Metode: ${methodLabel(filters.method)}`,
       onRemove: () => setFilters({ method: "" }),
     });
+  if (filters.cashAccountId > 0) {
+    const b = bankAccountByAccountId(bank.all, filters.cashAccountId);
+    active.push({
+      key: "cashAccount",
+      label: `Rekening: ${b ? bankAccountLabel(b) : "terpilih"}`,
+      onRemove: () => setFilters({ cashAccountId: 0 }),
+    });
+  }
   if (filters.status)
     active.push({
       key: "status",
@@ -150,7 +162,8 @@ export default function PaymentsPage() {
       label: `Dokumen: ${filters.orderType === "sales" ? "Order jual" : "Order beli"}${filters.orderId > 0 ? " (dipilih)" : ""}`,
       onRemove: () => setFilters({ orderType: "", orderId: 0 }),
     });
-  const moreActiveCount = [filters.method, filters.status, filters.orderType].filter((v) => v !== "").length;
+  const moreActiveCount =
+    [filters.method, filters.status, filters.orderType].filter((v) => v !== "").length + (filters.cashAccountId > 0 ? 1 : 0);
 
   // Ringkasan satu baris untuk halaman yang sedang tampil (pembayaran aktif saja).
   const pageIn = (items ?? [])
@@ -172,6 +185,7 @@ export default function PaymentsPage() {
         notes: values.notes,
         reference: values.reference,
         amountTendered: values.amountTendered,
+        cashAccountId: values.cashAccountId,
         clientRef: values.clientRef,
         allocations: values.allocations.length > 0 ? values.allocations : undefined,
       });
@@ -344,6 +358,17 @@ export default function PaymentsPage() {
                     ))}
                   </SelectInput>
                 </FormField>
+                {bank.all.length > 0 && (
+                  <FormField label="Rekening">
+                    <BankAccountSelect
+                      aria-label="Rekening"
+                      options={bank.all}
+                      value={filters.cashAccountId > 0 ? filters.cashAccountId : null}
+                      onChange={(id) => setFilters({ cashAccountId: id ?? 0 })}
+                      emptyLabel="Semua rekening"
+                    />
+                  </FormField>
+                )}
                 <FormField label="Status">
                   <SelectInput
                     aria-label="Status"
@@ -440,6 +465,10 @@ export default function PaymentsPage() {
                   render: (r) => (
                     <div className="flex flex-col items-start gap-0.5">
                       <Badge tone="neutral">{methodLabel(r.method)}</Badge>
+                      {(() => {
+                        const b = bankAccountByAccountId(bank.all, r.cashAccountId);
+                        return b ? <span className="text-xs text-muted-foreground">{b.bankName} {b.accountNumber}</span> : null;
+                      })()}
                       {paymentKind(r) !== "bill" && (
                         <span className="text-xs text-muted-foreground">{paymentKindLabel(r)}</span>
                       )}

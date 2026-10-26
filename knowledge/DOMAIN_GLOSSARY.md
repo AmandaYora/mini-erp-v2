@@ -37,6 +37,10 @@ satu orang.
 | **Journal Entry / Journal Line** | Baris jurnal akuntansi (double-entry) — satu-satunya sumber laporan keuangan, modul `finance`. |
 | **Alert kesehatan data** | Masalah data yang **dihitung langsung** dari basis data (mis. harga modal > 1,2× harga jual, stok awal belum diopname, periode lewat belum ditutup, sandi bawaan superadmin), bertingkat kritis/perlu perhatian/info, per area (keuangan, persediaan, master, dokumen, keamanan). Tidak disimpan: hilang sendiri begitu datanya beres. **Tunda** = menyembunyikan alert untuk seluruh cabang 1/3/7/14 hari dengan alasan (kritis maks 7, keamanan tidak bisa), gugur otomatis bila masalahnya bertambah. Dilihat lewat izin `dashboard.alerts.view_all` (bawaan owner, superadmin, admin); area keamanan butuh `dashboard.alerts.security` (owner, superadmin). ADR-0025. |
 | **Branch Scope** | `branchId` yang selalu diturunkan dari sesi terautentikasi (modul `auth`), tidak pernah dari body request. Tidak ada scope perusahaan (ADR-0009). |
+| **Rekening perusahaan** | Rekening bank milik perusahaan (bank, nomor, atas nama) di modul `finance` (`finance_bank_accounts`), masing-masing tertaut ke satu akun kas/bank sendiri di buku besar sehingga saldonya bisa dicocokkan dengan rekening koran. Modul lain menunjuknya lewat id akun buku besar itu (ADR-0026). |
+| **Rekening tujuan** | Rekening perusahaan yang diminta pada tagihan (order jual): dicetak di nota ("Transfer ke") dan menjadi nilai awal rekening pembayaran transfer order itu. Terisi rekening default bila tidak dipilih (ADR-0026). |
+| **Rekening pembayaran** | Rekening perusahaan tempat uang transfer/cek benar-benar masuk atau keluar, disimpan per pembayaran; jurnalnya ke akun rekening itu. Tunai tidak memakai rekening (ADR-0026). |
+| **Retur sebagian** | Retur sejumlah qty kurang dari yang terkirim/diterima (mis. order 5, retur 1), boleh berulang selama sisa (terkirim − sudah diretur) masih ada; nilainya prorata dari harga, diskon, dan pajak baris asli. Form memakai pola pilih-dulu: qty awal kosong, "Retur semua sisa" untuk retur penuh. |
 
 ## Peran Pengguna (Role Bawaan)
 

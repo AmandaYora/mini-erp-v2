@@ -344,6 +344,8 @@ export interface ReplacementPayNow {
   paymentDate?: string;
   reference?: string;
   amountTendered?: number;
+  /** Rekening perusahaan transfer/cek (ADR-0026). */
+  cashAccountId?: number;
 }
 
 /** Body POST /:id/settlements. */

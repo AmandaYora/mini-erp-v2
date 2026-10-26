@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,10 +42,57 @@ type Service struct {
 	// reverser reverses the journal of a cancelled payment (set after finance
 	// is built; nil = not wired, cancellation still succeeds).
 	reverser financecontracts.SourceReverser
+	// banks validates the company rekening a transfer/check moves through
+	// (ADR-0026; set after finance is built).
+	banks financecontracts.BankAccountClient
 }
 
 // SetReverser wires finance's source reverser (composition-root privilege).
 func (s *Service) SetReverser(r financecontracts.SourceReverser) { s.reverser = r }
+
+// SetBankAccounts wires finance's rekening surface (composition-root privilege).
+func (s *Service) SetBankAccounts(b financecontracts.BankAccountClient) { s.banks = b }
+
+// resolveCashAccount settles the rekening (finance cash/bank GL account id) a
+// payment moves through (ADR-0026). Cash, offset and saldo legs carry none.
+// Transfer/check take the requested rekening, else the fallback (the bill's
+// rekening tujuan, or the corrected payment's) when it is still active, else
+// the company default. Once the company has rekening, one is required — with
+// none configured the payment keeps the method's mapping (0).
+func (s *Service) resolveCashAccount(ctx context.Context, method string, requested, fallback int64) (int64, error) {
+	if method != contracts.MethodTransfer && method != contracts.MethodCheck {
+		if requested != 0 {
+			return 0, apperror.Validation("", []apperror.FieldError{{Field: "cashAccountId", Message: "rekening hanya untuk transfer atau cek"}})
+		}
+		return 0, nil
+	}
+	if s.banks == nil {
+		if requested != 0 {
+			return 0, apperror.Internal(errBanksUnwired)
+		}
+		return 0, nil
+	}
+	if requested != 0 {
+		if err := s.banks.CheckBankAccount(ctx, requested, "cashAccountId"); err != nil {
+			return 0, err
+		}
+		return requested, nil
+	}
+	if fallback != 0 && s.banks.CheckBankAccount(ctx, fallback, "cashAccountId") == nil {
+		return fallback, nil
+	}
+	policy, err := s.banks.BankPolicy(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if policy.DefaultAccountID != 0 {
+		return policy.DefaultAccountID, nil
+	}
+	if policy.Required {
+		return 0, apperror.Validation("", []apperror.FieldError{{Field: "cashAccountId", Message: "pilih rekening untuk pembayaran transfer/cek"}})
+	}
+	return 0, nil
+}
 
 // reverseJournals reverses the books for cancelled payment legs (memo = the
 // reversal's reason). A failure never undoes the cancellation: it is audited
@@ -177,6 +225,9 @@ type orderRef struct {
 	// charge: a return that the customer owes us (exchange costing more), so
 	// its money flows in the normal direction, not as a refund.
 	charge bool
+	// receiptAccountID is the sales order's rekening tujuan (ADR-0026); for an
+	// exchange surcharge, the parent order's.
+	receiptAccountID int64
 }
 
 // resolveOrder validates one allocation target: exists, same branch+party,
@@ -188,6 +239,7 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 	var orderParty int64
 	var orderBranch int64
 	var charge bool
+	var receipt int64
 	switch orderType {
 	case contracts.OrderPurchase:
 		o, err := s.purchasing.GetByID(ctx, orderID)
@@ -207,6 +259,7 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 			return nil, apperror.NotFound("Order")
 		}
 		grand, status, orderParty, orderBranch = o.GrandTotal, o.Status, o.PartyID, o.BranchID
+		receipt = o.ReceiptAccountID
 	case contracts.OrderSalesReturn:
 		r, err := s.salesReturns.GetReturn(ctx, orderID)
 		if err != nil {
@@ -226,6 +279,9 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 		// nor offsettable (CreditSettled is 0 for a charge-kind return).
 		grand, status, orderParty, orderBranch = r.Total-r.CreditSettled, r.Status, so.PartyID, r.Branch
 		charge = r.Kind == salesreturncontracts.KindCharge
+		if charge {
+			receipt = so.ReceiptAccountID
+		}
 	case contracts.OrderPurchaseReturn:
 		r, err := s.purchaseReturns.GetReturn(ctx, orderID)
 		if err != nil {
@@ -271,7 +327,7 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 		paid -= used
 	}
 	return &orderRef{orderType: orderType, orderID: orderID,
-		grandTotal: grand, outstanding: grand - paid, charge: charge}, nil
+		grandTotal: grand, outstanding: grand - paid, charge: charge, receiptAccountID: receipt}, nil
 }
 
 // CreateOption sets optional payment data.
@@ -281,7 +337,12 @@ type createOptions struct {
 	clientRef      string
 	amountTendered int64
 	reference      string
+	cashAccountID  int64
 }
+
+// errBanksUnwired fires when a rekening is named before the composition root
+// wired finance's rekening surface.
+var errBanksUnwired = errors.New("payment: bank accounts not wired (SetBankAccounts)")
 
 // WithClientRef makes Create idempotent: the same reference returns the
 // payment it already created instead of recording a second one.
@@ -297,6 +358,12 @@ func WithAmountTendered(amount int64) CreateOption {
 // WithReference records the transfer/check reference number.
 func WithReference(ref string) CreateOption {
 	return func(o *createOptions) { o.reference = strings.TrimSpace(ref) }
+}
+
+// WithCashAccount names the company rekening (finance cash/bank GL account id)
+// a transfer/check moves through (ADR-0026). 0 = the bill's / the default.
+func WithCashAccount(accountID int64) CreateOption {
+	return func(o *createOptions) { o.cashAccountID = accountID }
 }
 
 // lockKey picks the serialization key for money movement: the party, or — for
@@ -433,6 +500,7 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 	seen := map[string]bool{}
 	stored := make([]*contracts.Allocation, 0, len(allocs))
 	paymentDir := direction
+	var billAccount int64 // first allocated bill's rekening tujuan
 	for i, a := range allocs {
 		tag := "alokasi baris " + strconv.Itoa(i+1) + ": "
 		if a.OrderType == "" {
@@ -470,10 +538,18 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 		}
 		total += a.Amount
 		stored = append(stored, &contracts.Allocation{OrderType: a.OrderType, OrderID: a.OrderID, Amount: a.Amount})
+		if billAccount == 0 && wantDir == contracts.DirectionIn {
+			billAccount = ref.receiptAccountID
+		}
 	}
 	if total != amount {
 		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus sama dengan total alokasi"}})
 	}
+	cashAccount, err := s.resolveCashAccount(ctx, method, o.cashAccountID, billAccount)
+	if err != nil {
+		return nil, false, err
+	}
+	o.cashAccountID = cashAccount
 	id, err := s.insertPayment(ctx, actorID, branchID, party, paymentDir, amount, method, strings.TrimSpace(paidAt), notes, stored, o)
 	if err != nil {
 		return nil, false, err
@@ -494,6 +570,7 @@ func (s *Service) numberedPayment(ctx context.Context, branchID int64, party *pa
 		Direction: direction, Amount: amount, Method: method,
 		PaidAt: paidAt, Notes: notes, Allocations: stored,
 		ClientRef: o.clientRef, AmountTendered: o.amountTendered, Reference: o.reference,
+		CashAccountID: o.cashAccountID,
 	}, nil
 }
 
@@ -510,7 +587,7 @@ func (s *Service) insertPayment(ctx context.Context, actorID, branchID int64, pa
 			Note: pay.Number,
 			After: map[string]any{
 				"direction": direction, "method": method, "amount": amount,
-				"partyId": party.ID, "allocations": stored,
+				"partyId": party.ID, "allocations": stored, "cashAccountId": pay.CashAccountID,
 			},
 		})
 	})
@@ -1479,7 +1556,8 @@ func (s *Service) RecordForOrder(ctx context.Context, in contracts.RecordInput) 
 	if method == "" {
 		method = contracts.MethodCash
 	}
-	opts := createOptions{clientRef: strings.TrimSpace(in.ClientRef), amountTendered: in.AmountTendered, reference: strings.TrimSpace(in.Reference)}
+	opts := createOptions{clientRef: strings.TrimSpace(in.ClientRef), amountTendered: in.AmountTendered,
+		reference: strings.TrimSpace(in.Reference), cashAccountID: in.CashAccountID}
 	return s.createPayment(ctx, in.ActorID, in.BranchID, partyID, method, in.PaidAt, in.Notes, amount,
 		[]AllocationInput{{OrderType: in.OrderType, OrderID: in.OrderID, Amount: amount}}, opts)
 }

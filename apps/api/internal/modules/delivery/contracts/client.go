@@ -151,6 +151,8 @@ type ReplacementSettlement struct {
 	PaymentDate    string
 	Reference      string
 	AmountTendered int64
+	// CashAccountID is the company rekening of a transfer/check (ADR-0026).
+	CashAccountID int64
 }
 
 // OpenDirectSummary counts the confirmed direct notes still waiting for an

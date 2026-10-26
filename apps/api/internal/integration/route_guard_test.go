@@ -89,6 +89,9 @@ var authnOnlyRoutes = map[string]bool{
 	// RequireBranch itself and returns only an allow-list (covered by
 	// TestPrintProfileAllowList).
 	"GET /api/v1/company/print-profile": true,
+	// ADR-0026: every role that bills or records a transfer picks a company
+	// rekening; the handler adds RequireBranch itself (TestBankAccountOptions).
+	"GET /api/v1/finance/bank-accounts/options": true,
 }
 
 // noBranchPrefixes are permission-guarded areas that deliberately work

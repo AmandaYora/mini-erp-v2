@@ -1,5 +1,7 @@
 import { DateInput, FormField, SelectInput, TextInput } from "@/shared/components/ui";
 import type { SettlementDraft } from "@/modules/goodsreceipt/lib/settlement-draft";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
 
 interface SettlementFieldsProps {
   value: SettlementDraft;
@@ -12,6 +14,8 @@ interface SettlementFieldsProps {
 /** Pelunasan PO COD: bayar sekarang atau jadikan tempo. */
 export function SettlementFields({ value, errors, canPay, canSwitchNet, onChange }: SettlementFieldsProps) {
   const patch = (p: Partial<SettlementDraft>) => onChange({ ...value, ...p });
+  // Rekening sumber transfer/cek (ADR-0026): kosong = default perusahaan (server memakai yang sama).
+  const bank = useBankAccounts();
   return (
     <div className="rounded-md border border-border p-4">
       <p className="text-sm font-semibold text-foreground">Pelunasan order COD</p>
@@ -54,6 +58,14 @@ export function SettlementFields({ value, errors, canPay, canSwitchNet, onChange
             <FormField label="Tanggal Bayar" errorText={errors.paymentDate}>
               <DateInput value={value.paymentDate} onChange={(e) => patch({ paymentDate: e.target.value })} />
             </FormField>
+            <PaymentBankAccountField
+              bank={bank}
+              method={value.method}
+              value={value.cashAccountId ?? bank.defaultAccountId}
+              onChange={(id) => patch({ cashAccountId: id })}
+              direction="out"
+              errorText={errors.cashAccountId}
+            />
             {value.method !== "cash" && (
               <FormField
                 label={value.method === "check" ? "Nomor Cek" : "Referensi Transfer"}

@@ -288,6 +288,7 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 			Reference      string `json:"reference"`
 			AmountTendered int64  `json:"amountTendered"`
 			DueDate        string `json:"dueDate"`
+			CashAccountID  int64  `json:"cashAccountId"`
 		} `json:"settlement"`
 	}
 	// Receipt evidence is optional: bare confirms (POS flow, existing
@@ -322,6 +323,7 @@ func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 		ci.Settlement = &application.Settlement{PosOnly: posOnly,
 			Mode: in.Settlement.Mode, Method: in.Settlement.Method, PaymentDate: in.Settlement.PaymentDate,
 			Reference: in.Settlement.Reference, AmountTendered: in.Settlement.AmountTendered, DueDate: in.Settlement.DueDate,
+			CashAccountID: in.Settlement.CashAccountID,
 		}
 	}
 	n, appErr := h.svc.Confirm(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, ci)

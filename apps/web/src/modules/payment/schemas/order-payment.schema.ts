@@ -40,7 +40,7 @@ export type OrderPaymentValues = z.infer<ReturnType<typeof buildOrderPaymentSche
 /** Nilai tervalidasi → body POST /payments dengan satu alokasi ke order. */
 export function toOrderPaymentPayload(
   v: OrderPaymentValues,
-  ctx: { partyId: number; orderType: "sales" | "purchase"; orderId: number; clientRef: string },
+  ctx: { partyId: number; orderType: "sales" | "purchase"; orderId: number; clientRef: string; cashAccountId?: number | null },
 ): PaymentCreatePayload {
   const out: PaymentCreatePayload = {
     partyId: ctx.partyId,
@@ -53,8 +53,9 @@ export function toOrderPaymentPayload(
   if (v.notes.trim() !== "") out.notes = v.notes.trim();
   if (v.method === "cash") {
     if (v.amountTendered.trim() !== "") out.amountTendered = Number(v.amountTendered);
-  } else if (v.reference.trim() !== "") {
-    out.reference = v.reference.trim();
+  } else {
+    if (v.reference.trim() !== "") out.reference = v.reference.trim();
+    if (ctx.cashAccountId) out.cashAccountId = ctx.cashAccountId;
   }
   return out;
 }

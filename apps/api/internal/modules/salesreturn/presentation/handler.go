@@ -457,6 +457,7 @@ type settlementPayload struct {
 	PaymentDate    string `json:"paymentDate"`
 	Reference      string `json:"reference"`
 	AmountTendered int64  `json:"amountTendered"`
+	CashAccountID  int64  `json:"cashAccountId"`
 }
 
 // toReplacementSettlement validates the optional pay_now body and the caller's
@@ -476,7 +477,7 @@ func toReplacementSettlement(w http.ResponseWriter, r *http.Request, st *settlem
 	}
 	return &deliverycontracts.ReplacementSettlement{
 		Amount: st.Amount, Method: st.Method, PaymentDate: st.PaymentDate,
-		Reference: st.Reference, AmountTendered: st.AmountTendered,
+		Reference: st.Reference, AmountTendered: st.AmountTendered, CashAccountID: st.CashAccountID,
 	}, true
 }
 

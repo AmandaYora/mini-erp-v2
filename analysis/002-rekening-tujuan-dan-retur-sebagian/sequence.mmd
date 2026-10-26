@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant K as Kasir (web/POS)
+  participant S as sales
+  participant P as payment
+  participant F as finance
+  K->>F: GET /finance/bank-accounts/options
+  F-->>K: daftar rekening aktif + default
+  K->>S: POST /sales-orders (receiptAccountId)
+  S->>F: ValidateReceipt(accountId)
+  S-->>K: order (rekening tujuan)
+  K->>P: POST /payments (method=transfer, cashAccountId kosong/terisi)
+  P->>S: receipt_account_id order (bila kosong)
+  P->>F: ValidateReceipt(accountId)
+  P-->>K: pembayaran (cash_account_id tersimpan)
+  Note over F: posting / tutup harian
+  F->>P: GetByID(payment)
+  F->>F: buildPayment: leg kas = akun rekening (fallback mapping bank bila NULL)

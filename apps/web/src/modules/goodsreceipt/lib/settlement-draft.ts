@@ -9,10 +9,12 @@ export interface SettlementDraft {
   reference: string;
   dueDate: string;
   notes: string;
+  /** Rekening perusahaan sumber transfer/cek (ADR-0026); null = default perusahaan. */
+  cashAccountId?: number | null;
 }
 
 export function emptySettlementDraft(today: string): SettlementDraft {
-  return { mode: "", method: "cash", paymentDate: today, reference: "", dueDate: "", notes: "" };
+  return { mode: "", method: "cash", paymentDate: today, reference: "", dueDate: "", notes: "", cashAccountId: null };
 }
 
 export type SettlementResult =

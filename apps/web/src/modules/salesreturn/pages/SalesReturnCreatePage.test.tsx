@@ -81,9 +81,21 @@ async function toReviewStep() {
     </MemoryRouter>,
   );
   await screen.findByText("Semen");
+  // Retur sebagian: 1 dari 4 terkirim (qty awal kosong, diisi eksplisit).
+  await userEvent.type(screen.getByLabelText("Qty retur Semen"), "1");
   await userEvent.selectOptions(screen.getByLabelText("Lokasi masuk Semen"), "3");
   await userEvent.click(screen.getByRole("button", { name: "Lanjut" }));
   await userEvent.type(await screen.findByPlaceholderText("Mis. barang cacat / salah kirim"), "Barang cacat");
+}
+
+function renderPage() {
+  render(
+    <MemoryRouter initialEntries={["/sales-returns/new?from=7"]}>
+      <Routes>
+        <Route path="/sales-returns/new" element={<SalesReturnCreatePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
 }
 
 describe("halaman Buat Retur Jual: langkah Tinjau menampilkan penyelesaian (K-04d)", () => {
@@ -97,8 +109,11 @@ describe("halaman Buat Retur Jual: langkah Tinjau menampilkan penyelesaian (K-04
     expect(text).toContain("Nilai terutang ke pelanggan");
     expect(text).toMatch(/Mengurangi piutang otomatis saat dikonfirmasi: Rp\s?60\.000/);
     expect(text).toMatch(/Sisa Rp\s?40\.000 dapat diselesaikan sebagai refund atau saldo pelanggan/);
-    // Body pratinjau memakai payload retur yang sama dengan buat.
+    // Body pratinjau memakai payload retur yang sama dengan buat — hanya qty yang diisi.
     expect(preview.mock.calls[0][0]).toMatchObject({ salesOrderId: 7, returnMode: "return_only" });
+    expect(preview.mock.calls[0][0].items).toEqual([
+      expect.objectContaining({ productId: 10, variantId: 11, locationId: 3, qty: 1 }),
+    ]);
   });
 
   it("retur yang seluruhnya diserap tagihan: tak ada yang direfund", async () => {
@@ -176,5 +191,60 @@ describe("halaman Buat Retur Jual: pilih satuan (temuan 1)", () => {
     await userEvent.selectOptions(screen.getByLabelText("Satuan retur Pipa"), "pcs");
     expect(qty.max).toBe("24");
     expect(screen.getByText(/Sisa/).textContent).toMatch(/24\s*pcs/);
+  });
+});
+
+describe("halaman Buat Retur Jual: retur sebagian pilih-dulu", () => {
+  beforeEach(() => {
+    context.mockResolvedValue({
+      salesOrderId: 7,
+      orderNumber: "SO-0007",
+      status: "completed",
+      lines: [
+        { productId: 10, variantId: 11, productCode: "P-10", productName: "Semen", uom: "sak", uomFactor: 1,
+          orderedQty: 5, delivered: 5, returned: 1, remaining: 4 },
+        { productId: 20, variantId: 21, productCode: "P-20", productName: "Pasir", uom: "m3", uomFactor: 1,
+          orderedQty: 2, delivered: 2, returned: 0, remaining: 2 },
+      ],
+      locations: [{ id: 3, code: "GD-1", name: "Gudang Utama" }],
+    });
+  });
+
+  it("qty awal kosong: tidak ada baris yang otomatis ikut diretur", async () => {
+    renderPage();
+    await screen.findByText("Semen");
+    expect((screen.getByLabelText("Qty retur Semen") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Qty retur Pasir") as HTMLInputElement).value).toBe("");
+    // Lanjut terkunci sampai ada qty yang diisi.
+    expect(screen.getByRole("button", { name: "Lanjut" })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Qty retur Semen"), "1");
+    expect(screen.getByRole("button", { name: "Lanjut" })).toBeEnabled();
+  });
+
+  it("Maks mengisi satu baris; Retur semua sisa mengisi semua; Kosongkan mengosongkan", async () => {
+    renderPage();
+    await screen.findByText("Semen");
+    const semen = screen.getByLabelText("Qty retur Semen") as HTMLInputElement;
+    const pasir = screen.getByLabelText("Qty retur Pasir") as HTMLInputElement;
+    await userEvent.click(screen.getByRole("button", { name: "Isi maksimal Semen" }));
+    expect(semen.value).toBe("4");
+    expect(pasir.value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Kosongkan" }));
+    expect(semen.value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Retur semua sisa" }));
+    expect(semen.value).toBe("4");
+    expect(pasir.value).toBe("2");
+  });
+
+  it("hanya baris berqty yang dikirim ke server", async () => {
+    preview.mockResolvedValue({ message: "ok", data: previewData() });
+    renderPage();
+    await screen.findByText("Semen");
+    await userEvent.type(screen.getByLabelText("Qty retur Pasir"), "1");
+    await userEvent.click(screen.getByRole("button", { name: "Lanjut" }));
+    await userEvent.type(await screen.findByPlaceholderText("Mis. barang cacat / salah kirim"), "Kelebihan kirim");
+    await userEvent.click(screen.getByRole("button", { name: "Pratinjau" }));
+    await waitFor(() => expect(preview).toHaveBeenCalled());
+    expect(preview.mock.calls[0][0].items).toEqual([expect.objectContaining({ productId: 20, variantId: 21, qty: 1 })]);
   });
 });

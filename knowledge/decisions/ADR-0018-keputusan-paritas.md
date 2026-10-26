@@ -2,7 +2,7 @@
 
 ## Status
 Accepted (2026-10-18). Rencana: `docs/plan/penyempurnaan-paritas/PLAN.md` §1. Temuan:
-`docs/ANALISIS-PARITAS-2026-10-16.md` §5. Revisi 2026-10-21: D8 ditambahkan (temuan e2e K1); D9–D10 diputuskan pemilik (cutover); D11 perlakuan koreksi akuntansi migrasi; D12 desain dokumen cetak pelanggan. Revisi 2026-10-22: D13 akun superadmin legacy dimigrasi; akun lawan D11 diubah ADR-0024.
+`docs/ANALISIS-PARITAS-2026-10-16.md` §5. Revisi 2026-10-21: D8 ditambahkan (temuan e2e K1); D9–D10 diputuskan pemilik (cutover); D11 perlakuan koreksi akuntansi migrasi; D12 desain dokumen cetak pelanggan. Revisi 2026-10-22: D13 akun superadmin legacy dimigrasi; akun lawan D11 diubah ADR-0024. Revisi 2026-10-26: D12 mendapat satu pengecualian — rekening tujuan/pembayaran dicetak di nota, bukti bayar, dan struk (ADR-0026).
 
 ## Context
 Audit paritas independen menemukan beberapa perbedaan dari sistem legacy yang bukan bug,

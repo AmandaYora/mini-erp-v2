@@ -41,4 +41,13 @@ describe("orderPaymentSchema", () => {
     expect(p.amountTendered).toBeUndefined();
     expect(p.allocations?.[0].orderType).toBe("purchase");
   });
+
+  it("rekening (ADR-0026) hanya ikut untuk transfer/cek", () => {
+    const s = buildOrderPaymentSchema(100000);
+    const transfer = s.parse({ ...ok, method: "transfer" });
+    expect(toOrderPaymentPayload(transfer, { ...ctx, cashAccountId: 11 }).cashAccountId).toBe(11);
+    expect(toOrderPaymentPayload(transfer, { ...ctx, cashAccountId: null }).cashAccountId).toBeUndefined();
+    const cash = s.parse(ok);
+    expect(toOrderPaymentPayload(cash, { ...ctx, cashAccountId: 11 }).cashAccountId).toBeUndefined();
+  });
 });

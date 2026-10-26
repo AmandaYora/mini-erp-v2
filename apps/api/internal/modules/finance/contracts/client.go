@@ -156,6 +156,11 @@ type FinanceClient interface {
 	// balance sheet of that date: journals dated after it (future-dated entries)
 	// are left out. Empty asOf = lifetime footing.
 	BalancesByKey(ctx context.Context, branchID int64, keys []string, asOf string) (map[string]int64, error)
+	// CashOnHand is the net balance (debit − credit) of EVERY active cash/bank
+	// account (aset, is_cash) — "Kas & Bank". Unlike BalancesByKey("cash",
+	// "bank") it counts each company bank account (rekening, ADR-0026) that is
+	// not behind a mapping key. asOf works like BalancesByKey.
+	CashOnHand(ctx context.Context, branchID int64, asOf string) (int64, error)
 	// PartyControlBalances is each party's balance on one side's control
 	// accounts ("receivable": Piutang + Uang Muka Pelanggan, debit − credit;
 	// "payable": Hutang + Uang Muka Supplier, credit − debit).
@@ -184,6 +189,42 @@ type FinanceClient interface {
 	// (catalog-price) rows: their margin is indicative until a real purchase
 	// cost is known (DB-01 cost-basis status). One grouped read.
 	UncostedCount(ctx context.Context, branchID int64) (int64, error)
+}
+
+// BankAccount is one company bank account (rekening perusahaan, ADR-0026):
+// bank identity tied 1:1 to a cash/bank GL account. Other modules carry the
+// GL account id (AccountID) as the rekening reference — it is what the books
+// post to. Balances stay on the GL account; this row holds no money.
+type BankAccount struct {
+	ID              int64  `json:"id"`
+	AccountID       int64  `json:"accountId"`
+	AccountCode     string `json:"accountCode"`
+	AccountName     string `json:"accountName"`
+	BankName        string `json:"bankName"`
+	AccountNumber   string `json:"accountNumber"`
+	AccountHolder   string `json:"accountHolder"`
+	ShowOnDocuments bool   `json:"showOnDocuments"`
+	IsDefault       bool   `json:"isDefault"`
+	SortOrder       int    `json:"sortOrder"`
+	Status          string `json:"status"` // active | archived
+}
+
+// BankPolicy is what payment and sales need to know about rekening: once the
+// company has at least one active rekening, transfer/check money must name one
+// (Required), and DefaultAccountID (GL account id, 0 = none) is the prefill.
+type BankPolicy struct {
+	Required         bool
+	DefaultAccountID int64
+}
+
+// BankAccountClient is the rekening surface for sales (rekening tujuan of a
+// bill) and payment (rekening the money moved through).
+type BankAccountClient interface {
+	// BankPolicy reports whether rekening are in use and the default one.
+	BankPolicy(ctx context.Context) (BankPolicy, error)
+	// CheckBankAccount validates that accountID is the GL account of an ACTIVE
+	// rekening. The error is a field validation error on `field`.
+	CheckBankAccount(ctx context.Context, accountID int64, field string) error
 }
 
 // HealthClient is finance's read-only data-health surface (ADR-0025): grouped

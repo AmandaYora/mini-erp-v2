@@ -193,6 +193,8 @@ type settlementPayload struct {
 	Reference   string `json:"reference"`
 	DueDate     string `json:"dueDate"`
 	Notes       string `json:"notes"`
+	// CashAccountID: company rekening the transfer leaves from (ADR-0026).
+	CashAccountID int64 `json:"cashAccountId"`
 }
 
 // settlementFrom converts the optional settlement body, checking the caller may
@@ -211,7 +213,7 @@ func settlementFrom(w http.ResponseWriter, r *http.Request, in *settlementPayloa
 		return nil, false
 	}
 	return &application.Settlement{Mode: in.Mode, Method: in.Method, PaymentDate: in.PaymentDate,
-		Reference: in.Reference, DueDate: in.DueDate, Notes: in.Notes}, true
+		Reference: in.Reference, DueDate: in.DueDate, Notes: in.Notes, CashAccountID: in.CashAccountID}, true
 }
 
 // RegisterRoutes mounts goodsreceipt endpoints with explicit permissions.

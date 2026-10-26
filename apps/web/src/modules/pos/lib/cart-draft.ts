@@ -41,6 +41,8 @@ export interface CartDraft {
   /** PPN opsional (K-03); bawaan tanpa pajak. Draf lama tanpa kunci ini tetap terbaca. */
   taxType: SalesTaxType;
   taxRate: number;
+  /** Rekening transfer pilihan kasir (ADR-0026); null = default. Draf lama tanpa kunci ini tetap terbaca. */
+  bankAccountId?: number | null;
   held: HeldSnapshot;
 }
 

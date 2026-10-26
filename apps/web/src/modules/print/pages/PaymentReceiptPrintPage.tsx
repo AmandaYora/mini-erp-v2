@@ -12,7 +12,7 @@ import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { PrintLayout } from "@/modules/print/components/PrintLayout";
-import { formatDocDate, formatDocDateTime, printMethodLabel } from "@/modules/print/document";
+import { formatDocDate, formatDocDateTime, printMethodLabel, transferToLine } from "@/modules/print/document";
 import { readPaperMode, withPaperModeParam, type PrintPaperMode } from "@/modules/print/paper";
 import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
@@ -32,7 +32,7 @@ export default function PaymentReceiptPrintPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const company = useAuthStore((s) => s.company);
   const branch = useAuthStore((s) => s.branch);
-  const { paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
+  const { paper, corrupt, warning, loading: profileLoading, bankAccounts } = usePrintProfile();
 
   const paymentId = Number(id);
 
@@ -129,6 +129,12 @@ export default function PaymentReceiptPrintPage() {
             <span>No. Order</span><strong>{orderNumber}</strong>
             <span>Tanggal</span><span>{formatDocDateTime(payment.paidAt)}</span>
             <span>Metode</span><span>{printMethodLabel(payment.method)}</span>
+            {transferToLine(bankAccounts, payment.cashAccountId) !== "" ? (
+              <>
+                <span>{payment.direction === "out" ? "Dari rekening" : "Ke rekening"}</span>
+                <span>{transferToLine(bankAccounts, payment.cashAccountId, "")}</span>
+              </>
+            ) : null}
             <span>Referensi</span><span>{payment.reference.trim() || "-"}</span>
           </div>
         </div>

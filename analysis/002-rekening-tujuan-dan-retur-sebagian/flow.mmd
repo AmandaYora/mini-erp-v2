@@ -1,0 +1,12 @@
+flowchart TD
+  A[Admin keuangan: Kas & Rekening] -->|buat rekening + akun GL is_cash| M[(finance_bank_accounts)]
+  M -->|options: id, label, default| O[Form order jual / POS]
+  O -->|receipt_account_id = default, bisa diganti| SO[(sales_orders)]
+  SO --> N[Cetak nota: Transfer ke rekening terpilih]
+  SO --> P{Catat pembayaran}
+  P -->|tunai| PC[payments.cash_account_id = NULL]
+  P -->|transfer/cek, prefill dari order| PB[payments.cash_account_id = rekening]
+  PC --> J1[Jurnal: Dr Kas mapping cash / Cr Piutang]
+  PB --> J2[Jurnal: Dr akun rekening / Cr Piutang]
+  PB -.salah pilih.-> K[Koreksi pembayaran: balik jurnal + buat ulang]
+  J2 --> R[Laporan Kas & Rekening per akun, dasbor jumlah semua is_cash]

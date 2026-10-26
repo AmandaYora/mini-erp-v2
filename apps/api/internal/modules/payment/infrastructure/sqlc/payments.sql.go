@@ -92,7 +92,7 @@ func (q *Queries) GetCorrectionOf(ctx context.Context, arg GetCorrectionOfParams
 const getPayment = `-- name: GetPayment :one
 SELECT id, number, branch_id, party_id, party_type, direction,
   amount, method, paid_at, notes, status, client_ref, amount_tendered, reference_number, pair_id,
-  credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
+  cash_account_id, credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
 FROM payments WHERE id = ?
 `
 
@@ -112,6 +112,7 @@ type GetPaymentRow struct {
 	AmountTendered    sql.NullInt64
 	ReferenceNumber   sql.NullString
 	PairID            sql.NullInt64
+	CashAccountID     sql.NullInt64
 	CreditSourceType  sql.NullString
 	CreditSourceID    sql.NullInt64
 	CorrectsPaymentID sql.NullInt64
@@ -139,6 +140,7 @@ func (q *Queries) GetPayment(ctx context.Context, id int64) (GetPaymentRow, erro
 		&i.AmountTendered,
 		&i.ReferenceNumber,
 		&i.PairID,
+		&i.CashAccountID,
 		&i.CreditSourceType,
 		&i.CreditSourceID,
 		&i.CorrectsPaymentID,
@@ -152,7 +154,7 @@ func (q *Queries) GetPayment(ctx context.Context, id int64) (GetPaymentRow, erro
 const getPaymentByClientRef = `-- name: GetPaymentByClientRef :one
 SELECT id, number, branch_id, party_id, party_type, direction,
   amount, method, paid_at, notes, status, client_ref, amount_tendered, reference_number, pair_id,
-  credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
+  cash_account_id, credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
 FROM payments WHERE branch_id = ? AND client_ref = ?
 `
 
@@ -177,6 +179,7 @@ type GetPaymentByClientRefRow struct {
 	AmountTendered    sql.NullInt64
 	ReferenceNumber   sql.NullString
 	PairID            sql.NullInt64
+	CashAccountID     sql.NullInt64
 	CreditSourceType  sql.NullString
 	CreditSourceID    sql.NullInt64
 	CorrectsPaymentID sql.NullInt64
@@ -204,6 +207,7 @@ func (q *Queries) GetPaymentByClientRef(ctx context.Context, arg GetPaymentByCli
 		&i.AmountTendered,
 		&i.ReferenceNumber,
 		&i.PairID,
+		&i.CashAccountID,
 		&i.CreditSourceType,
 		&i.CreditSourceID,
 		&i.CorrectsPaymentID,
@@ -217,9 +221,9 @@ func (q *Queries) GetPaymentByClientRef(ctx context.Context, arg GetPaymentByCli
 const insertPayment = `-- name: InsertPayment :execresult
 INSERT INTO payments
   (number, branch_id, party_id, party_type, direction, amount, method,
-   paid_at, notes, status, client_ref, amount_tendered, reference_number,
+   paid_at, notes, status, client_ref, amount_tendered, reference_number, cash_account_id,
    credit_source_type, credit_source_id, corrects_payment_id, created_by, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertPaymentParams struct {
@@ -235,6 +239,7 @@ type InsertPaymentParams struct {
 	ClientRef         sql.NullString
 	AmountTendered    sql.NullInt64
 	ReferenceNumber   sql.NullString
+	CashAccountID     sql.NullInt64
 	CreditSourceType  sql.NullString
 	CreditSourceID    sql.NullInt64
 	CorrectsPaymentID sql.NullInt64
@@ -256,6 +261,7 @@ func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) (s
 		arg.ClientRef,
 		arg.AmountTendered,
 		arg.ReferenceNumber,
+		arg.CashAccountID,
 		arg.CreditSourceType,
 		arg.CreditSourceID,
 		arg.CorrectsPaymentID,
@@ -267,7 +273,7 @@ func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) (s
 const listActivePaymentsAfter = `-- name: ListActivePaymentsAfter :many
 SELECT id, number, branch_id, party_id, party_type, direction,
   amount, method, paid_at, notes, status, client_ref, amount_tendered, reference_number, pair_id,
-  credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
+  cash_account_id, credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
 FROM payments
 WHERE branch_id = ? AND status = 'active' AND id > ? ORDER BY id ASC LIMIT ?
 `
@@ -294,6 +300,7 @@ type ListActivePaymentsAfterRow struct {
 	AmountTendered    sql.NullInt64
 	ReferenceNumber   sql.NullString
 	PairID            sql.NullInt64
+	CashAccountID     sql.NullInt64
 	CreditSourceType  sql.NullString
 	CreditSourceID    sql.NullInt64
 	CorrectsPaymentID sql.NullInt64
@@ -327,6 +334,7 @@ func (q *Queries) ListActivePaymentsAfter(ctx context.Context, arg ListActivePay
 			&i.AmountTendered,
 			&i.ReferenceNumber,
 			&i.PairID,
+			&i.CashAccountID,
 			&i.CreditSourceType,
 			&i.CreditSourceID,
 			&i.CorrectsPaymentID,
@@ -393,7 +401,7 @@ func (q *Queries) ListCancelledAmong(ctx context.Context, arg ListCancelledAmong
 const listPayments = `-- name: ListPayments :many
 SELECT id, number, branch_id, party_id, party_type, direction,
   amount, method, paid_at, notes, status, client_ref, amount_tendered, reference_number, pair_id,
-  credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
+  cash_account_id, credit_source_type, credit_source_id, corrects_payment_id, cancel_reason, cancelled_at, cancelled_by
 FROM payments
 WHERE branch_id = ?
   AND (? IS NULL OR party_id = ?)
@@ -425,6 +433,7 @@ type ListPaymentsRow struct {
 	AmountTendered    sql.NullInt64
 	ReferenceNumber   sql.NullString
 	PairID            sql.NullInt64
+	CashAccountID     sql.NullInt64
 	CreditSourceType  sql.NullString
 	CreditSourceID    sql.NullInt64
 	CorrectsPaymentID sql.NullInt64
@@ -466,6 +475,7 @@ func (q *Queries) ListPayments(ctx context.Context, arg ListPaymentsParams) ([]L
 			&i.AmountTendered,
 			&i.ReferenceNumber,
 			&i.PairID,
+			&i.CashAccountID,
 			&i.CreditSourceType,
 			&i.CreditSourceID,
 			&i.CorrectsPaymentID,

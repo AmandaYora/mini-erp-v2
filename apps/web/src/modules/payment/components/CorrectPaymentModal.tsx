@@ -9,6 +9,10 @@ import { paymentCorrectSchema } from "@/modules/payment/schemas/payment.schema";
 import type { PaymentCorrectValues } from "@/modules/payment/schemas/payment.schema";
 import type { Payment } from "@/modules/payment/types";
 import { orderTypeLabel, referenceLabel } from "@/modules/payment/types";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { initialPaymentAccount, methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
 
 interface CorrectPaymentModalProps {
   payment: Payment;
@@ -33,6 +37,10 @@ export function CorrectPaymentModal({ payment, submitting, serverError, onClose,
   const [reason, setReason] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const formId = useId();
+  // Rekening transfer/cek (ADR-0026): awalnya rekening pembayaran asli bila masih aktif.
+  const bank = useBankAccounts();
+  const [cashAccountId, setCashAccountId] = useState<number | null>(null);
+  const effectiveAccount = cashAccountId ?? initialPaymentAccount(bank.all, payment.cashAccountId ?? null);
 
   const amountNum = Number(amount);
   const tenderedNum = Number(tendered);
@@ -47,13 +55,16 @@ export function CorrectPaymentModal({ payment, submitting, serverError, onClose,
       amountTendered: method === "cash" && tendered.trim() ? tendered.trim() : undefined,
       notes: notes.trim() ? notes.trim() : undefined,
       reason,
+      cashAccountId: methodUsesBankAccount(method) && effectiveAccount !== null ? effectiveAccount : undefined,
     });
-    if (!parsed.success) {
-      const fieldErrors = parsed.error.flatten().fieldErrors;
+    const bankError = paymentBankAccountError(bank, method, effectiveAccount);
+    if (!parsed.success || bankError) {
+      const fieldErrors: Record<string, string[] | undefined> = parsed.success ? {} : parsed.error.flatten().fieldErrors;
       const mapped: Record<string, string> = {};
       for (const [k, v] of Object.entries(fieldErrors)) {
         if (v && v.length > 0 && v[0]) mapped[k] = v[0];
       }
+      if (bankError) mapped.cashAccountId = bankError;
       setErrors(mapped);
       return;
     }
@@ -150,14 +161,24 @@ export function CorrectPaymentModal({ payment, submitting, serverError, onClose,
             </div>
           </div>
         ) : (
-          <FormField label={referenceLabel(method)} errorText={errors.reference} helperText="Opsional, maksimal 100 karakter.">
-            <TextInput
-              aria-label={referenceLabel(method)}
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
-              maxLength={100}
+          <>
+            <PaymentBankAccountField
+              bank={bank}
+              method={method}
+              value={effectiveAccount}
+              onChange={setCashAccountId}
+              direction={payment.direction === "out" ? "out" : "in"}
+              errorText={errors.cashAccountId}
             />
-          </FormField>
+            <FormField label={referenceLabel(method)} errorText={errors.reference} helperText="Opsional, maksimal 100 karakter.">
+              <TextInput
+                aria-label={referenceLabel(method)}
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                maxLength={100}
+              />
+            </FormField>
+          </>
         )}
 
         <FormField label="Catatan" errorText={errors.notes}>

@@ -111,6 +111,7 @@ sql:
       - migrations/000031_finance_fn.up.sql
       - migrations/000035_finance_corrections.up.sql
       - migrations/000044_finance_opening_correction.up.sql
+      - migrations/000046_finance_bank_accounts.up.sql
     queries: internal/modules/finance/infrastructure/queries
     gen:
       go:
@@ -170,6 +171,7 @@ sql:
       - migrations/000013_payment.up.sql
       - migrations/000023_payment_credit_source.up.sql
       - migrations/000032_payment_corrections.up.sql
+      - migrations/000048_payment_cash_account.up.sql
     queries: internal/modules/payment/infrastructure/queries
     gen:
       go:
@@ -232,6 +234,7 @@ sql:
       - migrations/000019_sales.up.sql
       - migrations/000033_sales_corrections.up.sql
       - migrations/000043_sales_origin.up.sql
+      - migrations/000047_sales_receipt_account.up.sql
     queries: internal/modules/sales/infrastructure/queries
     gen:
       go:

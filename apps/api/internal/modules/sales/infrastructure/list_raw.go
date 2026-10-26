@@ -71,7 +71,8 @@ const rawOrderColumns = `id, number, branch_id, party_id, channel, member_code,
 	discount_total, tax_total, grand_total, status, notes,
 	ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
 	ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-	created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin`
+	created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
+	receipt_account_id`
 
 // List returns one page via a deferred join: the page of ids is picked on the
 // narrow index, only those rows are read wide.
@@ -128,7 +129,8 @@ func scanOrders(rows *sql.Rows) ([]*contracts.SalesOrder, error) {
 			&h.DiscountTotal, &h.TaxTotal, &h.GrandTotal, &h.Status, &h.Notes,
 			&h.ShipToAddressID, &h.ShipToLabel, &h.ShipToRecipient, &h.ShipToPhone,
 			&h.ShipToAddress, &h.TaxInvoiceNumber, &h.TaxInvoiceDate, &h.ClientRef,
-			&h.CreatedBy, &h.AssignedUserID, &h.CreditApprovedBy, &h.CreditApprovedAt, &h.CreatedAt, &h.Origin); err != nil {
+			&h.CreatedBy, &h.AssignedUserID, &h.CreditApprovedBy, &h.CreditApprovedAt, &h.CreatedAt, &h.Origin,
+			&h.ReceiptAccountID); err != nil {
 			return nil, err
 		}
 		out = append(out, toOrder(h))

@@ -32,6 +32,7 @@ func toPayment(r sqlc.GetPaymentRow) *contracts.Payment {
 		AmountTendered:   r.AmountTendered.Int64,
 		Reference:        r.ReferenceNumber.String,
 		PairID:           r.PairID.Int64,
+		CashAccountID:    r.CashAccountID.Int64,
 		CreditSourceType: r.CreditSourceType.String,
 		CreditSourceID:   r.CreditSourceID.Int64,
 

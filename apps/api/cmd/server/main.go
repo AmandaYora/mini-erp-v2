@@ -165,7 +165,7 @@ func main() {
 	salesreturnMod.RegisterRoutes(mux, perm, branchGuard)
 	purchasereturnMod.RegisterRoutes(mux, perm, branchGuard)
 	paymentMod.RegisterRoutes(mux, perm, branchGuard)
-	financeMod.RegisterRoutes(mux, perm, branchGuard)
+	financeMod.RegisterRoutes(mux, perm, branchGuard, authn)
 	auditMod.RegisterRoutes(mux, perm, branchGuard)
 	dashboardMod.RegisterRoutes(mux, perm, branchGuard)
 	reportingMod.RegisterRoutes(mux, perm, branchGuard)

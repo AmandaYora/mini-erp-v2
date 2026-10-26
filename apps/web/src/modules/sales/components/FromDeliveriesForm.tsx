@@ -50,6 +50,10 @@ import type { ItemErrors } from "@/modules/sales/lib/server-errors";
 import { parseManualPrice } from "@/modules/sales/lib/payload";
 import { clearClientRef, clientRefFor } from "@/modules/sales/lib/from-deliveries";
 import { UserSearchSelect } from "@/modules/users/components/UserSearchSelect";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 import { productsService } from "@/modules/products/services/products.service";
 
 // Mode "order dari surat jalan" (ADR-0022 §4, PLAN W-06). Beda dengan form biasa:
@@ -196,6 +200,10 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
   // --- pelunasan order tunai (cermin konfirmasi SJ COD) ---
   const [settleMode, setSettleMode] = useState<SettleMode>("");
   const [payMethod, setPayMethod] = useState<"cash" | "transfer" | "check">("cash");
+  // Rekening transfer/cek pelunasan (ADR-0026): null = default perusahaan.
+  const bank = useBankAccounts();
+  const [payAccount, setPayAccount] = useState<number | null>(null);
+  const effectivePayAccount = payAccount ?? bank.defaultAccountId;
   const [payDate, setPayDate] = useState(todayWIB());
   const [payRef, setPayRef] = useState("");
   const [payTendered, setPayTendered] = useState("");
@@ -377,6 +385,8 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
       } else if (settleMode === "pay_now" && payMethod !== "cash" && payRef.trim() === "") {
         e["settlement.reference"] = payMethod === "check" ? "Nomor cek wajib diisi" : "Referensi transfer wajib diisi";
       }
+      const bankError = settleMode === "pay_now" ? paymentBankAccountError(bank, payMethod, effectivePayAccount) : null;
+      if (bankError) e["settlement.cashAccountId"] = bankError;
     }
     if (taxInvoiceDate.trim() !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(taxInvoiceDate.trim())) {
       e.taxInvoiceDate = "Format tanggal YYYY-MM-DD";
@@ -397,7 +407,13 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
       paymentDate: payDate.trim() || undefined,
       reference: payRef.trim() || undefined,
       amountTendered: payMethod === "cash" && Number.isFinite(tendered) && tendered > 0 ? Math.round(tendered) : undefined,
+      cashAccountId: transferAccount() ?? undefined,
     };
+  }
+
+  /** Rekening transfer/cek bila order ini langsung dilunasi non-tunai; null selain itu. */
+  function transferAccount(): number | null {
+    return paymentTerms === "cod" && settleMode === "pay_now" && methodUsesBankAccount(payMethod) ? effectivePayAccount : null;
   }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -414,7 +430,13 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
     // clientRef yang sama dipakai ulang bila percobaan sebelumnya gagal di tengah:
     // server melanjutkan orkestrasi (finish_from_deliveries), bukan membuat order kedua.
     const clientRef = clientRefFor(deliveryIds);
-    const body: FromDeliveriesPayload = { ...previewBody, settlement: settlementPayload(), clientRef };
+    const receipt = transferAccount();
+    const body: FromDeliveriesPayload = {
+      ...previewBody,
+      settlement: settlementPayload(),
+      ...(receipt !== null ? { receiptAccountId: receipt } : {}),
+      clientRef,
+    };
     setSubmitting(true);
     try {
       const res = await salesService.createFromDeliveries(body);
@@ -719,6 +741,15 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
                     <FormField label="Tanggal bayar" htmlFor="f-pay-date" errorText={errors["settlement.paymentDate"]}>
                       <DateInput id="f-pay-date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
                     </FormField>
+                    <PaymentBankAccountField
+                      bank={bank}
+                      method={payMethod}
+                      value={effectivePayAccount}
+                      onChange={setPayAccount}
+                      direction="in"
+                      errorText={errors["settlement.cashAccountId"]}
+                      id="f-pay-account"
+                    />
                     {payMethod !== "cash" && (
                       <FormField
                         label={payMethod === "check" ? "Nomor cek" : "Referensi transfer"}

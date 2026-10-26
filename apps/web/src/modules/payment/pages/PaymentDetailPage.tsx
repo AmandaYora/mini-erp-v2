@@ -44,11 +44,14 @@ import {
   referenceLabel,
 } from "@/modules/payment/types";
 import { allocationHref, paymentRail } from "@/modules/payment/lib/payment-rail";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { bankAccountByAccountId, bankAccountLabel } from "@/modules/finance/lib/bank-accounts";
 
 export default function PaymentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
+  const bank = useBankAccounts();
   const canCreate = can("payment.create");
   const canCancel = can("payment.archive");
 
@@ -177,6 +180,10 @@ export default function PaymentDetailPage() {
     { label: "Jenis", value: paymentKindLabel(payment) },
     { label: "Tanggal bayar", value: formatDateTime(payment.paidAt) },
   ];
+  const rekening = bankAccountByAccountId(bank.all, payment.cashAccountId);
+  if (rekening) {
+    info.push({ label: payment.direction === "out" ? "Dari rekening" : "Ke rekening", value: bankAccountLabel(rekening) });
+  }
   if (payment.method !== "cash" && payment.reference) {
     info.push({ label: referenceLabel(payment.method), value: payment.reference });
   }

@@ -9,6 +9,10 @@ import { RupiahInput } from "@/modules/payment/components/RupiahInput";
 import { paymentService } from "@/modules/payment/services/payment.service";
 import { cashChange } from "@/modules/payment/lib/fifo";
 import { referenceLabel } from "@/modules/payment/types";
+import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
+import { initialPaymentAccount } from "@/modules/finance/lib/bank-accounts";
 import {
   buildOrderPaymentSchema,
   toOrderPaymentPayload,
@@ -32,6 +36,8 @@ interface Props {
   /** 0 = walk-in (tanpa pihak): alokasi tetap eksplisit ke order ini. */
   partyId: number;
   outstanding: number;
+  /** Rekening tujuan tagihan (order jual, ADR-0026) — nilai awal rekening transfer. */
+  billAccountId?: number | null;
 }
 
 /**
@@ -48,7 +54,12 @@ export function OrderPaymentModal({
   orderNumber,
   partyId,
   outstanding,
+  billAccountId = null,
 }: Props) {
+  const bank = useBankAccounts();
+  // null = belum dipilih: nilai efektif = rekening tagihan, lalu default.
+  const [cashAccountId, setCashAccountId] = useState<number | null>(null);
+  const effectiveAccount = cashAccountId ?? initialPaymentAccount(bank.all, billAccountId);
   const [amount, setAmount] = useState(String(outstanding));
   const [method, setMethod] = useState<"cash" | "transfer" | "check">("cash");
   const [paidAt, setPaidAt] = useState(todayWIB());
@@ -76,6 +87,7 @@ export function OrderPaymentModal({
       setServerError(null);
       setSaving(false);
       setClientRef(newClientRef());
+      setCashAccountId(null);
     }
   }
 
@@ -93,11 +105,13 @@ export function OrderPaymentModal({
       amountTendered: method === "cash" ? tendered : "",
       notes,
     });
-    if (!parsed.success) {
+    const bankError = paymentBankAccountError(bank, method, effectiveAccount);
+    if (!parsed.success || bankError) {
       const mapped: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
+      for (const issue of parsed.success ? [] : parsed.error.issues) {
         mapped[String(issue.path[0] ?? "_")] ??= issue.message;
       }
+      if (bankError) mapped.cashAccountId = bankError;
       setErrors(mapped);
       return;
     }
@@ -106,7 +120,7 @@ export function OrderPaymentModal({
     setSaving(true);
     try {
       const res = await paymentService.create(
-        toOrderPaymentPayload(parsed.data, { partyId, orderType, orderId, clientRef }),
+        toOrderPaymentPayload(parsed.data, { partyId, orderType, orderId, clientRef, cashAccountId: effectiveAccount }),
       );
       toast.fromServer(res.message, "Pembayaran dicatat", res.data.number);
       onPaid();
@@ -188,9 +202,19 @@ export function OrderPaymentModal({
             />
           </FormField>
         ) : (
-          <FormField label={referenceLabel(method)} errorText={errors.reference}>
-            <TextInput value={reference} maxLength={100} onChange={(e) => setReference(e.target.value)} />
-          </FormField>
+          <>
+            <PaymentBankAccountField
+              bank={bank}
+              method={method}
+              value={effectiveAccount}
+              onChange={setCashAccountId}
+              direction={isPurchase ? "out" : "in"}
+              errorText={errors.cashAccountId}
+            />
+            <FormField label={referenceLabel(method)} errorText={errors.reference}>
+              <TextInput value={reference} maxLength={100} onChange={(e) => setReference(e.target.value)} />
+            </FormField>
+          </>
         )}
         <FormField label="Catatan" errorText={errors.notes}>
           <TextArea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />

@@ -524,7 +524,20 @@ func (h *Handler) ListTaxPeriods(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegisterRoutes mounts finance endpoints with explicit permissions.
-func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
+//
+// bank-accounts/options takes authentication plus the branch guard but no
+// permission: every role that records a bill or a transfer picks a rekening
+// and every printed bill shows it (ADR-0026, same pattern as
+// company/print-profile).
+func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler, authn func(func(http.ResponseWriter, *http.Request)) http.Handler) {
+	mux.Handle("GET /api/v1/finance/bank-accounts/options", authn(func(w http.ResponseWriter, r *http.Request) {
+		authcontracts.RequireBranch(http.HandlerFunc(h.ListBankAccounts)).ServeHTTP(w, r)
+	}))
+	mux.Handle("GET /api/v1/finance/bank-accounts", perm("finance.view", authcontracts.Guard(h.ListBankAccounts, branchGuard)))
+	mux.Handle("POST /api/v1/finance/bank-accounts", perm("finance.manage", authcontracts.Guard(h.CreateBankAccount, branchGuard)))
+	mux.Handle("PUT /api/v1/finance/bank-accounts/{id}", perm("finance.manage", authcontracts.Guard(h.UpdateBankAccount, branchGuard)))
+	mux.Handle("POST /api/v1/finance/bank-accounts/{id}/archive", perm("finance.manage", authcontracts.Guard(h.ArchiveBankAccount, branchGuard)))
+	mux.Handle("POST /api/v1/finance/bank-accounts/{id}/restore", perm("finance.manage", authcontracts.Guard(h.RestoreBankAccount, branchGuard)))
 	mux.Handle("GET /api/v1/finance/accounts", perm("finance.view", authcontracts.Guard(h.ListAccounts, branchGuard)))
 	mux.Handle("POST /api/v1/finance/accounts", perm("finance.manage", authcontracts.Guard(h.CreateAccount, branchGuard)))
 	mux.Handle("PUT /api/v1/finance/accounts/{id}", perm("finance.manage", authcontracts.Guard(h.UpdateAccount, branchGuard)))

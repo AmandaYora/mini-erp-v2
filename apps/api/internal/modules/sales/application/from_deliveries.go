@@ -62,6 +62,8 @@ type FromDeliveriesInput struct {
 	AssignedUserID   int64
 	TaxInvoiceNumber string
 	TaxInvoiceDate   string
+	// ReceiptAccountID is the bill's rekening tujuan (ADR-0026); 0 = default.
+	ReceiptAccountID int64
 	// Lines price the stock lines of the notes (matched by product/variant/uom;
 	// a line the notes do not carry is refused). Missing = catalog/member price.
 	Lines []FromDeliveriesLine
@@ -89,6 +91,8 @@ type FromDeliveriesSettlement struct {
 	Reference      string
 	AmountTendered int64
 	DueDate        string
+	// CashAccountID is the company rekening of a transfer/check (ADR-0026).
+	CashAccountID int64
 }
 
 // FromDeliveriesPreview is the order as it would be written: the customer and
@@ -275,7 +279,7 @@ func (s *Service) planFromDeliveries(ctx context.Context, branchID int64, in Fro
 	oi := OrderInput{
 		PartyID: first.PartyID, Channel: contracts.ChannelRegular, OrderDate: orderDate,
 		DueDate: strings.TrimSpace(in.DueDate), PaymentTerms: terms, TaxType: taxType, TaxRate: in.TaxRate,
-		Notes: in.Notes, AssignedUserID: in.AssignedUserID,
+		Notes: in.Notes, AssignedUserID: in.AssignedUserID, ReceiptAccountID: in.ReceiptAccountID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate,
 		ShipToLabel: first.ShipToLabel, ShipToRecipient: first.ShipToRecipient,
 		ShipToPhone: first.ShipToPhone, ShipToAddress: first.ShipToAddress,
@@ -483,8 +487,9 @@ func (s *Service) settleFromDeliveries(ctx context.Context, actorID, branchID in
 		_, _, err := s.dep.payments.RecordForOrder(ctx, paymentcontracts.RecordInput{
 			ActorID: actorID, BranchID: branchID, OrderType: paymentcontracts.OrderSales, OrderID: o.ID,
 			Method: method, PaidAt: st.PaymentDate, Reference: st.Reference,
-			AmountTendered: st.AmountTendered, ClientRef: "sjl:" + strconv.FormatInt(o.ID, 10),
-			Notes: "Pelunasan order dari surat jalan " + o.Number,
+			AmountTendered: st.AmountTendered, CashAccountID: st.CashAccountID,
+			ClientRef: "sjl:" + strconv.FormatInt(o.ID, 10),
+			Notes:     "Pelunasan order dari surat jalan " + o.Number,
 		})
 		return err
 	case SettleSwitchToNet:

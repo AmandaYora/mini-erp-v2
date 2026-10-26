@@ -40,7 +40,7 @@ func paymentView(p *contracts.Payment) map[string]any {
 		"partyPhone": p.PartyPhone, "partyAddress": p.PartyAddress,
 		"direction": p.Direction, "amount": p.Amount, "method": p.Method,
 		"paidAt": p.PaidAt, "notes": p.Notes, "status": p.Status,
-		"clientRef": p.ClientRef, "reference": p.Reference,
+		"clientRef": p.ClientRef, "reference": p.Reference, "cashAccountId": p.CashAccountID,
 		"amountTendered": p.AmountTendered, "change": change(p),
 		"pairId":      p.PairID,
 		"allocations": allocs,
@@ -81,10 +81,19 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		orderID = id
 	}
+	var cashAccountID int64
+	if raw := q.Get("cashAccountId"); raw != "" {
+		id, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil || id <= 0 {
+			response.Fail(w, apperror.Validation("", []apperror.FieldError{{Field: "cashAccountId", Message: "harus angka positif"}}))
+			return
+		}
+		cashAccountID = id
+	}
 	res, err := h.svc.ListFiltered(r.Context(), authcontracts.BranchID(r), application.ListFilter{
 		Search: c.Search, PartyID: c.PartyID, Status: q.Get("status"), Method: q.Get("method"),
 		Direction: q.Get("direction"), From: c.From, To: c.To,
-		OrderType: q.Get("orderType"), OrderID: orderID,
+		OrderType: q.Get("orderType"), OrderID: orderID, CashAccountID: cashAccountID,
 	}, page, limit)
 	if err != nil {
 		response.FailErr(w, err)
@@ -143,6 +152,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ClientRef      string `json:"clientRef"`
 		AmountTendered int64  `json:"amountTendered"`
 		Reference      string `json:"reference"`
+		CashAccountID  int64  `json:"cashAccountId"`
 		Allocations    []struct {
 			OrderType string `json:"orderType"`
 			OrderID   int64  `json:"orderId" validate:"required"`
@@ -180,7 +190,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	p, err := h.svc.Create(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), in.PartyID, method, in.PaidAt, in.Notes, in.Amount, allocs,
 		application.WithClientRef(in.ClientRef),
 		application.WithAmountTendered(in.AmountTendered),
-		application.WithReference(in.Reference))
+		application.WithReference(in.Reference),
+		application.WithCashAccount(in.CashAccountID))
 	if err != nil {
 		response.FailErr(w, err)
 		return
@@ -232,6 +243,7 @@ func (h *Handler) Correct(w http.ResponseWriter, r *http.Request) {
 		AmountTendered int64  `json:"amountTendered"`
 		Notes          string `json:"notes"`
 		Reason         string `json:"reason" validate:"required"`
+		CashAccountID  int64  `json:"cashAccountId"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
@@ -262,6 +274,7 @@ func (h *Handler) Correct(w http.ResponseWriter, r *http.Request) {
 		ActorID: authcontracts.ActorID(r), BranchID: branchID, PaymentID: id,
 		Method: in.Method, Amount: in.Amount, PaidAt: in.PaidAt, Reference: in.Reference,
 		AmountTendered: in.AmountTendered, Notes: in.Notes, Reason: in.Reason,
+		CashAccountID: in.CashAccountID,
 	})
 	if appErr != nil {
 		response.FailErr(w, appErr)

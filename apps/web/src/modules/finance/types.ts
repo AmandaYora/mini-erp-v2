@@ -18,6 +18,22 @@ export interface Account {
   status: string;
 }
 
+/** Rekening perusahaan (ADR-0026): identitas bank di atas satu akun kas/bank sendiri.
+ * Modul lain menyimpan `accountId` (akun buku besar) sebagai acuan rekening. */
+export interface BankAccount {
+  id: number;
+  accountId: number;
+  accountCode: string;
+  accountName: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  showOnDocuments: boolean;
+  isDefault: boolean;
+  sortOrder: number;
+  status: string;
+}
+
 export interface JournalLine {
   accountId: number;
   accountCode: string;

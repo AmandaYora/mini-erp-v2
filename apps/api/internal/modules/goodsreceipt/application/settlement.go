@@ -127,8 +127,9 @@ func (s *Service) applySettlement(ctx context.Context, actorID, branchID int64, 
 		p, _, err := s.payments.RecordForOrder(ctx, paymentcontracts.RecordInput{
 			ActorID: actorID, BranchID: branchID, OrderType: paymentcontracts.OrderPurchase, OrderID: po.ID,
 			Method: st.Method, PaidAt: st.PaymentDate, Reference: st.Reference,
-			ClientRef: "gr:" + strconv.FormatInt(rec.ID, 10),
-			Notes:     notes,
+			CashAccountID: st.CashAccountID,
+			ClientRef:     "gr:" + strconv.FormatInt(rec.ID, 10),
+			Notes:         notes,
 		})
 		if err != nil || p == nil {
 			return nil, err

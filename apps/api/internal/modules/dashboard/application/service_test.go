@@ -94,6 +94,10 @@ func (f *fakeFinance) InventoryValue(_ context.Context, _ int64) ([]financecontr
 	return []financecontracts.InventoryPosition{}, 700, nil
 }
 
+func (f *fakeFinance) CashOnHand(_ context.Context, _ int64, _ string) (int64, error) {
+	return 1000, nil
+}
+
 func (f *fakeFinance) InventoryTotal(_ context.Context, _ int64) (int64, error) {
 	f.inventoryTotalCall++
 	return 700, nil

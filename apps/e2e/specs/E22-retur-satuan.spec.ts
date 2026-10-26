@@ -28,6 +28,9 @@ test("E22 retur beli PO ber-DUS: pilih satuan PCS, batas dan nilai mengikuti sat
   const errors = collectErrors(page);
   await page.goto(`/purchase-returns/new?from=${po.id}`);
   const qty = page.getByLabel(`Qty retur ${prod.name}`);
+  // Pilih-dulu: qty awal kosong, "Maks" mengisi sisa baris.
+  await expect(qty).toHaveValue("");
+  await page.getByRole("button", { name: `Isi maksimal ${prod.name}` }).click();
   await expect(qty).toHaveValue("2");
   await page.getByLabel(`Satuan retur ${prod.name}`).selectOption("pcs");
   await expect(qty).toHaveValue("24");

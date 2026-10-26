@@ -171,6 +171,12 @@
     },
     {
       "rule": "W",
+      "file": "apps/api/internal/modules/payment/payment.module.go",
+      "match": "SetBankAccounts",
+      "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go): finance, which owns the rekening (ADR-0026), is built after payment; closed by Wire and asserted by Modules.Verify."
+    },
+    {
+      "rule": "W",
       "file": "apps/api/internal/modules/product/product.module.go",
       "match": "SetStockState",
       "reason": "Genuine construction cycle (see the cycle list in bootstrap/wire.go); closed by Wire and asserted by Modules.Verify (F8-13)."

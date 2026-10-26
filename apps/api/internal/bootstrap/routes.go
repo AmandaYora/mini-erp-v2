@@ -32,7 +32,7 @@ func RegisterRoutes(m *Modules, mux *http.ServeMux, log *slog.Logger) {
 	m.SalesReturn.RegisterRoutes(mux, perm, branchGuard)
 	m.PurchaseReturn.RegisterRoutes(mux, perm, branchGuard)
 	m.Payment.RegisterRoutes(mux, perm, branchGuard)
-	m.Finance.RegisterRoutes(mux, perm, branchGuard)
+	m.Finance.RegisterRoutes(mux, perm, branchGuard, authn)
 	m.Audit.RegisterRoutes(mux, perm, branchGuard)
 	m.Dashboard.RegisterRoutes(mux, perm, branchGuard)
 	m.Reporting.RegisterRoutes(mux, perm, branchGuard)

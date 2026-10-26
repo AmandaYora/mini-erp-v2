@@ -38,6 +38,7 @@ import {
 import type {
   Account,
   AccountMappings,
+  BankAccount,
   BatchItem,
   BatchPostResult,
   CloseDayResult,
@@ -55,6 +56,19 @@ import type {
   TaxAdjustmentFile,
   UncostedItem,
 } from "@/modules/finance/types";
+
+/** Isi form rekening. `accountId` 0 + `accountCode` = buat akun kas/bank baru. */
+export interface BankAccountPayload {
+  accountId?: number;
+  accountCode?: string;
+  accountName?: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  showOnDocuments: boolean;
+  isDefault: boolean;
+  sortOrder?: number;
+}
 
 export interface JournalListParams {
   from?: string;
@@ -166,6 +180,24 @@ export const financeService = {
 
   mappings: () =>
     apiGet<AccountMappings>("/api/v1/finance/account-mappings"),
+
+  // Rekening perusahaan (ADR-0026). Daftar admin butuh finance.view; options
+  // terbuka untuk semua pengguna bercabang (kasir memilih, cetak menampilkan).
+  bankAccounts: () => apiGet<BankAccount[]>("/api/v1/finance/bank-accounts"),
+
+  bankAccountOptions: () => apiGet<BankAccount[]>("/api/v1/finance/bank-accounts/options"),
+
+  createBankAccount: (body: BankAccountPayload) =>
+    apiPostFull<BankAccount>("/api/v1/finance/bank-accounts", body),
+
+  updateBankAccount: (id: number, body: BankAccountPayload) =>
+    apiPutFull<BankAccount>(`/api/v1/finance/bank-accounts/${id}`, body),
+
+  archiveBankAccount: (id: number) =>
+    apiPostFull<BankAccount>(`/api/v1/finance/bank-accounts/${id}/archive`),
+
+  restoreBankAccount: (id: number) =>
+    apiPostFull<BankAccount>(`/api/v1/finance/bank-accounts/${id}/restore`),
 
   setMapping: (key: string, accountId: number) =>
     apiPutFull<unknown>("/api/v1/finance/account-mappings", { key, accountId }),

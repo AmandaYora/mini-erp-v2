@@ -35,6 +35,8 @@ export interface BuildPosOrderInput {
   notes?: string;
   /** Alamat kirim opt-in (id buku alamat pelanggan); diabaikan untuk walk-in. */
   shipToAddressId?: number | null;
+  /** Rekening tujuan (ADR-0026); null/0 = default perusahaan di server. */
+  receiptAccountId?: number | null;
   items: PosOrderLinePayload[];
 }
 
@@ -43,8 +45,9 @@ export const POS_NOTES_MAX = 1000;
 /** Bagian opsional payload: catatan dan alamat kirim (SL-07). */
 function optionalFields(
   input: BuildPosOrderInput,
-): Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate"> {
-  const out: Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate"> = {};
+): Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate" | "receiptAccountId"> {
+  const out: Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate" | "receiptAccountId"> = {};
+  if (input.receiptAccountId != null && input.receiptAccountId > 0) out.receiptAccountId = input.receiptAccountId;
   if (input.taxType === "include" || input.taxType === "exclude") {
     const rate = input.taxRate ?? 0;
     if (!Number.isFinite(rate) || rate <= 0 || rate > 100) {
@@ -180,6 +183,8 @@ export interface CheckoutPlan {
   method: PayMethod;
   /** Uang diterima (tunai). Diabaikan untuk transfer. */
   tendered: number;
+  /** Rekening transfer (ADR-0026); diabaikan untuk tunai. null = rekening order/default. */
+  cashAccountId?: number | null;
   /** Punya izin payment.create. Tanpa izin, bayar sekarang ditolak SEBELUM dokumen apa pun dibuat:
    * konfirmasi SJ order tunai mewajibkan settlement, jadi order akan tertinggal setengah jalan
    * (KI legacy BR-18 / e2e K1). Bayar Nanti tetap bisa. */
@@ -212,6 +217,13 @@ export type CheckoutOutcome =
 /** Pesan bila bayar sekarang diminta tanpa izin payment.create (K1). */
 export const NO_PAY_PERMISSION_MESSAGE =
   "Akun ini belum punya izin mencatat pembayaran, jadi pembayaran langsung tidak bisa diproses. Pilih Bayar Nanti, atau minta administrator menambahkan izin “Pembayaran: Tambah” ke role Anda.";
+
+/** Rekening transfer pada settlement/pembayaran (ADR-0026); kosong untuk tunai. */
+function transferAccount(plan: CheckoutPlan): { cashAccountId?: number } {
+  return plan.method !== "cash" && plan.cashAccountId != null && plan.cashAccountId > 0
+    ? { cashAccountId: plan.cashAccountId }
+    : {};
+}
 
 /** Jalankan checkout dari titik yang ditentukan `state` (null = awal). */
 export async function runCheckout(
@@ -289,6 +301,7 @@ export async function runCheckout(
                 mode: "pay_now",
                 method: plan.method,
                 ...(plan.method === "cash" ? { amountTendered: plan.tendered } : {}),
+                ...transferAccount(plan),
               }
             : undefined;
           await api.confirmDelivery(deliveryId, settlement);
@@ -314,6 +327,7 @@ export async function runCheckout(
             allocations: [{ orderType: "sales", orderId: o.id, amount }],
             clientRef: plan.clientRef,
             ...(plan.method === "cash" ? { amountTendered: plan.tendered } : {}),
+            ...transferAccount(plan),
           });
           outstanding = 0;
           step = "done";

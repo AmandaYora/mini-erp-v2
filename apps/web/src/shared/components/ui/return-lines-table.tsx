@@ -2,6 +2,7 @@ import { LineItemsEditor } from "@/shared/components/patterns/line-items-editor"
 import type { LineColumn } from "@/shared/components/patterns/line-items-editor";
 import { Qty } from "@/shared/components/patterns/values";
 import { EmptyState } from "../feedback/empty-state";
+import { Button } from "./button";
 import type { DataTableColumn } from "./data-table";
 import { INPUT } from "./field-classes";
 import { SelectInput } from "./input";
@@ -46,6 +47,8 @@ interface Props<T extends ReturnLineRow> {
 /**
  * Grid baris retur (mode "pilih qty dari sumber") di atas LineItemsEditor:
  * baris datang dari dokumen sumber, pengguna hanya mengisi qty (dibatasi sisa) + kolom tambahan.
+ * Qty awal kosong (pilih-dulu, seperti sistem lama): "Retur semua sisa" mengisi setiap baris dengan
+ * sisanya, "Maks" mengisi satu baris — retur penuh selalu aksi yang disengaja.
  */
 export function ReturnLinesTable<T extends ReturnLineRow>({
   rows,
@@ -109,20 +112,33 @@ export function ReturnLinesTable<T extends ReturnLineRow>({
     {
       id: "qty",
       header: "Qty retur",
-      width: "8rem",
+      width: "11rem",
       align: "right",
       render: (r) => (
-        <input
-          type="number"
-          min={0}
-          max={remainingInUnit(r)}
-          step="any"
-          value={r.qty}
-          disabled={disabled}
-          aria-label={`Qty retur ${r.productName}`}
-          onChange={(e) => onQtyChange(r.key, clampQty(e.target.value, remainingInUnit(r)))}
-          className={`${INPUT} tabular text-right`}
-        />
+        <div className="flex items-center justify-end gap-1">
+          <input
+            type="number"
+            min={0}
+            max={remainingInUnit(r)}
+            step="any"
+            value={r.qty}
+            placeholder="0"
+            disabled={disabled}
+            aria-label={`Qty retur ${r.productName}`}
+            onChange={(e) => onQtyChange(r.key, clampQty(e.target.value, remainingInUnit(r)))}
+            className={`${INPUT} tabular text-right`}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled || remainingInUnit(r) <= 0}
+            aria-label={`Isi maksimal ${r.productName}`}
+            onClick={() => onQtyChange(r.key, String(remainingInUnit(r)))}
+          >
+            Maks
+          </Button>
+        </div>
       ),
     },
     ...extraColumns.map(
@@ -135,5 +151,36 @@ export function ReturnLinesTable<T extends ReturnLineRow>({
       }),
     ),
   ];
-  return <LineItemsEditor<T> lines={rows} getKey={(r) => r.key} columns={columns} readOnly />;
+  const returnable = rows.filter((r) => remainingInUnit(r) > 0);
+  const anyFilled = rows.some((r) => r.qty.trim() !== "");
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Isi qty hanya pada barang yang dikembalikan; baris kosong tidak ikut diretur.
+        </p>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={disabled || returnable.length === 0}
+            onClick={() => returnable.forEach((r) => onQtyChange(r.key, String(remainingInUnit(r))))}
+          >
+            Retur semua sisa
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled || !anyFilled}
+            onClick={() => rows.forEach((r) => onQtyChange(r.key, ""))}
+          >
+            Kosongkan
+          </Button>
+        </div>
+      </div>
+      <LineItemsEditor<T> lines={rows} getKey={(r) => r.key} columns={columns} readOnly />
+    </div>
+  );
 }

@@ -41,6 +41,7 @@ import { scanAction, scanErrorMessage } from "@/modules/pos/lib/scan";
 import { sellableVariants } from "@/modules/products/lib/variants";
 import type { ScanOutcome } from "@/modules/pos/lib/scan-session";
 import { useStockHolds } from "@/modules/pos/hooks/useStockHolds";
+import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import type {
   CartLine,
   CheckoutMode,
@@ -165,6 +166,10 @@ export function usePosCart() {
   const [taxType, setTaxTypeState] = useState<SalesTaxType>(initialDraft.taxType);
   const [taxRate, setTaxRate] = useState(initialDraft.taxRate);
   const [shipToAddressId, setShipToAddressId] = useState<number | null>(initialDraft.shipToAddressId);
+  // Rekening transfer (ADR-0026): null = rekening default perusahaan.
+  const bankAccounts = useBankAccounts();
+  const [bankAccountChoice, setBankAccountId] = useState<number | null>(initialDraft.bankAccountId ?? null);
+  const bankAccountId = bankAccountChoice ?? bankAccounts.defaultAccountId;
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [completed, setCompleted] = useState<CompletedSale | null>(null);
@@ -244,9 +249,10 @@ export function usePosCart() {
       shipToAddressId,
       taxType,
       taxRate,
+      bankAccountId: bankAccountChoice,
       held: heldSnap,
     });
-  }, [cartRef, cart, customerId, started, mode, method, dueDate, tendered, notes, shipToAddressId, taxType, taxRate, heldSnap]);
+  }, [cartRef, cart, customerId, started, mode, method, dueDate, tendered, notes, shipToAddressId, taxType, taxRate, bankAccountChoice, heldSnap]);
 
   // --- quote harga member untuk isi keranjang (debounce; gagal = katalog) ---
   const cartProductIds = useMemo(
@@ -725,6 +731,11 @@ export function usePosCart() {
       setCheckoutError(`Tunai kurang — minimal ${formatIDR(estimateTotal)} (estimasi).`);
       return;
     }
+    const transferAccount = !payLater && values.method === "transfer" ? bankAccountId : null;
+    if (!payLater && values.method === "transfer" && bankAccounts.required && transferAccount === null) {
+      setCheckoutError("Pilih rekening tujuan transfer.");
+      return;
+    }
     setCheckoutError(null);
     setResumeStep(null);
     setProcessing(true);
@@ -749,6 +760,7 @@ export function usePosCart() {
         shipToAddressId: effectiveShipTo,
         taxType,
         taxRate,
+        receiptAccountId: transferAccount,
         items,
       });
     } catch (err) {
@@ -796,6 +808,7 @@ export function usePosCart() {
       shipToAddressId,
       taxType,
       taxRate,
+      bankAccountId: bankAccountChoice,
       held: heldSnap,
     });
 
@@ -808,6 +821,7 @@ export function usePosCart() {
         payNow: !payLater,
         method: values.method,
         tendered: values.tendered,
+        cashAccountId: transferAccount,
         canPay,
         deliveryItems: () =>
           cart.flatMap((l) =>
@@ -1023,6 +1037,10 @@ export function usePosCart() {
     setCheckoutOpen,
     method,
     setMethod,
+    /** Rekening transfer (ADR-0026): pilihan, daftar, dan setter. */
+    bankAccounts,
+    bankAccountId,
+    setBankAccountId,
     mode,
     setMode,
     /** Alasan Bayar Nanti tidak tersedia (null = tersedia). */

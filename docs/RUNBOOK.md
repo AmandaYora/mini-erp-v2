@@ -416,3 +416,23 @@ Uji di salinan rehearsal (2026-10-23, skenario temuan 6 diulang lewat API: KBL 8
 dry-run 100 → 50 dan 56 → 6; commit menulis 2 mutasi + 2 audit dengan penanda dan penyetuju; jalan kedua "sudah
 dinetralkan"; tutup harian menjurnal +50/−50 KBL (Rp17.539.063) dan PKU-BH (Rp14.650) yang saling meniadakan, koreksi +42 tetap;
 rekonsiliasi buku-vs-ledger kembali ke keadaan awal (tak terjelaskan −299 sebelum dan sesudah). Bukti: `~/mini-erp-ops/stockfix/`.
+
+## 6f. Aktivasi rekening perusahaan (ADR-0026) — sesudah cutover final
+
+Selama Keuangan → Akun → **Rekening bank** kosong, sistem berjalan seperti sebelumnya: transfer/cek dijurnal ke akun pemetaan
+`bank` (1010), tidak ada pemilih rekening, nota tidak berubah. Jangan diaktifkan di data uji v2 — data itu dimuat ulang saat
+cutover final.
+
+1. **Tanggal aktivasi X** disepakati bersama akuntan (sebaiknya awal hari, sebelum ada transfer hari itu). Siapkan saldo rekening
+   koran setiap bank per akhir hari X−1, per cabang bila saldo dipisah per cabang.
+2. Pengguna `finance.manage` menambah rekening: bank, nomor, atas nama, "Buat akun kas/bank baru" (kode 1011, 1012, …), tandai
+   satu **default**, tandai yang tampil di struk/nota.
+3. Akuntan membuat **jurnal manual reklasifikasi** per cabang (Keuangan → Jurnal → Jurnal manual), bertanggal X−1 atau X:
+   Dr akun rekening (sebesar saldo rekening koran) / Cr 1010. Selisih antara saldo 1010 dan total rekening koran diputuskan
+   akuntan (biasanya transfer belum tercatat atau salah catat lama) — jangan dipaksakan nol tanpa penjelasan.
+4. Cek: laporan **Kas & Rekening** per bulan X menampilkan tiap rekening dengan saldo = rekening koran; dasbor "Kas & Bank"
+   tidak berubah oleh reklasifikasi (hanya pindah akun); saldo 1010 ≈ 0.
+5. Umumkan ke kasir/admin: order baru otomatis berisi rekening default (bisa diganti), transfer wajib memilih rekening,
+   salah pilih diperbaiki lewat **Koreksi pembayaran**.
+
+Pemetaan `bank` tetap menunjuk 1010 (sudah berjurnal, tidak bisa dipindah) dan hanya dipakai pembayaran lama tanpa rekening.

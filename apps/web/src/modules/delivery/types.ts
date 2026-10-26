@@ -188,6 +188,8 @@ export interface DeliverySettlementPayload {
   paymentDate?: string;
   reference?: string;
   amountTendered?: number;
+  /** Rekening perusahaan transfer/cek (ADR-0026); kosong = rekening tujuan order, lalu default. */
+  cashAccountId?: number;
   /** Wajib untuk switch_to_net (YYYY-MM-DD). */
   dueDate?: string;
 }
@@ -241,6 +243,8 @@ export interface SalesOrderOption {
   status: string;
   paymentTerms?: string;
   grandTotal?: number;
+  /** Rekening tujuan order (ADR-0026); nilai awal rekening pelunasan transfer. */
+  receiptAccountId?: number;
   items: SalesOrderOptionItem[];
 }
 

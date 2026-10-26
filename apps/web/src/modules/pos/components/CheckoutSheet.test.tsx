@@ -14,6 +14,9 @@ function fakePos(over: Record<string, unknown> = {}, completed: Record<string, u
     estimateTotal: 90000,
     hideDiscount: false,
     setHideDiscount: vi.fn(),
+    bankAccounts: { all: [], active: [], defaultAccountId: null, required: false, loading: false },
+    bankAccountId: null,
+    setBankAccountId: vi.fn(),
     cart: [],
     displayUnitPrice: () => 0,
     memberSavings: 0,
@@ -187,5 +190,61 @@ describe("form pembayaran — PPN opsional (K-03)", () => {
     renderSheet(pos);
     expect(screen.getByLabelText(/Kena pajak \(PPN\)/)).toBeDisabled();
     expect(screen.getByLabelText("Tarif (%)")).toBeDisabled();
+  });
+});
+
+describe("form pembayaran — rekening transfer (ADR-0026)", () => {
+  const bca = {
+    id: 1, accountId: 11, accountCode: "1011", accountName: "Bank BCA", bankName: "BCA", accountNumber: "123",
+    accountHolder: "PT Uji", showOnDocuments: true, isDefault: true, sortOrder: 0, status: "active",
+  };
+  const mandiri = { ...bca, id: 2, accountId: 12, accountCode: "1012", bankName: "Mandiri", accountNumber: "456", isDefault: false };
+  function transferForm(bank: Record<string, unknown>, over: Record<string, unknown> = {}) {
+    const setBankAccountId = vi.fn();
+    const pos = fakePos({
+      completed: null,
+      mode: "pay_now",
+      method: "transfer",
+      tendered: "",
+      changePreview: 0,
+      taxType: "none",
+      taxRate: 0,
+      totals: { subtotal: 100000, discount: 0, base: 100000, tax: 0, total: 100000, itemCount: 2 },
+      notes: "",
+      customerId: null,
+      customerDetail: null,
+      payLaterBlock: null,
+      setTaxed: vi.fn(),
+      setTaxIncluded: vi.fn(),
+      setTaxRate: vi.fn(),
+      setMode: vi.fn(),
+      setMethod: vi.fn(),
+      setTendered: vi.fn(),
+      setNotes: vi.fn(),
+      setShipToAddressId: vi.fn(),
+      handleCheckout: vi.fn(),
+      bankAccounts: bank,
+      bankAccountId: 11,
+      setBankAccountId,
+      ...over,
+    });
+    return { pos, setBankAccountId };
+  }
+
+  it("rekening tujuan tampil saat transfer dan bisa diganti", () => {
+    const { pos, setBankAccountId } = transferForm({
+      all: [bca, mandiri], active: [bca, mandiri], defaultAccountId: 11, required: true, loading: false,
+    });
+    renderSheet(pos);
+    const select = screen.getByLabelText(/Rekening tujuan/) as HTMLSelectElement;
+    expect(select.value).toBe("11");
+    fireEvent.change(select, { target: { value: "12" } });
+    expect(setBankAccountId).toHaveBeenCalledWith(12);
+  });
+
+  it("tanpa rekening perusahaan, pilihan rekening tidak muncul", () => {
+    const { pos } = transferForm({ all: [], active: [], defaultAccountId: null, required: false, loading: false }, { bankAccountId: null });
+    renderSheet(pos);
+    expect(screen.queryByLabelText(/Rekening tujuan/)).not.toBeInTheDocument();
   });
 });

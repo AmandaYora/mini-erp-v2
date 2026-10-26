@@ -35,6 +35,7 @@ type Payment struct {
 	CancelReason      sql.NullString
 	CancelledAt       sql.NullTime
 	CancelledBy       sql.NullInt64
+	CashAccountID     sql.NullInt64
 }
 
 type PaymentAllocation struct {

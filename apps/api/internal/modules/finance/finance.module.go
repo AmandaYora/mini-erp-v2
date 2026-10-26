@@ -86,9 +86,12 @@ func (m *Module) Service() *application.Service {
 }
 
 // RegisterRoutes mounts endpoints with the auth-built permission wrapper.
-func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler) {
-	presentation.RegisterRoutes(mux, m.handler, perm, branchGuard)
+func (m *Module) RegisterRoutes(mux *http.ServeMux, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler, authn func(func(http.ResponseWriter, *http.Request)) http.Handler) {
+	presentation.RegisterRoutes(mux, m.handler, perm, branchGuard, authn)
 }
+
+// BankAccounts exposes the rekening surface to sales and payment (ADR-0026).
+func (m *Module) BankAccounts() contracts.BankAccountClient { return m.svc }
 
 // Verify reports late-bound dependencies that bootstrap.Wire has not set, so a
 // forgotten edge fails at startup instead of at the first request.

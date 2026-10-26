@@ -1,0 +1,27 @@
+erDiagram
+  finance_accounts ||--o| finance_bank_accounts : "1:1 (account_id UNIQUE)"
+  finance_accounts {
+    bigint id
+    varchar code
+    varchar name
+    bool is_cash
+  }
+  finance_bank_accounts {
+    bigint id
+    bigint account_id
+    varchar bank_name
+    varchar account_number
+    varchar account_holder
+    bool show_on_documents
+    bool is_default
+    varchar status
+  }
+  sales_orders {
+    bigint id
+    bigint receipt_account_id "ID primitif, tanpa FK lintas modul"
+  }
+  payments {
+    bigint id
+    varchar method
+    bigint cash_account_id "ID primitif, NULL = mapping lama"
+  }

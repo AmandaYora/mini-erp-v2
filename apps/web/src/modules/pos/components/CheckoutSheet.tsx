@@ -25,6 +25,7 @@ import { hideDiscountOption, invoiceHref, paymentProofHref, posReceiptHref } fro
 import { HIDE_DISCOUNT_UNPAID_NOTE } from "@/modules/print/lib/sales-document";
 import { quickCashOptions } from "@/modules/pos/lib/quick-cash";
 import type { PosCartApi } from "@/modules/pos/hooks/use-pos-cart";
+import { BankAccountSelect } from "@/modules/finance/components/BankAccountSelect";
 import { payMethodLabel, type CheckoutMode, type PayMethod } from "@/modules/pos/types";
 
 const CHOICE =
@@ -209,9 +210,26 @@ function PaymentForm({ pos }: { pos: PosCartApi }) {
               </div>
             </div>
           ) : (
-            <Notice tone="info" title="Transfer pas">
-              Nominal transfer mengikuti total server ({formatIDR(estimateTotal)} estimasi) — tanpa kembalian.
-            </Notice>
+            <div className="space-y-3">
+              {pos.bankAccounts.required && (
+                <div>
+                  <label htmlFor="pos-bank-account" className="mb-1.5 block text-sm font-medium text-foreground">
+                    Rekening tujuan <span aria-hidden className="text-destructive">*</span>
+                  </label>
+                  <BankAccountSelect
+                    id="pos-bank-account"
+                    options={pos.bankAccounts.active}
+                    all={pos.bankAccounts.all}
+                    value={pos.bankAccountId}
+                    onChange={pos.setBankAccountId}
+                    disabled={processing || pos.started}
+                  />
+                </div>
+              )}
+              <Notice tone="info" title="Transfer pas">
+                Nominal transfer mengikuti total server ({formatIDR(estimateTotal)} estimasi) — tanpa kembalian.
+              </Notice>
+            </div>
           )}
         </>
       )}
