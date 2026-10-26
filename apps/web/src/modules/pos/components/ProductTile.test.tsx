@@ -80,3 +80,40 @@ describe("tile katalog — stok tersedia", () => {
     expect(onInfo).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("tile katalog — foto sebagai elemen utama (analysis/003)", () => {
+  it("foto di atas selebar kartu; stok habis meredupkan foto; tanpa foto = inisial", () => {
+    show([
+      item(1, { primaryImageUrl: "/media/semen.webp" }),
+      item(2, { primaryImageUrl: "/media/habis.webp", stockAvailable: 0 }),
+      item(3, { name: "Pipa Rucika" }),
+    ]);
+    const first = tile("Produk 1");
+    const img = first.querySelector("img");
+    expect(img?.getAttribute("src")).toBe("/media/semen.webp");
+    // Foto anak pertama tombol (di atas teks), kotak 4:3.
+    expect(first.firstElementChild?.className).toContain("aspect-[4/3]");
+    expect(tile("Produk 2").querySelector("img")?.className).toContain("grayscale");
+    expect(within(tile("Produk 2")).getByText("Stok habis")).toBeInTheDocument();
+    expect(tile("Pipa Rucika").firstElementChild?.textContent).toBe("PR");
+  });
+});
+
+describe("tile katalog — pilihan tampilan Foto besar / Ringkas", () => {
+  it("bawaan foto besar; Ringkas mengecilkan foto dan tersimpan per perangkat", () => {
+    localStorage.removeItem("pos.catalogView");
+    show([item(1, { primaryImageUrl: "/media/semen.webp" })]);
+    expect(screen.getByRole("radio", { name: "Foto besar" })).toHaveAttribute("aria-checked", "true");
+    expect(tile("Produk 1").firstElementChild?.className).toContain("aspect-[4/3]");
+    fireEvent.click(screen.getByRole("radio", { name: "Ringkas" }));
+    expect(screen.getByRole("radio", { name: "Ringkas" })).toHaveAttribute("aria-checked", "true");
+    expect(tile("Produk 1").querySelector(".aspect-\\[4\\/3\\]")).toBeNull();
+    expect(tile("Produk 1").querySelector("img")?.parentElement?.className).toContain("size-14");
+    expect(localStorage.getItem("pos.catalogView")).toBe("compact");
+    cleanup();
+    show([item(1)]);
+    expect(screen.getByRole("radio", { name: "Ringkas" })).toHaveAttribute("aria-checked", "true");
+    localStorage.removeItem("pos.catalogView");
+  });
+});
+

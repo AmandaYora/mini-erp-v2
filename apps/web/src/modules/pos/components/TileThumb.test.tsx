@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TileThumb } from "@/modules/pos/components/ProductGrid";
+import { TileImage, TileThumb } from "@/modules/pos/components/ProductGrid";
 
 afterEach(cleanup);
 
@@ -23,3 +23,30 @@ describe("TileThumb (temuan 4: foto produk di tile POS)", () => {
     expect(container.textContent).toBe("BB");
   });
 });
+
+describe("TileImage (analysis/003: foto utama kartu katalog)", () => {
+  it("foto 4:3 selebar kartu, lazy, ruang dipesan lebih dulu", () => {
+    const { container } = render(<TileImage name="Semen Tiga Roda" src="/media/abc.webp" />);
+    const box = container.firstElementChild as HTMLElement;
+    expect(box.className).toContain("aspect-[4/3]");
+    expect(box.className).toContain("w-full");
+    const img = container.querySelector("img");
+    expect(img?.getAttribute("loading")).toBe("lazy");
+    expect(img?.className).toContain("object-cover");
+    expect(img?.getAttribute("alt")).toBe("");
+  });
+
+  it("tanpa foto / gagal dimuat: inisial di kotak 4:3 yang sama", () => {
+    const { container } = render(<TileImage name="Besi Beton" src="/media/x.webp" />);
+    fireEvent.error(container.querySelector("img")!);
+    const box = container.firstElementChild as HTMLElement;
+    expect(box.textContent).toBe("BB");
+    expect(box.className).toContain("aspect-[4/3]");
+  });
+
+  it("stok habis meredupkan foto", () => {
+    const { container } = render(<TileImage name="Cat" src="/media/c.webp" dimmed />);
+    expect(container.querySelector("img")?.className).toContain("grayscale");
+  });
+});
+
