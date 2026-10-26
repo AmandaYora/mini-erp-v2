@@ -4,7 +4,7 @@
 merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui file ini (dan tanggalnya)
 — jangan menulis angka di `CLAUDE.md`, `README.md`, atau `knowledge/`.
 
-**Terakhir diukur:** 2026-10-26, dari pohon kerja `main` (termasuk rekening tujuan ADR-0026 yang belum di-commit).
+**Terakhir diukur:** 2026-10-26, dari pohon kerja `main` (termasuk rekening tujuan ADR-0026 dan pemilih produk berhalaman yang belum di-commit).
 
 ## 1. Posisi singkat
 
@@ -20,18 +20,18 @@ merujuk ke sini, tidak menyalin isinya. Saat angka di bawah berubah, perbarui fi
 | Ukuran | Nilai | Perintah |
 |---|---|---|
 | Modul backend | 20 | `ls apps/api/internal/modules` |
-| Rute `/api/v1` | 276 (326 panggilan frontend, semua cocok; 22 rute tidak dipanggil web) | `node scripts/contract-check.mjs` (`--list` untuk rinci) |
+| Rute `/api/v1` | 276 (324 panggilan frontend, semua cocok; 22 rute tidak dipanggil web) | `node scripts/contract-check.mjs` (`--list` untuk rinci) |
 | Kode izin | 85 | `node scripts/contract-check.mjs` |
 | Tabel | 71 (sistem lama: 70; baru: `dashboard_alert_snoozes` ADR-0025, `finance_bank_accounts` ADR-0026) | `node scripts/db-schema-doc.mjs` → [DB_SCHEMA.md](DB_SCHEMA.md) §3 |
 | Berkas migrasi | 40 = 18 baseline per modul + `000019`–`000023`, `000031`–`000037`, `000039`–`000048` (nomor 24–30 dan 38 sengaja kosong) | `ls apps/api/migrations/*.up.sql` |
 | sqlc | 17 dari 19 modul bertabel `migrated`; `finance` dan `stock` masih `pending` | `scripts/sqlc-migration-status.json` |
 | Halaman frontend | 90 berkas `*Page.tsx` | `find apps/web/src -name '*Page.tsx' ! -name '*.test.tsx'` |
 | Go non-test (`internal/modules`) | ±88 ribu baris | `find apps/api/internal/modules -name '*.go' ! -name '*_test.go' \| xargs cat \| wc -l` |
-| Test backend | 212 berkas `*_test.go` (132 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
-| Test frontend | 217 berkas (1.265 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
-| Spec E2E | 29 (E01–E26, V00 visual, V01 a11y, V02 responsif); gerbang terakhir 135 lulus / 2 dilewati (screenshot E25 opsional) / 0 gagal | `ls apps/e2e/specs` |
+| Test backend | 213 berkas `*_test.go` (133 di `internal/integration`, MySQL nyata) | `find apps/api -name '*_test.go'` |
+| Test frontend | 218 berkas (1.270 test pada gerbang terakhir) | `find apps/web/src -name '*.test.ts*'` |
+| Spec E2E | 30 (E01–E27, V00 visual, V01 a11y, V02 responsif); gerbang terakhir 138 lulus / 2 dilewati (screenshot E25 opsional) / 0 gagal | `ls apps/e2e/specs` |
 
-Gerbang 2026-10-26 pada pohon kerja (rekening tujuan ADR-0026 + retur pilih-dulu): `npm run verify` hijau termasuk integrasi Go (48 paket), vitest 1.265 test, `npm run test:e2e` 135 lulus / 2 dilewati / 0 gagal (E26 baru).
+Gerbang 2026-10-26 pada pohon kerja (rekening tujuan ADR-0026 + retur pilih-dulu + pemilih produk berhalaman, belum di-commit): `npm run verify` hijau termasuk integrasi Go, vitest 1.270 test, `npm run test:e2e` 138 lulus / 2 dilewati / 0 gagal (E26, E27 baru).
 Gerbang penuh sebelumnya: 2026-10-23 sesudah perbaikan temuan pengguna 1/2/4/5/6 (`npm run verify` hijau termasuk integrasi Go, vitest 1.238 test, `npm run test:e2e` 131 lulus; diulang sesudah cetak SJ dipecah per 8).
 Gerbang 2026-10-21 hijau: `verify.mjs --api` termasuk integrasi Go, vitest, dan `npm run test:e2e`.
 Toolchain web butuh Node 22+ (`.nvmrc`; CI ikut dinaikkan).
@@ -48,6 +48,7 @@ Sebelum rilis, ulangi sekali pada pohon kerja yang bersih.
 | Konfirmasi pemilik/akuntan atas keputusan *default* (D1–D8; Dr/Cr saldo kredit retur K-04a; jurnal pemakaian uang muka N-41; PR-08; AS-01) | Default dipakai, menunggu konfirmasi | [ADR-0018](../knowledge/decisions/ADR-0018-keputusan-paritas.md), [PARITY_AUDIT.md](PARITY_AUDIT.md) §0A.2 |
 | **Temuan pengguna production 2026-10-23** (retur satuan, varian cat, foto tile POS, POS di HP, cap waktu saldo, qty desimal POS, stok tersedia di tile + info produk POS, cetak SJ 8 barang per lembar + Halaman X dari Y) | Diperbaiki di `main` (`fa84c65` dst.), **belum dirilis**. Saat rilis: perbaikan data varian sekali jalan (`variantfix`); penetral koreksi stok yang dibuat karena bug tahanan POS lewat `stockfix` (RUNBOOK §6e) **sudah dijalankan** di production 2026-10-23 (penyeimbang 38574, 38575 untuk 38533, 38544). Temuan 3 (cetak SJ multi-halaman) diperbaiki; uji cetak fisik LQ-310 9/20 barang masih manual | [RUNBOOK.md](RUNBOOK.md) §6d, §6e |
 | **Rekening tujuan & retur sebagian** (permintaan pengguna 2026-10-26; analisis + riset [analysis/002](../analysis/002-rekening-tujuan-dan-retur-sebagian/analysis.md)) | **Terimplementasi 2026-10-26 di pohon kerja `main`, belum di-commit/dirilis.** Retur: kemampuan retur sebagian sudah ada sejak baseline; versi live `4deff6b` belum memuat perbaikan satuan `858f84d`; form retur jual & beli kini pilih-dulu (qty awal kosong, "Maks", "Retur semua sisa"). Rekening (ADR-0026): master `finance_bank_accounts` (migrasi `000046`–`000048`), rekening tujuan order + `PUT /sales-orders/{id}/receipt-account`, rekening pembayaran di semua jalur bayar/pelunasan + POS, jurnal ke akun rekening, dasbor Kas & Bank = semua akun kas, cetak "Transfer ke". Tanpa rekening di master perilaku tidak berubah. **Aktivasi sesudah cutover final**: buat rekening → jurnal reklasifikasi dari 1010 per rekening koran (akuntan) → set default. Ditunda: konfirmasi SJ dengan qty diterima (penolakan sebagian saat kirim) | [ADR-0026](../knowledge/decisions/ADR-0026-rekening-tujuan.md), [API_CONTRACT.md](API_CONTRACT.md) §6, [DB_SCHEMA.md](DB_SCHEMA.md) §8 |
+| **Pemilih produk tidak menampilkan semua barang** (temuan pengguna production 2026-10-26) | **Diperbaiki di pohon kerja `main`, belum di-commit/dirilis.** Akar: `search-options` maks. 20–30 baris dari offset 0 tanpa halaman. Live `4deff6b`: Order Beli & barang pengganti retur memuat 20 produk sekali lalu menyaring di browser (produk ke-21+ tak bisa dipilih), Order Jual/stok/SJ Langsung maks. 20 per kata kunci. Order Jual/Beli sudah berhalaman sejak `670ec66` (belum dirilis); kini `search-options` menerima `page` dan semua pemilih katalog berhalaman: barang pengganti retur, `ProductSelect` stok (transfer, saldo, mutasi, rusak, pindah lokasi), `ProductSearchSelect` (SJ Langsung, revaluasi), jasa order dari SJ (filter `tracked=false` di server). Tetap: hanya produk aktif; pencarian kode/nama produk (bukan varian/barcode) | [API_CONTRACT.md](API_CONTRACT.md) §6, [FRONTEND_GUIDE](../knowledge/FRONTEND_GUIDE.md) "Pemilih berhalaman", e2e E27 |
 | sqlc untuk `finance` dan `stock` | Terbuka, fase terakhir | [ADR-0012](../knowledge/decisions/ADR-0012-sqlc-adoption-and-raw-sql-policy.md) |
 | Sisa redesain UI: uji tablet kasir sungguhan (U5-5 + uji sentuh POS bagian U7-2), logo resmi (U7-7); tema gelap ditunda. Fase 6 dan U7-2/U7-3 (keyboard E15, responsif V02) selesai 2026-10-21 | Menunggu pemilik/perangkat | [plan/redesain-ui/PLAN.md](plan/redesain-ui/PLAN.md) "Pembaruan eksekusi 2026-10-21" |
 | **SJ Langsung** (surat jalan dulu tanpa order, order dibuat dari SJ; jalur tambahan, ADR-0022) | **Terimplementasi 2026-10-21** di `main` (belum dirilis; migrasi `000042_delivery_direct`, `000043_sales_origin`): backend `delivery`/`sales`/`finance` + test integrasi `direct_delivery_test.go`; frontend pengiriman/order/dasbor; izin baru `delivery.create_direct` (tidak diberikan otomatis ke role mana pun — pemilik memberikan per role, K5). Default K1–K7 dipakai, **menunggu konfirmasi pemilik/akuntan** (K1 jurnal ditunda sampai order ada vs akun antara; K3 termin). Belum: e2e Playwright (T-01), uji cetak fisik SJ Langsung, rilis setelah cutover (K7) | [ADR-0022](../knowledge/decisions/ADR-0022-sj-langsung.md), [plan/sj-langsung/PLAN.md](plan/sj-langsung/PLAN.md) |

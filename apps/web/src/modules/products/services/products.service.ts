@@ -32,6 +32,8 @@ export interface ProductSearchParams {
   q?: string;
   /** Backend membatasi 1-30 (default 20). */
   limit?: number;
+  /** Halaman (mulai 1) untuk pemilih yang memuat saat digulir; kosong = baris pertama saja. */
+  page?: number;
   status?: string;
   type?: string;
   tracked?: boolean;
@@ -85,6 +87,7 @@ export const productsService = {
         tracked: params.tracked === undefined ? undefined : String(params.tracked),
         categoryId: params.categoryId || undefined,
         productId: params.productId || undefined,
+        page: params.page && params.page > 0 ? params.page : undefined,
         preferStock: params.preferStock ? true : undefined,
       },
       signal,

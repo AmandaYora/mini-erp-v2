@@ -24,7 +24,7 @@ import {
   TextArea,
   TextInput,
 } from "@/shared/components/ui";
-import type { AsyncSearchOption } from "@/shared/components/ui";
+import type { AsyncSearchLoadResult } from "@/shared/components/ui";
 import { DescriptionList, DocNumber, LineItemsEditor, Money, Page, Qty, StickyFooter } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
 import { formatDate, formatIDR, formatNumber, todayWIB } from "@/shared/lib/format";
@@ -32,7 +32,8 @@ import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
-import { productOptionService, salesService } from "@/modules/sales/services/sales.service";
+import { salesService } from "@/modules/sales/services/sales.service";
+import { searchOptionPage } from "@/modules/products/lib/product-picker";
 import type {
   FromDeliveriesLinePayload,
   FromDeliveriesPaymentTerms,
@@ -302,15 +303,12 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
     setExtras((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   }
 
-  // Hanya produk non-stok (jasa) yang boleh ditambah (K6); opsi berstok disaring.
-  const loadServiceOptions = (search: string): Promise<AsyncSearchOption[]> =>
-    productOptionService.search(search).then(
-      (list) =>
-        list
-          .filter((p) => p.tracked !== true)
-          .map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
-      (): AsyncSearchOption[] => [],
-    );
+  // Hanya produk non-stok (jasa) yang boleh ditambah (K6): disaring server (tracked=false)
+  // dan berhalaman — dulu 20 produk apa saja disaring di browser, sehingga jasa bisa tak tampil.
+  const loadServiceOptions = async (search: string, signal?: AbortSignal, page = 1): Promise<AsyncSearchLoadResult> => {
+    const { rows, hasMore } = await searchOptionPage(search, page, { tracked: false }, signal);
+    return { options: rows.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })), hasMore };
+  };
 
   async function addExtra(productId: number) {
     setAddingLine(true);
@@ -904,6 +902,7 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
                 id="f-extra-product"
                 value={null}
                 loadOptions={loadServiceOptions}
+                paged
                 onChange={(v) => {
                   if (typeof v === "number") void addExtra(v);
                 }}

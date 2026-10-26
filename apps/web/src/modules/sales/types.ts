@@ -213,19 +213,6 @@ export interface SalesOrderPayload {
   items: SalesOrderLinePayload[];
 }
 
-/** Baris GET /api/v1/products/search-options (product/presentation/handler.go:
- * SearchOptions): {id, code, name, sellingPrice}. */
-export interface ProductOption {
-  id: number;
-  code: string;
-  name: string;
-  sellingPrice: number;
-  /** barang | jasa | paket | non_stok (SearchOptions juga membawa type/tracked). */
-  type?: string;
-  /** false = tidak berstok (jasa/non-stok): satu-satunya yang boleh ditambah di order dari SJ (K6). */
-  tracked?: boolean;
-}
-
 export const SALES_ORIGINS = ["standard", "delivery"] as const;
 
 export type SalesOrderOrigin = (typeof SALES_ORIGINS)[number];

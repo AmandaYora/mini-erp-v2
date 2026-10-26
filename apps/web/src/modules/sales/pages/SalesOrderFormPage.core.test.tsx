@@ -13,7 +13,6 @@ vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
   return {
     ...actual,
     salesService: { create: (...a: unknown[]) => create(...a), get: vi.fn(), update: vi.fn() },
-    productOptionService: { search: vi.fn().mockResolvedValue([]) },
   };
 });
 vi.mock("@/modules/party/components/PartySearchSelect", () => ({

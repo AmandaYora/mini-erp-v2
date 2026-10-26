@@ -19,7 +19,6 @@ import type {
   OpeningResult,
   MoveLocationPayload,
   ProductDetail,
-  ProductOption,
   StockBalance,
   StockBalanceRow,
   StockLocation,
@@ -211,14 +210,6 @@ export const stockService = {
   // Write-off tanpa locationId: selalu memakan lokasi rusak itu sendiri.
   damagedWriteOff: (body: DamagedWriteOffPayload) =>
     apiPostFull<unknown>("/api/v1/stock/damaged/write-off", body),
-
-  // GET /api/v1/products/search-options?q= — maks 20 baris aktif,
-  // bentuk {id,code,name,sellingPrice} (tanpa varian).
-  searchProductOptions: (q?: string) =>
-    apiGet<ProductOption[]>(
-      "/api/v1/products/search-options",
-      q && q.trim() !== "" ? { q: q.trim() } : undefined,
-    ),
 
   // POST /api/v1/stock/scan-product {barcode} — barcode, kode varian, atau kode produk (ST-06).
   scan: (barcode: string) => apiPost<ScanResult>("/api/v1/stock/scan-product", { barcode }),

@@ -123,8 +123,12 @@ Sumber lengkap: [`docs/plan/redesain-ui/PLAN.md`](../docs/plan/redesain-ui/PLAN.
   `ConfirmDialog` memfokuskan "Batal" saat terbuka (Radix `AlertDialog.Cancel`) — jangan ganti dengan tombol biasa.
 - **Pemilih berhalaman**: daftar yang bisa melebihi satu halaman memakai `AsyncSearchSelect paged` (pola katalog POS:
   `loadOptions(search, signal, page)` → `{options, hasMore}`, halaman berikutnya dimuat saat daftar digulir, tanpa
-  duplikat, kembali ke halaman 1 saat kata kunci berubah). Pemilih barang Order Jual/Beli memakai
-  `modules/products/lib/product-picker` (GET `/products` berhalaman); `search-options` tidak berhalaman (maks. 30).
+  duplikat, kembali ke halaman 1 saat kata kunci berubah). **Setiap pemilih produk katalog wajib berhalaman** —
+  jangan memuat sekali lalu menyaring di browser, dan jangan memakai `search-options` tanpa `page` (hanya baris
+  pertama, maks. 30). Order Jual/Beli: `loadActiveProductPage` (GET `/products`); pemilih yang butuh baris kaya
+  (satuan, varian) — `ProductSearchSelect`, `ProductSelect` stok, barang pengganti retur, jasa order dari SJ —
+  memakai `searchOptionPage` (GET `/products/search-options?page=`); keduanya di `modules/products/lib/product-picker`.
+  Filter jenis (berstok/jasa) dikirim ke server (`tracked`), bukan disaring di browser.
   Label pilihan tersimpan yang belum tentu ada di halaman 1 diberikan lewat `selectedOption` (objek stabil).
 - **Penempatan alur**: dialog ≤ 6 isian; `FormSheet` untuk CRUD master & aksi dokumen; halaman penuh untuk dokumen
   ber-baris barang (retur, surat jalan, penerimaan, transfer, jurnal manual: `…/new?from=<id>`).

@@ -4,7 +4,8 @@ import {
   type AsyncSearchLoadResult,
   type AsyncSearchOption,
 } from "@/shared/components/ui";
-import { clampSearchLimit, productsService } from "@/modules/products/services/products.service";
+import { productsService } from "@/modules/products/services/products.service";
+import { PRODUCT_PICKER_PAGE_SIZE, searchOptionPage } from "@/modules/products/lib/product-picker";
 import type { ProductOptionRow } from "@/modules/products/types";
 
 type ProductOption = AsyncSearchOption & { product: ProductOptionRow };
@@ -61,7 +62,7 @@ export function ProductSearchSelect({
   placeholder = "Cari kode atau nama produk…",
   searchPlaceholder = "Ketik kode atau nama produk…",
   disabled,
-  limit = 20,
+  limit = PRODUCT_PICKER_PAGE_SIZE,
 }: ProductSearchSelectProps) {
   const [uncontrolled, setUncontrolled] = useState<number | null>(defaultValue ?? null);
   const [prevDefault, setPrevDefault] = useState(defaultValue);
@@ -76,20 +77,17 @@ export function ProductSearchSelect({
     setSelected(null);
   }
 
+  // Berhalaman: menggulir memuat halaman berikutnya sehingga setiap produk yang cocok
+  // bisa dipilih (bukan hanya baris pertama search-options).
   const loadOptions = useCallback(
-    async (search: string): Promise<AsyncSearchLoadResult> => {
-      const size = clampSearchLimit(limit);
-      const items = await productsService.searchOptions({
-        q: search || undefined,
-        status,
-        tracked: trackedOnly ? true : undefined,
-        preferStock,
-        limit: size,
-      });
-      return {
-        options: items.map(formatProductOption),
-        hasMore: items.length >= size,
-      };
+    async (search: string, signal?: AbortSignal, page = 1): Promise<AsyncSearchLoadResult> => {
+      const { rows, hasMore } = await searchOptionPage(
+        search,
+        page,
+        { status, tracked: trackedOnly ? true : undefined, preferStock, limit },
+        signal,
+      );
+      return { options: rows.map(formatProductOption), hasMore };
     },
     [status, limit, trackedOnly, preferStock],
   );
@@ -136,6 +134,7 @@ export function ProductSearchSelect({
       searchPlaceholder={searchPlaceholder}
       selectedOption={selected}
       loadOptions={loadOptions}
+      paged
       onChange={(next, option) => {
         const productOption = option as ProductOption | undefined;
         const numeric =

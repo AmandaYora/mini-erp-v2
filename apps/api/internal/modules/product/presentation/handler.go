@@ -313,7 +313,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request, media mediacontra
 // SearchOptions handles GET /api/v1/products/search-options: compact rows
 // with units, prices, type and variants so order/PO forms need no per-pick
 // detail call. Accepts q, limit (1-30), status, type, tracked, categoryId,
-// productId (hydrate one option) and preferStock=true (sellable stock first).
+// productId (hydrate one option), page (1-based, scroll-to-load: every match is
+// reachable) and preferStock=true (sellable stock first).
 func (h *Handler) SearchOptions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := 20
@@ -328,6 +329,11 @@ func (h *Handler) SearchOptions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	opts := application.SearchOptionsOpts{}
+	// page pages through every match (scroll-to-load pickers); absent = the
+	// first rows only, as before.
+	if raw := q.Get("page"); raw != "" {
+		opts.Page, _ = pagination.Parse(raw, "")
+	}
 	if v := strings.ToLower(q.Get("preferStock")); v == "true" || v == "1" {
 		opts.PreferStock = true
 		opts.BranchID = authcontracts.BranchID(r)

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AsyncSearchSelect } from "@/shared/components/ui";
-import type { AsyncSearchOption } from "@/shared/components/ui";
-import { stockService } from "@/modules/stock/services/stock.service";
+import type { AsyncSearchLoadResult, AsyncSearchOption } from "@/shared/components/ui";
+import { searchOptionPage } from "@/modules/products/lib/product-picker";
 import { toId } from "@/modules/stock/lib/ids";
 
 export interface ProductSelectProps {
@@ -13,14 +13,15 @@ export interface ProductSelectProps {
   allowClear?: boolean;
 }
 
-async function loadProducts(q: string): Promise<AsyncSearchOption[]> {
-  const rows = await stockService.searchProductOptions(q);
-  return rows.map((o) => ({ value: o.id, label: `${o.code} — ${o.name}` }));
+async function loadProducts(q: string, signal?: AbortSignal, page = 1): Promise<AsyncSearchLoadResult> {
+  const { rows, hasMore } = await searchOptionPage(q, page, {}, signal);
+  return { options: rows.map((o) => ({ value: o.id, label: `${o.code} — ${o.name}` })), hasMore };
 }
 
 /**
  * Pemilih produk saja (tanpa varian), pencarian server lewat
- * GET /products/search-options. Dipakai ProductPicker, baris barang, dan filter.
+ * GET /products/search-options berhalaman: menggulir memuat halaman berikutnya
+ * sehingga setiap produk aktif bisa dipilih. Dipakai ProductPicker, baris barang, dan filter.
  */
 export function ProductSelect({
   productId,
@@ -35,6 +36,7 @@ export function ProductSelect({
     <AsyncSearchSelect
       id={id}
       loadOptions={loadProducts}
+      paged
       value={productId}
       selectedOption={productId === null ? null : picked}
       placeholder={placeholder}

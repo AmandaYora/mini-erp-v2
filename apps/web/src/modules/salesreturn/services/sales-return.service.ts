@@ -33,7 +33,7 @@
 //   salesReturnId===id (delivery/presentation/handler.go: noteView).
 // - POST /api/v1/sales-returns/:id/settlements (perm salesreturn.create)
 //   → full returnView (handler.go: AddSettlement; 409 bila melebihi sisa).
-// - Opsi produk pengganti: GET /api/v1/products/search-options?q= (array
+// - Opsi produk pengganti: GET /api/v1/products/search-options?q=&page= (array
 //   {id, code, name}) + detail GET /api/v1/products/:id untuk varian/satuan
 //   (perm products.view) — diambil lokal di service ini agar modul tetap
 //   mandiri (tanpa impor service modul lain).
@@ -166,6 +166,9 @@ export const salesReturnService = {
   },
 };
 
+/** Baris per halaman pemilih barang pengganti (maks. search-options). */
+export const REPLACEMENT_PAGE_SIZE = 30;
+
 export const salesReturnLookupService = {
   /** Detail SO untuk inisialisasi baris retur (qty di-clamp ke qty order). */
   sourceOrderDetail: (id: number) =>
@@ -178,11 +181,14 @@ export const salesReturnLookupService = {
     return active.length > 0 ? active : rows;
   },
 
-  /** Opsi produk untuk editor barang pengganti (array langsung). */
-  productOptions: (q?: string) =>
-    apiGet<ReplacementProductOption[]>("/api/v1/products/search-options", {
-      q: q?.trim() ? q.trim() : undefined,
-    }),
+  /** Satu halaman opsi produk aktif untuk editor barang pengganti (berhalaman: menggulir
+   * memuat halaman berikutnya, sehingga setiap produk bisa dipilih — bukan hanya 20 pertama). */
+  productOptions: (q?: string, page = 1, signal?: AbortSignal) =>
+    apiGet<ReplacementProductOption[]>(
+      "/api/v1/products/search-options",
+      { q: q?.trim() ? q.trim() : undefined, page, limit: REPLACEMENT_PAGE_SIZE },
+      signal,
+    ),
 
   /** Detail produk untuk varian/satuan baris pengganti. */
   productDetail: (id: number) =>

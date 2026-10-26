@@ -19,6 +19,7 @@ vi.mock("@/modules/products/services/products.service", async () => {
 });
 
 import { ProductSearchSelect } from "@/modules/products/components/ProductSearchSelect";
+import { FakeIntersectionObserver, scrollPickerToEnd } from "@/test/fake-intersection-observer";
 
 const row = (id: number, code: string, name: string): ProductOptionRow => ({
   id,
@@ -78,5 +79,32 @@ describe("ProductSearchSelect", () => {
     await user.click(screen.getByRole("button", { expanded: false }));
     await waitFor(() => expect(searchOptions).toHaveBeenCalled());
     expect(searchOptions.mock.calls[0][0]).toMatchObject({ preferStock: true });
+  });
+});
+
+describe("ProductSearchSelect berhalaman (semua produk bisa dipilih)", () => {
+  beforeEach(() => {
+    FakeIntersectionObserver.live = [];
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("menggulir memuat halaman 2 dan produk ke-31 bisa dipilih", async () => {
+    const user = userEvent.setup();
+    searchOptions.mockImplementation(async (p: { page?: number }) =>
+      p.page === 2
+        ? [row(31, "BRG-031", "Barang Tiga Puluh Satu")]
+        : Array.from({ length: 30 }, (_, i) => row(i + 1, `BRG-${String(i + 1).padStart(3, "0")}`, `Barang ${i + 1}`)),
+    );
+    const onChange = vi.fn();
+    render(<ProductSearchSelect value={null} onChange={onChange} />);
+    await user.click(screen.getByRole("button", { expanded: false }));
+    expect(await screen.findByText("BRG-030 — Barang 30")).toBeInTheDocument();
+    expect(searchOptions.mock.calls[0][0]).toMatchObject({ page: 1, limit: 30 });
+    scrollPickerToEnd();
+    const late = await screen.findByText("BRG-031 — Barang Tiga Puluh Satu");
+    expect(searchOptions.mock.calls.at(-1)?.[0]).toMatchObject({ page: 2, limit: 30 });
+    await user.click(late);
+    expect(onChange).toHaveBeenCalledWith(31, expect.objectContaining({ code: "BRG-031" }));
   });
 });

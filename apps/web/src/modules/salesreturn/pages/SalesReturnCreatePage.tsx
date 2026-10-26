@@ -6,7 +6,7 @@ import {
   DateInput,
   FormField,
   PageHeader,
-  SearchSelect,
+  AsyncSearchSelect,
   SectionCard,
   SelectInput,
   TableSkeleton,
@@ -16,6 +16,7 @@ import {
   ToggleGroupItem,
   INPUT,
 } from "@/shared/components/ui";
+import type { AsyncSearchLoadResult } from "@/shared/components/ui";
 import { LineItemsEditor, Money, Page, Qty, Stepper, StickyFooter } from "@/shared/components/patterns";
 import type { LineColumn } from "@/shared/components/patterns";
 import { Notice } from "@/shared/components/feedback/notice";
@@ -30,7 +31,11 @@ import { usePageCrumb } from "@/shared/stores/page-meta.store";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { SalesOrderSearchSelect } from "@/modules/sales/components/SalesOrderSearchSelect";
 import { salesReturnSchema } from "@/modules/salesreturn/schemas/sales-return.schema";
-import { salesReturnLookupService, salesReturnService } from "@/modules/salesreturn/services/sales-return.service";
+import {
+  REPLACEMENT_PAGE_SIZE,
+  salesReturnLookupService,
+  salesReturnService,
+} from "@/modules/salesreturn/services/sales-return.service";
 import {
   RETURN_CONDITIONS,
   returnConditionLabel,
@@ -124,16 +129,24 @@ export default function SalesReturnCreatePage() {
 
   const { data: lookupData, error: lookupError } = useAsyncData(
     () =>
-      Promise.all([
-        salesReturnLookupService.locationOptions(),
-        // Best-effort: butuh perm products.view; editor pengganti tetap bisa
-        // dibuka dan menampilkan error saat produk dipilih bila gagal.
-        salesReturnLookupService.productOptions().catch(() => [] as ReplacementProductOption[]),
-      ]).then(([locs, prods]) => ({ locations: locs, products: prods })),
+      salesReturnLookupService.locationOptions().then((locs) => ({ locations: locs })),
     [],
   );
   const lookupLocations = lookupData?.locations ?? [];
-  const productOptions = lookupData?.products ?? [];
+
+  // Barang pengganti dicari di server dan berhalaman (menggulir memuat halaman
+  // berikutnya): setiap produk aktif bisa dipilih, bukan hanya 20 pertama.
+  const loadReplacementOptions = async (
+    search: string,
+    signal?: AbortSignal,
+    page = 1,
+  ): Promise<AsyncSearchLoadResult> => {
+    const rows: ReplacementProductOption[] = await salesReturnLookupService.productOptions(search, page, signal);
+    return {
+      options: rows.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
+      hasMore: rows.length >= REPLACEMENT_PAGE_SIZE,
+    };
+  };
 
   // Label order sumber terkunci (nomor + pelanggan).
   const { data: lockedOrder } = useAsyncData(
@@ -276,16 +289,15 @@ export default function SalesReturnCreatePage() {
     setPreview(null);
   }
 
-  function handleReplProduct(key: string, v: string | number | null) {
+  function handleReplProduct(key: string, v: string | number | null, label?: string) {
     const pid = typeof v === "number" ? v : v === null ? null : Number(v);
     if (pid === null || Number.isNaN(pid)) {
       patchRepl(key, { productId: null, productLabel: "", variants: [], variantId: null, uoms: [], uom: "" });
       return;
     }
-    const opt = productOptions.find((p) => p.id === pid);
     patchRepl(key, {
       productId: pid,
-      productLabel: opt ? `${opt.code} — ${opt.name}` : `#${pid}`,
+      productLabel: label ?? `#${pid}`,
       loadingDetail: true,
     });
     salesReturnLookupService
@@ -453,13 +465,16 @@ export default function SalesReturnCreatePage() {
       width: "14rem",
       render: (r, i) => (
         <div>
-          <SearchSelect
+          <AsyncSearchSelect
             aria-label={`Produk pengganti baris ${i + 1}`}
-            options={productOptions.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))}
+            loadOptions={loadReplacementOptions}
+            paged
             value={r.productId}
+            selectedOption={r.productId === null ? null : { value: r.productId, label: r.productLabel }}
             placeholder="Pilih produk…"
+            searchPlaceholder="Kode atau nama produk…"
             disabled={busy || r.loadingDetail}
-            onChange={(v) => handleReplProduct(r.key, v)}
+            onChange={(v, option) => handleReplProduct(r.key, v ?? null, option?.label)}
           />
           {r.loadingDetail && <p className="mt-1 text-xs text-muted-foreground">Memuat varian…</p>}
         </div>

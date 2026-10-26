@@ -986,6 +986,11 @@ type SearchOptionsOpts struct {
 	// window through the stock provider instead of joining across modules.
 	PreferStock bool
 	BranchID    int64
+	// Page (1-based) pages through the whole ranked result, limit rows per
+	// page, so a picker can reach every matching product by scrolling. 0 =
+	// unpaged (first rows only, the original behaviour). A paged PreferStock
+	// re-orders within its own page only — pages stay disjoint and complete.
+	Page int
 }
 
 // preferStockWindowFactor widens the candidate window PreferStock re-orders.
@@ -1012,12 +1017,17 @@ func (s *Service) SearchOptionsFor(ctx context.Context, f ListFilter, limit int,
 		f.Status = "active"
 	}
 	f.Ranked = true
-	fetch := limit
+	fetch, offset := limit, 0
+	if o.Page > 1 {
+		offset = (o.Page - 1) * limit
+	}
 	preferStock := o.PreferStock && o.BranchID > 0 && s.stock != nil && f.ID == nil
-	if preferStock {
+	if preferStock && o.Page == 0 {
+		// Unpaged: widen the window so in-stock products further down the
+		// relevance order can float into the only page there is.
 		fetch = min(limit*preferStockWindowFactor, preferStockWindowMax)
 	}
-	products, err := s.repo.ListProducts(ctx, f, fetch, 0)
+	products, err := s.repo.ListProducts(ctx, f, fetch, offset)
 	if err != nil {
 		return nil, apperror.Internal(err)
 	}

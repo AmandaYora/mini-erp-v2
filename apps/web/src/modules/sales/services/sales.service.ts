@@ -7,7 +7,6 @@ import type {
   FromDeliveriesPreviewPayload,
   FromDeliveriesResult,
   OpenDirectResult,
-  ProductOption,
   SalesClientRefState,
   SalesOrder,
   SalesOrderPayload,
@@ -144,12 +143,4 @@ export const salesService = {
     a.remove();
     URL.revokeObjectURL(url);
   },
-};
-
-/** Dropdown produk (product/presentation/routes.go: search-options, q + aktif). */
-export const productOptionService = {
-  search: (q?: string) =>
-    apiGet<ProductOption[]>("/api/v1/products/search-options", {
-      q: q?.trim() ? q.trim() : undefined,
-    }),
 };

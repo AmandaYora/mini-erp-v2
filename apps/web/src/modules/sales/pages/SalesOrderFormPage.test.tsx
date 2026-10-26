@@ -22,7 +22,6 @@ vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
       previewFromDeliveries: (...a: unknown[]) => previewFromDeliveries(...a),
       createFromDeliveries: (...a: unknown[]) => createFromDeliveries(...a),
     },
-    productOptionService: { search: vi.fn().mockResolvedValue([]) },
   };
 });
 vi.mock("@/modules/party/components/PartySearchSelect", () => ({

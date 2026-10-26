@@ -6,7 +6,10 @@ import type { SalesReturnPreview } from "@/modules/salesreturn/types";
 
 const context = vi.fn();
 const preview = vi.fn();
+const productOptions = vi.fn();
+const productDetail = vi.fn();
 vi.mock("@/modules/salesreturn/services/sales-return.service", () => ({
+  REPLACEMENT_PAGE_SIZE: 30,
   salesReturnService: {
     context: (...a: unknown[]) => context(...a),
     preview: (...a: unknown[]) => preview(...a),
@@ -14,8 +17,8 @@ vi.mock("@/modules/salesreturn/services/sales-return.service", () => ({
   },
   salesReturnLookupService: {
     locationOptions: vi.fn().mockResolvedValue([{ id: 3, code: "GD-1", name: "Gudang Utama", status: "active" }]),
-    productOptions: vi.fn().mockResolvedValue([]),
-    productDetail: vi.fn(),
+    productOptions: (...a: unknown[]) => productOptions(...a),
+    productDetail: (...a: unknown[]) => productDetail(...a),
     sourceOrderDetail: vi.fn().mockResolvedValue({ id: 7, number: "SO-0007", partyName: "Budi", items: [] }),
   },
 }));
@@ -24,6 +27,7 @@ vi.mock("@/modules/sales/components/SalesOrderSearchSelect", () => ({
 }));
 
 import SalesReturnCreatePage from "@/modules/salesreturn/pages/SalesReturnCreatePage";
+import { FakeIntersectionObserver, scrollPickerToEnd } from "@/test/fake-intersection-observer";
 
 function previewData(over: Partial<SalesReturnPreview> = {}): SalesReturnPreview {
   return {
@@ -49,6 +53,7 @@ function previewData(over: Partial<SalesReturnPreview> = {}): SalesReturnPreview
 
 beforeEach(() => {
   vi.clearAllMocks();
+  productOptions.mockResolvedValue([]);
   context.mockResolvedValue({
     salesOrderId: 7,
     orderNumber: "SO-0007",
@@ -246,5 +251,39 @@ describe("halaman Buat Retur Jual: retur sebagian pilih-dulu", () => {
     await userEvent.click(screen.getByRole("button", { name: "Pratinjau" }));
     await waitFor(() => expect(preview).toHaveBeenCalled());
     expect(preview.mock.calls[0][0].items).toEqual([expect.objectContaining({ productId: 20, variantId: 21, qty: 1 })]);
+  });
+});
+
+describe("halaman Buat Retur Jual: barang pengganti berhalaman", () => {
+  beforeEach(() => {
+    FakeIntersectionObserver.live = [];
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("pemilih pengganti mencari di server per halaman; produk di luar 20 pertama bisa dipilih", async () => {
+    const page1 = Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, code: `A${i}`, name: `Awal ${i}`, sellingPrice: 1 }));
+    productOptions.mockImplementation(async (_q: string, page = 1) =>
+      page === 1 ? page1 : [{ id: 999, code: "Z-999", name: "Cat Zebra", sellingPrice: 5000 }],
+    );
+    productDetail.mockResolvedValue({
+      id: 999, code: "Z-999", name: "Cat Zebra", baseUom: "kg", purchaseUom: "kg", salesUom: "kg",
+      variants: [{ id: 5, code: "Z-999", name: "Standar" }],
+    });
+    renderPage();
+    await screen.findByText("Semen");
+    await userEvent.type(screen.getByLabelText("Qty retur Semen"), "1");
+    await userEvent.click(screen.getByRole("radio", { name: "Tukar barang" }));
+    await userEvent.click(screen.getByRole("button", { name: "Tambah barang pengganti" }));
+    const picker = screen.getByRole("button", { name: "Produk pengganti baris 1" });
+    await userEvent.click(picker);
+    await waitFor(() => expect(productOptions).toHaveBeenCalled());
+    expect(await screen.findByText("A29 — Awal 29")).toBeInTheDocument();
+    expect(productOptions).toHaveBeenCalledWith("", 1, expect.any(AbortSignal));
+    scrollPickerToEnd();
+    await userEvent.click(await screen.findByText("Z-999 — Cat Zebra"));
+    expect(productOptions).toHaveBeenLastCalledWith("", 2, expect.any(AbortSignal));
+    await waitFor(() => expect(productDetail).toHaveBeenCalledWith(999));
+    expect(screen.getByRole("button", { name: "Produk pengganti baris 1" }).textContent).toContain("Z-999 — Cat Zebra");
   });
 });

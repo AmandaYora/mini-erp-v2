@@ -95,13 +95,6 @@ export interface StockTransfer {
   cancelledBy?: number;
 }
 
-export interface ProductOption {
-  id: number;
-  code: string;
-  name: string;
-  sellingPrice: number;
-}
-
 export interface ProductVariantOption {
   id: number;
   code: string;
