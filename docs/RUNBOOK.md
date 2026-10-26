@@ -36,8 +36,8 @@ vs berkas di `/app/migrations`); pesannya menyebut perintah migrate di atas.
 jangan `up` ulang membabi buta.
 
 Rantai migrasi saat ini: baseline per modul `000001`–`000018` ditambah migrasi bernomor `000019`, `000020`, `000021`, `000022`,
-`000023`, `000031`–`000037`, `000039`–`000044` (nomor 000024–000030 dan 000038 sengaja kosong). Sesudah `migrate up`,
-`schema_migrations.version` harus **44** dengan
+`000023`, `000031`–`000037`, `000039`–`000048` (nomor 000024–000030 dan 000038 sengaja kosong). Sesudah `migrate up`,
+`schema_migrations.version` harus **48** dengan
 `dirty=0`; riwayat kolom/tabel baru dan dampak ETL ada di [DB_SCHEMA.md §8](DB_SCHEMA.md#8-riwayat-migrasi-bernomor-sesudah-baseline).
 Migrasi baru memakai nomor berikutnya yang bebas (`ls apps/api/migrations`) dan wajib punya `.down.sql`.
 
