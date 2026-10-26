@@ -13,7 +13,7 @@ import { resolveIdentity, type PrintIdentity } from "@/modules/print/document";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import type { BankAccount } from "@/modules/finance/types";
-import { documentBankAccounts } from "@/modules/print/document";
+import { printedBankAccounts } from "@/modules/print/document";
 import { toApiError } from "@/shared/services/http-client";
 import type { ApiError } from "@/shared/services/http-client";
 
@@ -88,13 +88,10 @@ export function usePrintProfile(): PrintProfileState {
     branchAddress: branch?.address,
     branchCity: branch?.city,
   });
-  // Daftar rekening di dokumen: master rekening (tampil di dokumen) bila ada;
-  // daftar teks lama di profil dokumen tetap dipakai selama master kosong.
-  const fromMaster = documentBankAccounts(bank.all);
   return {
     profile,
     paper: resolvePaperProfile(profile.continuousNota),
-    identity: fromMaster.length > 0 ? { ...identity, bankAccounts: fromMaster } : identity,
+    identity: { ...identity, bankAccounts: printedBankAccounts(bank.all, identity.bankAccounts) },
     corrupt,
     warning,
     loading: loading || bank.loading,

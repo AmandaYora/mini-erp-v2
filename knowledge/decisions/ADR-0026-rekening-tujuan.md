@@ -3,6 +3,9 @@
 ## Status
 Accepted (2026-10-26). Disetujui pemilik sebagai rekomendasi final. Analisis dan riset:
 [analysis/002-rekening-tujuan-dan-retur-sebagian](../../analysis/002-rekening-tujuan-dan-retur-sebagian/analysis.md).
+**Revisi 2026-10-26** ([analysis/004](../../analysis/004-satu-sumber-rekening/analysis.md)): master adalah satu-satunya
+sumber rekening. Editor rekening di Pengaturan › Perusahaan dihapus; rekening teks lama dipindahkan otomatis sekali
+saat start (butir 9). Butir 6–9 dan Consequences di bawah sudah memuat revisi ini.
 Merevisi catatan `finance_cash_accounts` di `DB_SCHEMA.md` §6 dan menambah satu pengecualian pada
 ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifikasi: akuntan.**
 
@@ -57,23 +60,38 @@ ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifik
    - Struk POS transfer atau piutang mencetak rekening itu saja. Struk lain mencetak daftar rekening
      dokumen seperti sistem lama.
    - Daftar rekening dokumen diambil dari master (aktif + tampil di dokumen). Daftar teks lama di
-     profil dokumen tetap dipakai selama master masih kosong.
+     profil dokumen (`document_profile.bankAccounts`, umumnya hasil migrasi) hanya dicetak selama master
+     **tidak berisi rekening sama sekali**. Begitu master berisi, dokumen tidak pernah kembali ke teks lama,
+     walau semua rekening diarsipkan atau disembunyikan.
 7. **Akses.**
-   - Kelola: `finance.manage`, di halaman Akun → tab Rekening bank.
+   - Kelola: `finance.manage`, di halaman Akun → tab Rekening bank, satu-satunya tempat rekening diubah.
+   - Pengaturan › Perusahaan › "Kontak dan rekening" hanya menampilkan rekening di dokumen (baca saja) dengan
+     tautan **Kelola rekening**. Teks lama tetap tersimpan apa adanya saat profil disimpan.
    - Baca untuk pemilih dan cetak: `GET /finance/bank-accounts/options`, cukup login dan cabang
      (pola `company/print-profile`).
 8. **Tidak ada perubahan perilaku sebelum rekening dibuat.** Master kosong berarti transfer tetap ke
    1010, tidak ada pemilih yang tampil, dan nota tidak berubah.
+9. **Pemindahan otomatis rekening teks lama** (`bootstrap.ImportLegacyBankAccounts`, setiap start server).
+   - Berjalan hanya bila master **tidak berisi rekening sama sekali** dan profil dokumen punya
+     `bankAccounts`; sesudah itu tanpa efek. Setelah data legacy dimuat ulang (cutover) ia berjalan lagi pada
+     start berikutnya.
+   - Urutan teks dipertahankan (`sortOrder`), semua tampil di dokumen, baris kosong dilewati, nomor ganda
+     (tanpa spasi/titik/strip) dilewati. Atas nama kosong diisi nama resmi/nama perusahaan.
+   - Rekening **pertama** = default, di atas akun pemetaan `bank` (**1010**), yang sudah menampung semua
+     transfer selama ini. Rekening berikutnya mendapat akun kas/bank baru 1011, 1012, ….
+   - Semua baris divalidasi sebelum menulis; hasil (dibuat/dilewati) atau galat tercatat di log server.
+     Galat tidak menghentikan start. Teks di profil dokumen tidak diubah.
 
 ## Consequences
-- **Aktivasi sesudah cutover final** (data uji v2 akan dimuat ulang):
-  1. buat rekening (akun 1011, 1012, …);
-  2. akuntan membuat jurnal manual reklasifikasi per cabang: Dr akun rekening / Cr 1010, sebesar saldo
-     rekening koran per tanggal aktivasi;
-  3. tetapkan default;
-  4. umumkan ke kasir.
+- **Aktivasi terjadi saat start pertama setelah rilis** yang memuat butir 9 (dan lagi sesudah cutover final
+  memuat ulang data). Sejak itu transfer/cek wajib memilih rekening. Langkah akuntan:
+  1. bila ada lebih dari satu rekening: jurnal manual reklasifikasi per cabang, Dr akun rekening 1011, 1012, … /
+     Cr 1010, sebesar saldo rekening koran masing-masing per tanggal aktivasi. Sisa 1010 = saldo rekening pertama;
+  2. periksa default dan rekening yang tampil di dokumen, ubah bila perlu di Rekening bank;
+  3. umumkan ke kasir.
 
-  Sesudah itu 1010 hanya memuat riwayat (pemetaan `bank` tidak bisa dipindah karena sudah berjurnal).
+  Dengan satu rekening, tidak ada reklasifikasi: 1010 langsung menjadi akun rekening itu. Pemetaan `bank` tetap 1010
+  (sudah berjurnal) dan juga menampung pembayaran lama tanpa rekening.
 - ETL tidak berubah. Verifikasi harian ETL (`etl/verify/daily.go`) tetap membandingkan kunci
   `cash`/`bank`, dan itu benar untuk hari migrasi.
 - Laporan Kas & Rekening dan tutup harian sudah per akun `is_cash`, jadi langsung per rekening.

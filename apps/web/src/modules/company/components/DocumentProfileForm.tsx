@@ -31,6 +31,7 @@ import {
 import { countChanged } from "@/modules/company/lib/dirty";
 import SettingsFooter from "@/modules/company/components/SettingsFooter";
 import ReadOnlyHint from "@/modules/company/components/ReadOnlyHint";
+import DocumentBankAccountsSummary from "@/modules/company/components/DocumentBankAccountsSummary";
 
 function num(raw: string): number | undefined {
   const t = raw.trim().replace(",", ".");
@@ -142,6 +143,7 @@ export default function DocumentProfileForm({
       phones: draft.phones
         .filter((p) => p.label.trim() !== "" || p.number.trim() !== "")
         .map((p) => ({ label: p.label.trim(), number: p.number.trim() })),
+      // Tidak lagi disunting di sini; disimpan apa adanya sebagai cadangan cetak selama master rekening kosong.
       bankAccounts: draft.banks
         .filter((b) => b.bank.trim() !== "" || b.number.trim() !== "")
         .map((b) => ({ bank: b.bank.trim(), holder: b.holder.trim(), number: b.number.trim() })),
@@ -177,7 +179,7 @@ export default function DocumentProfileForm({
         <FormSection
           className="scroll-mt-20"
           title="Kop dan teks dokumen"
-          description="Kop, rekening, dan kalibrasi kertas untuk halaman cetak. Disimpan sebagai satu kunci JSON document_profile."
+          description="Kop, kontak, dan kalibrasi kertas untuk halaman cetak. Disimpan sebagai satu kunci JSON document_profile."
         >
           <ReadOnlyHint show={!canManage} />
           {corrupt && (
@@ -291,60 +293,11 @@ export default function DocumentProfileForm({
                 </Button>
               </div>
             </div>
-
-            <div>
-              <p className="text-sm font-semibold text-foreground">Rekening bank</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Bila rekening sudah diatur di Keuangan → Akun → Rekening bank, daftar itulah yang dicetak dan
-                dipilih kasir. Daftar di sini hanya dipakai selama daftar rekening keuangan masih kosong.
-              </p>
-              <div className="mt-2 space-y-2">
-                {draft.banks.map((b, i) => (
-                  <div key={i} className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                    <TextInput
-                      aria-label={`Bank ${i + 1}`}
-                      value={b.bank}
-                      onChange={(e) =>
-                        patch({ banks: draft.banks.map((r, j) => (j === i ? { ...r, bank: e.target.value } : r)) })
-                      }
-                      placeholder="Bank"
-                    />
-                    <TextInput
-                      aria-label={`Pemilik rekening ${i + 1}`}
-                      value={b.holder}
-                      onChange={(e) =>
-                        patch({ banks: draft.banks.map((r, j) => (j === i ? { ...r, holder: e.target.value } : r)) })
-                      }
-                      placeholder="Pemilik"
-                    />
-                    <TextInput
-                      aria-label={`Nomor rekening ${i + 1}`}
-                      value={b.number}
-                      onChange={(e) =>
-                        patch({ banks: draft.banks.map((r, j) => (j === i ? { ...r, number: e.target.value } : r)) })
-                      }
-                      placeholder="Nomor"
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      aria-label={`Hapus rekening ${i + 1}`}
-                      onClick={() => patch({ banks: draft.banks.filter((_, j) => j !== i) })}
-                    >
-                      Hapus
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => patch({ banks: [...draft.banks, { bank: "", holder: "", number: "" }] })}
-                >
-                  Tambah rekening
-                </Button>
-              </div>
-            </div>
           </fieldset>
+          <div className="mt-6">
+            {/* Rekening tidak lagi diketik di sini (analysis/004); daftar teks lama tetap tersimpan apa adanya. */}
+            <DocumentBankAccountsSummary legacy={draft.banks} />
+          </div>
         </FormSection>
 
         <FormSection

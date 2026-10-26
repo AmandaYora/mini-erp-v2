@@ -74,6 +74,18 @@ export function documentBankAccounts(
     .map((b) => ({ bank: b.bankName, holder: b.accountHolder, number: b.accountNumber }));
 }
 
+/**
+ * Daftar rekening yang dicetak. Master rekening adalah satu-satunya sumber begitu
+ * berisi satu rekening apa pun, walau semuanya diarsipkan atau disembunyikan: daftar
+ * teks lama di profil dokumen hanya dipakai selama master benar-benar kosong.
+ */
+export function printedBankAccounts(
+  master: Parameters<typeof documentBankAccounts>[0],
+  legacy: DocumentBankAccount[],
+): DocumentBankAccount[] {
+  return master.length > 0 ? documentBankAccounts(master) : legacy;
+}
+
 /** "Transfer ke: BCA 123 a.n. PT X" untuk rekening tujuan satu dokumen; "" bila tidak ada.
  * Label kosong = tanpa awalan ("BCA 123 a.n. PT X"). */
 export function transferToLine(

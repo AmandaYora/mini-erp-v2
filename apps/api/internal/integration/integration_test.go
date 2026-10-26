@@ -74,6 +74,8 @@ type mods struct {
 	finance        *finance.Module
 	dashboard      *dashboard.Module
 	reporting      *reporting.Module
+	// wired is the whole bootstrap graph, for steps the server runs at start.
+	wired *bootstrap.Modules
 }
 
 var testMods *mods
@@ -347,7 +349,7 @@ func TestMain(m *testing.M) {
 		stock: w.Stock, purchasing: w.Purchasing, sales: w.Sales,
 		goodsreceipt: w.GoodsReceipt, delivery: w.Delivery, salesreturn: w.SalesReturn,
 		purchasereturn: w.PurchaseReturn, payment: w.Payment, finance: w.Finance,
-		dashboard: w.Dashboard, reporting: w.Reporting}
+		dashboard: w.Dashboard, reporting: w.Reporting, wired: w}
 
 	code := m.Run()
 	if lockConn != nil {

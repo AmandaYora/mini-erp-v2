@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	auditcontracts "mini-erp/internal/modules/audit/contracts"
@@ -198,6 +200,108 @@ func (s *Service) checkRekeningAccount(ctx context.Context, accountID int64) err
 		return apperror.Conflict("Akun " + dup.AccountCode + " sudah dipakai rekening " + dup.BankName + " " + dup.AccountNumber)
 	}
 	return nil
+}
+
+// LegacyBankAccount is one rekening typed as plain text in the document
+// profile before the master existed (usually carried over by the ETL).
+type LegacyBankAccount struct {
+	BankName      string
+	AccountNumber string
+	AccountHolder string
+}
+
+// LegacyImport reports what ImportLegacyBankAccounts did.
+type LegacyImport struct {
+	Created []*contracts.BankAccount
+	// Skipped lists entries left out ("BCA 123: alasan"): blank, duplicate or invalid.
+	Skipped []string
+}
+
+// ImportLegacyBankAccounts moves the document profile's text rekening into the
+// master once (analysis/004), so the master is the only source. It runs only
+// while the master holds no rekening at all; afterwards it is a no-op. The
+// first entry becomes the default on the bank mapping account (1010, which
+// already carries every transfer so far); the others get new cash accounts
+// 1011, 1012, … whose opening balance the accountant reclassifies from 1010.
+// Every entry is validated before anything is written.
+func (s *Service) ImportLegacyBankAccounts(ctx context.Context, legacy []LegacyBankAccount) (LegacyImport, error) {
+	var out LegacyImport
+	existing, err := s.repo.ListBankAccounts(ctx, "")
+	if err != nil {
+		return out, apperror.Internal(err)
+	}
+	if len(existing) > 0 || len(legacy) == 0 {
+		return out, nil
+	}
+	var plan []BankAccountInput
+	seen := map[string]bool{}
+	for _, l := range legacy {
+		in := BankAccountInput{BankName: l.BankName, AccountNumber: l.AccountNumber, AccountHolder: l.AccountHolder}
+		label := strings.TrimSpace(l.BankName + " " + l.AccountNumber)
+		key := accountNumberKey(l.AccountNumber)
+		switch {
+		case strings.TrimSpace(l.BankName) == "" && key == "":
+			continue // baris kosong
+		case seen[key]:
+			out.Skipped = append(out.Skipped, label+": nomor ganda")
+			continue
+		}
+		if errs := in.normalize(); len(errs) > 0 {
+			out.Skipped = append(out.Skipped, label+": "+errs[0].Field+" "+errs[0].Message)
+			continue
+		}
+		seen[key] = true
+		in.ShowOnDocuments, in.IsDefault, in.SortOrder = true, len(plan) == 0, len(plan)
+		plan = append(plan, in)
+	}
+	if len(plan) == 0 {
+		return out, nil
+	}
+	if bank, err := s.repo.MappingAccount(ctx, "bank"); err != nil {
+		return out, apperror.Internal(err)
+	} else if bank != nil && s.checkRekeningAccount(ctx, bank.ID) == nil {
+		plan[0].AccountID = bank.ID
+	}
+	accounts, err := s.repo.ListAccounts(ctx, "")
+	if err != nil {
+		return out, apperror.Internal(err)
+	}
+	used := map[string]bool{}
+	for _, a := range accounts {
+		used[a.Code] = true
+	}
+	next := 1011
+	for i := range plan {
+		if plan[i].AccountID != 0 {
+			continue
+		}
+		for next < 1100 && used[strconv.Itoa(next)] {
+			next++
+		}
+		if next >= 1100 {
+			return out, apperror.Conflict("Kode akun kas/bank 1011–1099 sudah habis")
+		}
+		plan[i].AccountCode = strconv.Itoa(next)
+		used[plan[i].AccountCode] = true
+	}
+	for _, in := range plan {
+		b, err := s.CreateBankAccount(ctx, 0, in)
+		if err != nil {
+			return out, err
+		}
+		out.Created = append(out.Created, b)
+	}
+	return out, nil
+}
+
+// accountNumberKey compares rekening numbers without spaces, dots or dashes.
+func accountNumberKey(n string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, n)
 }
 
 func bankDBError(err error) error {

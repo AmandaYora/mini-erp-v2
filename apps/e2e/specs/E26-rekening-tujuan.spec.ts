@@ -35,6 +35,31 @@ test.describe.serial("E26 rekening tujuan → pembayaran transfer → jurnal per
     expect(denied.status).toBe(403);
   });
 
+  test("rekening satu sumber: Pengaturan hanya menampilkan rekening master, tanpa input rekening", async ({ page }) => {
+    // Rekening teks lama di profil dokumen (data migrasi). Master sudah berisi, jadi teks itu tidak tampil
+    // dan tidak tercetak lagi; pemindahan otomatisnya saat start diuji di integrasi Go.
+    const settings = await ok<Record<string, string>>("admin", "GET", "/company/settings");
+    const original = settings.document_profile ?? "";
+    const legacy = { ...(original ? JSON.parse(original) : {}), bankAccounts: [{ bank: "BNI", holder: "Toko Lama", number: "9990009" }] };
+    await ok("admin", "PUT", "/company/settings", { settings: { document_profile: JSON.stringify(legacy) } });
+    try {
+      const errors = collectErrors(page);
+      await loginAs(page, "admin");
+      await page.goto("/company");
+      const list = page.getByRole("list", { name: "Rekening di dokumen" });
+      await expect(list.getByText("BCA 1110001 a.n. PT E2E")).toBeVisible();
+      await expect(list.getByText("Mandiri 2220002 a.n. PT E2E")).toBeVisible();
+      await expect(page.getByText(/BNI 9990009/)).toHaveCount(0);
+      await expect(page.getByLabel("Bank 1")).toHaveCount(0);
+      await page.getByRole("link", { name: "Kelola rekening" }).click();
+      await expect(page).toHaveURL(/\/finance\/accounts\?tab=rekening/);
+      await expect(page.getByRole("button", { name: "Tambah rekening" })).toBeVisible();
+      expect(errors).toEqual([]);
+    } finally {
+      await ok("admin", "PUT", "/company/settings", { settings: { document_profile: original || "{}" } });
+    }
+  });
+
   test("order baru membawa rekening default; admin menggantinya di detail order", async ({ page }) => {
     const customer = await partyByCode("customers", "C005");
     const p = await productByCode("P003");

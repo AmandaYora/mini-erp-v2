@@ -101,6 +101,22 @@ func main() {
 		}
 	}()
 
+	// Rekening satu sumber (analysis/004): rekening teks di profil dokumen pindah
+	// sekali ke master rekening keuangan. Tanpa efek bila master sudah berisi;
+	// kegagalan hanya dicatat (aplikasi tetap jalan, nota memakai teks lama).
+	func() {
+		boot, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		res, err := mods.ImportLegacyBankAccounts(boot)
+		if err != nil {
+			log.Error("pindah rekening profil dokumen ke master", "error", err, "dibuat", len(res.Created))
+			return
+		}
+		if len(res.Created) > 0 || len(res.Skipped) > 0 {
+			log.Info("rekening profil dokumen dipindahkan ke master", "dibuat", len(res.Created), "dilewati", res.Skipped)
+		}
+	}()
+
 	// Lifecycle (F6-6/F8-17): one signal-driven context owns every background
 	// goroutine; bg lets shutdown wait for them before the DB closes.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

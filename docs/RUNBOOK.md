@@ -417,22 +417,27 @@ dry-run 100 → 50 dan 56 → 6; commit menulis 2 mutasi + 2 audit dengan penand
 dinetralkan"; tutup harian menjurnal +50/−50 KBL (Rp17.539.063) dan PKU-BH (Rp14.650) yang saling meniadakan, koreksi +42 tetap;
 rekonsiliasi buku-vs-ledger kembali ke keadaan awal (tak terjelaskan −299 sebelum dan sesudah). Bukti: `~/mini-erp-ops/stockfix/`.
 
-## 6f. Aktivasi rekening perusahaan (ADR-0026) — sesudah cutover final
+## 6f. Aktivasi rekening perusahaan (ADR-0026)
 
-Selama Keuangan → Akun → **Rekening bank** kosong, sistem berjalan seperti sebelumnya: transfer/cek dijurnal ke akun pemetaan
-`bank` (1010), tidak ada pemilih rekening, nota tidak berubah. Jangan diaktifkan di data uji v2 — data itu dimuat ulang saat
-cutover final.
+Rekening yang dulu diketik di Pengaturan › Perusahaan (`document_profile.bankAccounts`, ikut ETL) **dipindahkan otomatis**
+ke Keuangan → Akun → **Rekening bank** saat server start, selama daftar rekening masih kosong (ADR-0026 butir 9). Rekening
+pertama menjadi default di atas akun 1010; berikutnya mendapat akun baru 1011, 1012, …. Sejak itu transfer/cek wajib memilih
+rekening dan nota hanya mencetak rekening dari daftar itu. Tanpa rekening teks lama, daftar tetap kosong dan sistem berjalan
+seperti sebelumnya (transfer ke 1010, tanpa pemilih).
 
-1. **Tanggal aktivasi X** disepakati bersama akuntan (sebaiknya awal hari, sebelum ada transfer hari itu). Siapkan saldo rekening
-   koran setiap bank per akhir hari X−1, per cabang bila saldo dipisah per cabang.
-2. Pengguna `finance.manage` menambah rekening: bank, nomor, atas nama, "Buat akun kas/bank baru" (kode 1011, 1012, …), tandai
-   satu **default**, tandai yang tampil di struk/nota.
-3. Akuntan membuat **jurnal manual reklasifikasi** per cabang (Keuangan → Jurnal → Jurnal manual), bertanggal X−1 atau X:
-   Dr akun rekening (sebesar saldo rekening koran) / Cr 1010. Selisih antara saldo 1010 dan total rekening koran diputuskan
-   akuntan (biasanya transfer belum tercatat atau salah catat lama) — jangan dipaksakan nol tanpa penjelasan.
-4. Cek: laporan **Kas & Rekening** per bulan X menampilkan tiap rekening dengan saldo = rekening koran; dasbor "Kas & Bank"
-   tidak berubah oleh reklasifikasi (hanya pindah akun); saldo 1010 ≈ 0.
+1. **Saat deploy/start:** cari di log server `rekening profil dokumen dipindahkan ke master` (`dibuat`, `dilewati`) atau
+   `pindah rekening profil dokumen ke master` (galat). Sesudah **cutover final memuat ulang data**, mulai ulang aplikasi
+   (`./deploy.sh <sha yang sama>` atau `docker compose -f docker-compose.prod.yml restart app`) agar pemindahan berjalan pada
+   data baru, lalu cek log yang sama.
+2. Pengguna `finance.manage` memeriksa Rekening bank: atas nama, default, dan yang tampil di struk/nota. Ubah lewat **Ubah**;
+   rekening yang tidak dipakai lagi **Arsipkan**; rekening yang belum ada ditambah lewat **Tambah rekening**.
+3. Bila ada **lebih dari satu** rekening, akuntan membuat **jurnal manual reklasifikasi** per cabang (Keuangan → Jurnal →
+   Jurnal manual) bertanggal hari aktivasi (atau sehari sebelumnya): Dr akun rekening 1011, 1012, … sebesar saldo rekening koran
+   masing-masing / Cr 1010. Sisa 1010 = saldo rekening pertama; selisih terhadap rekening korannya diputuskan akuntan (biasanya
+   transfer belum tercatat atau salah catat lama) — jangan dipaksakan nol tanpa penjelasan. Satu rekening: tidak perlu jurnal.
+4. Cek: laporan **Kas & Rekening** menampilkan tiap rekening dengan saldo = rekening koran; dasbor "Kas & Bank" tidak berubah
+   oleh reklasifikasi (hanya pindah akun).
 5. Umumkan ke kasir/admin: order baru otomatis berisi rekening default (bisa diganti), transfer wajib memilih rekening,
    salah pilih diperbaiki lewat **Koreksi pembayaran**.
 
-Pemetaan `bank` tetap menunjuk 1010 (sudah berjurnal, tidak bisa dipindah) dan hanya dipakai pembayaran lama tanpa rekening.
+Pemetaan `bank` tetap menunjuk 1010 (sudah berjurnal, tidak bisa dipindah); pembayaran lama tanpa rekening tetap di 1010.

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"mini-erp/internal/bootstrap"
+	companycontracts "mini-erp/internal/modules/company/contracts"
 	deliveryapp "mini-erp/internal/modules/delivery/application"
 	financeapp "mini-erp/internal/modules/finance/application"
 	financecontracts "mini-erp/internal/modules/finance/contracts"
@@ -412,5 +413,83 @@ func TestBankAccountOptions(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "\"accountId\":0") {
 		t.Fatalf("option without GL account: %s", rec.Body.String())
+	}
+}
+
+// Rekening satu sumber (analysis/004): the text rekening of the document
+// profile move into the master once at start — first one default on the bank
+// mapping account 1010, the others on new cash accounts — and never again
+// once the master holds a rekening. The profile text stays untouched.
+func TestImportLegacyBankAccountsOnce(t *testing.T) {
+	freshDB(t)
+	_ = newShop(t, ctx())
+	fin := testMods.finance.Service()
+	cs := testMods.company.Service()
+	if _, err := cs.SaveProfile(ctx(), 0, companycontracts.Profile{Name: "Toko Lama"}); err != nil {
+		t.Fatalf("profile: %v", err)
+	}
+	profile := `{"headerName":"TOKO","bankAccounts":[
+		{"bank":"BCA","holder":"PT Uji","number":"123-456"},
+		{"bank":"BCA","holder":"PT Uji","number":"123 456"},
+		{"bank":"","holder":"","number":""},
+		{"bank":"BNI","holder":"","number":"999"}]}`
+	if err := cs.SaveSettings(ctx(), 0, map[string]string{"document_profile": profile}); err != nil {
+		t.Fatalf("settings: %v", err)
+	}
+
+	res, err := testMods.wired.ImportLegacyBankAccounts(ctx())
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Created) != 2 || len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0], "nomor ganda") {
+		t.Fatalf("import = %d dibuat, dilewati %v", len(res.Created), res.Skipped)
+	}
+	bca, bni := res.Created[0], res.Created[1]
+	if bca.AccountCode != "1010" || !bca.IsDefault || !bca.ShowOnDocuments || bca.SortOrder != 0 || bca.AccountNumber != "123-456" {
+		t.Fatalf("BCA = %+v, want default on 1010", bca)
+	}
+	if bni.AccountCode != "1011" || bni.IsDefault || bni.AccountHolder != "Toko Lama" || bni.SortOrder != 1 {
+		t.Fatalf("BNI = %+v, want 1011, holder from company name", bni)
+	}
+	pol, _ := fin.BankPolicy(ctx())
+	if !pol.Required || pol.DefaultAccountID != bca.AccountID {
+		t.Fatalf("policy = %+v", pol)
+	}
+
+	// Second start: the master holds rekening, nothing happens (even after an archive).
+	if _, err := fin.SetBankAccountStatus(ctx(), 0, bni.ID, false); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	again, err := testMods.wired.ImportLegacyBankAccounts(ctx())
+	if err != nil || len(again.Created) != 0 {
+		t.Fatalf("second import = %+v, %v", again, err)
+	}
+	if list, _ := fin.ListBankAccounts(ctx(), ""); len(list) != 2 {
+		t.Fatalf("rekening = %d, want 2", len(list))
+	}
+	settings, _ := cs.GetSettings(ctx())
+	if settings["document_profile"] != profile {
+		t.Fatal("document profile text changed")
+	}
+}
+
+// No text rekening, or an empty profile: the master stays empty and the
+// pre-ADR-0026 behaviour (transfer to 1010, no picker) is kept.
+func TestImportLegacyBankAccountsNothingToMove(t *testing.T) {
+	freshDB(t)
+	_ = newShop(t, ctx())
+	for _, raw := range []string{"", `{"headerName":"TOKO"}`, `{"bankAccounts":[]}`} {
+		if raw != "" {
+			if err := testMods.company.Service().SaveSettings(ctx(), 0, map[string]string{"document_profile": raw}); err != nil {
+				t.Fatalf("settings: %v", err)
+			}
+		}
+		res, err := testMods.wired.ImportLegacyBankAccounts(ctx())
+		if err != nil || len(res.Created) != 0 {
+			t.Fatalf("%q: import = %+v, %v", raw, res, err)
+		}
+	}
+	if list, _ := testMods.finance.Service().ListBankAccounts(ctx(), ""); len(list) != 0 {
+		t.Fatalf("rekening = %d, want 0", len(list))
 	}
 }
