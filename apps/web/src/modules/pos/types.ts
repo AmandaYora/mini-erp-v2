@@ -213,8 +213,6 @@ export interface PosOrderPayload {
   notes?: string;
   /** Alamat kirim opt-in dari buku alamat pelanggan (SL-07); hanya untuk pelanggan terdaftar. */
   shipToAddressId?: number;
-  /** Rekening tujuan (ADR-0026): rekening transfer kasir; dihilangkan = default perusahaan. */
-  receiptAccountId?: number;
   items: PosOrderLinePayload[];
 }
 

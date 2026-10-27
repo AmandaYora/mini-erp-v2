@@ -231,12 +231,12 @@ describe("form pembayaran — rekening transfer (ADR-0026)", () => {
     return { pos, setBankAccountId };
   }
 
-  it("rekening tujuan tampil saat transfer dan bisa diganti", () => {
+  it("\"Ke rekening\" tampil saat transfer, terisi default, dan bisa diganti", () => {
     const { pos, setBankAccountId } = transferForm({
       all: [bca, mandiri], active: [bca, mandiri], defaultAccountId: 11, required: true, loading: false,
     });
     renderSheet(pos);
-    const select = screen.getByLabelText(/Rekening tujuan/) as HTMLSelectElement;
+    const select = screen.getByLabelText(/Ke rekening/) as HTMLSelectElement;
     expect(select.value).toBe("11");
     fireEvent.change(select, { target: { value: "12" } });
     expect(setBankAccountId).toHaveBeenCalledWith(12);
@@ -245,6 +245,6 @@ describe("form pembayaran — rekening transfer (ADR-0026)", () => {
   it("tanpa rekening perusahaan, pilihan rekening tidak muncul", () => {
     const { pos } = transferForm({ all: [], active: [], defaultAccountId: null, required: false, loading: false }, { bankAccountId: null });
     renderSheet(pos);
-    expect(screen.queryByLabelText(/Rekening tujuan/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Ke rekening/)).not.toBeInTheDocument();
   });
 });

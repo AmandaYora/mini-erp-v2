@@ -31,12 +31,12 @@ export function methodUsesBankAccount(method: string | null | undefined): boolea
 }
 
 /**
- * Nilai awal pemilih rekening pembayaran: rekening tujuan tagihan bila masih
- * aktif, lalu default perusahaan, lalu kosong.
+ * Nilai awal pemilih rekening pembayaran: rekening yang disarankan (mis. rekening
+ * pembayaran asli saat koreksi) bila masih aktif, lalu default perusahaan, lalu kosong.
  */
-export function initialPaymentAccount(list: BankAccount[], billAccountId?: number | null): number | null {
-  const bill = bankAccountByAccountId(activeBankAccounts(list), billAccountId ?? null);
-  return bill?.accountId ?? defaultBankAccountId(list);
+export function initialPaymentAccount(list: BankAccount[], preferredAccountId?: number | null): number | null {
+  const preferred = bankAccountByAccountId(activeBankAccounts(list), preferredAccountId ?? null);
+  return preferred?.accountId ?? defaultBankAccountId(list);
 }
 
 /** Pesan galat bila rekening wajib tetapi kosong (cermin aturan server); null = valid. */

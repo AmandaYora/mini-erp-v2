@@ -64,7 +64,7 @@ Modul `reporting` tidak memiliki tabel; `dashboard` hanya memiliki tabel penunda
 | `party` | `000007_party.up.sql` | `member_types`, `parties`, `party_delivery_addresses` | 3 |
 | `stock` | `000008_stock.up.sql`, `000021_stock_parity.up.sql`, `000041_stock_corrections.up.sql` | `stock_locations`, `stock_balances`, `stock_movements`, `stock_reservations`, `stock_transfers`, `stock_transfer_items` | 6 |
 | `purchasing` | `000009_purchasing.up.sql`, `000022_purchasing_tax_invoice.up.sql`, `000034_purchasing_corrections.up.sql` | `purchase_orders`, `purchase_order_items`, `purchase_order_corrections`, `purchase_order_correction_lines` | 4 |
-| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql`, `000043_sales_origin.up.sql`, `000047_sales_receipt_account.up.sql` | `sales_orders`, `sales_order_items` | 2 |
+| `sales` | `000010_sales.up.sql`, `000019_sales.up.sql`, `000033_sales_corrections.up.sql`, `000043_sales_origin.up.sql`, `000047_sales_receipt_account.up.sql`, `000049_sales_drop_receipt_account.up.sql` | `sales_orders`, `sales_order_items` | 2 |
 | `goodsreceipt` | `000011_goodsreceipt.up.sql`, `000039_goodsreceipt_corrections.up.sql` | `goods_receipts`, `goods_receipt_items` | 2 |
 | `delivery` | `000012_delivery.up.sql`, `000037_delivery_corrections.up.sql`, `000042_delivery_direct.up.sql` | `delivery_notes`, `delivery_note_items` | 2 |
 | `payment` | `000013_payment.up.sql`, `000023_payment_credit_source.up.sql`, `000032_payment_corrections.up.sql`, `000048_payment_cash_account.up.sql` | `payments`, `payment_allocations` | 2 |
@@ -364,6 +364,7 @@ Semua kolom baru nullable/berdefault sehingga idempoten terhadap data ETL (`apps
 | `000046_finance_bank_accounts` | ADR-0026 (rekening tujuan) | tabel baru `finance_bank_accounts` (FK hanya ke `finance_accounts`, modul sama) | tidak dimuat ETL (rekening diatur sesudah cutover) |
 | `000047_sales_receipt_account` | ADR-0026 | `sales_orders.receipt_account_id` (nullable, ID primitif akun rekening finance) | tak terpengaruh (NULL = belum ada rekening tujuan) |
 | `000048_payment_cash_account` | ADR-0026 | `payments.cash_account_id` (nullable) + indeks; NULL = jurnal lewat pemetaan `cash`/`bank` seperti sebelumnya | tak terpengaruh (pembayaran legacy tanpa rekening) |
+| `000049_sales_drop_receipt_account` | ADR-0026 revisi 2026-10-27 (analysis/005) | hapus `sales_orders.receipt_account_id`: rekening dipilih saat pembayaran dicatat (`payments.cash_account_id`), bukan di order; `.down.sql` menambahkannya kembali (NULL) | tak terpengaruh (ETL tidak mengisi kolom itu) |
 | `000019_sales` | SL-09 | `sales_orders.credit_approved_by`, `credit_approved_at` (nullable): siapa/kapan kredit disetujui | memetakan `credit_approved_*` dan `assigned_user_id` legacy |
 | `000020_assistant_tool_status` | AS-02 | `assistant_tool_executions.status` (default `success`), `error_text`: tool gagal tercatat per baris | tak terpengaruh |
 | `000021_stock_parity` | ST-01, ST-02 | `stock_locations.is_picking_area`, `is_primary`, `sort_order`; `stock_transfers.driver_name`, `vehicle_plate`, `transfer_date` (diisi hari WIB kirim/dibuat untuk dokumen lama) | spec load membawa `is_picking_area`/`is_primary`/`sort_order`, `driver_name`/`vehicle_number`/`transfer_date` |

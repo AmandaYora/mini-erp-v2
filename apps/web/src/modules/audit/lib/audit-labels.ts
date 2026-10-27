@@ -79,7 +79,6 @@ export const ACTION_LABELS: Record<string, string> = {
   "sales_orders.close_short": "Tutup sisa order jual",
   "sales_orders.approve_credit": "Setujui kredit order jual",
   "sales_orders.create_from_delivery": "Buat order dari surat jalan",
-  "sales_orders.receipt_account_change": "Ubah rekening tujuan order jual",
   "deliveries.create": "Buat surat jalan",
   "deliveries.create_direct": "Buat surat jalan langsung (tanpa order)",
   "deliveries.link_order": "Tautkan surat jalan langsung ke order",

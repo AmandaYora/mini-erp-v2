@@ -217,8 +217,8 @@ type BankPolicy struct {
 	DefaultAccountID int64
 }
 
-// BankAccountClient is the rekening surface for sales (rekening tujuan of a
-// bill) and payment (rekening the money moved through).
+// BankAccountClient is the rekening surface for payment (the rekening the
+// money moved through, chosen when the payment is recorded).
 type BankAccountClient interface {
 	// BankPolicy reports whether rekening are in use and the default one.
 	BankPolicy(ctx context.Context) (BankPolicy, error)

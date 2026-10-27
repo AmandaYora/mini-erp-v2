@@ -100,11 +100,9 @@ export default function PosThermalReceiptPage() {
   const customerName = o.partyId > 0 && o.partyName.trim() !== "" ? o.partyName : "Umum";
   // Kasir = pencatat pembayaran (server: cashierName); pengguna yang mencetak hanya cadangan.
   const cashierName = o.cashierName?.trim() || user?.fullName?.trim() || "-";
-  // Transfer (atau piutang) ke rekening tertentu (ADR-0026): cetak rekening itu saja;
-  // selain itu daftar rekening dokumen seperti sistem lama.
-  const chosenAccountId =
-    payments.find((p) => (p.cashAccountId ?? 0) > 0)?.cashAccountId ??
-    (s.statusLabel === "PIUTANG" ? (o.receiptAccountId ?? null) : null);
+  // Transfer ke rekening tertentu (ADR-0026): cetak rekening itu saja; selain itu
+  // daftar rekening dokumen seperti sistem lama.
+  const chosenAccountId = payments.find((p) => (p.cashAccountId ?? 0) > 0)?.cashAccountId ?? null;
   const chosen = chosenAccountId ? (bankAccounts ?? []).find((b) => b.accountId === chosenAccountId) : undefined;
   const rekeningList = chosen
     ? [{ bank: chosen.bankName, holder: chosen.accountHolder, number: chosen.accountNumber }]

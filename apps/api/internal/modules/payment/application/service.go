@@ -55,9 +55,9 @@ func (s *Service) SetBankAccounts(b financecontracts.BankAccountClient) { s.bank
 
 // resolveCashAccount settles the rekening (finance cash/bank GL account id) a
 // payment moves through (ADR-0026). Cash, offset and saldo legs carry none.
-// Transfer/check take the requested rekening, else the fallback (the bill's
-// rekening tujuan, or the corrected payment's) when it is still active, else
-// the company default. Once the company has rekening, one is required — with
+// Transfer/check take the requested rekening, else the fallback (the corrected
+// payment's) when it is still active, else the company default. The rekening is
+// chosen when the payment is recorded, never on the bill (ADR-0026 revisi). Once the company has rekening, one is required — with
 // none configured the payment keeps the method's mapping (0).
 func (s *Service) resolveCashAccount(ctx context.Context, method string, requested, fallback int64) (int64, error) {
 	if method != contracts.MethodTransfer && method != contracts.MethodCheck {
@@ -225,9 +225,6 @@ type orderRef struct {
 	// charge: a return that the customer owes us (exchange costing more), so
 	// its money flows in the normal direction, not as a refund.
 	charge bool
-	// receiptAccountID is the sales order's rekening tujuan (ADR-0026); for an
-	// exchange surcharge, the parent order's.
-	receiptAccountID int64
 }
 
 // resolveOrder validates one allocation target: exists, same branch+party,
@@ -239,7 +236,6 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 	var orderParty int64
 	var orderBranch int64
 	var charge bool
-	var receipt int64
 	switch orderType {
 	case contracts.OrderPurchase:
 		o, err := s.purchasing.GetByID(ctx, orderID)
@@ -259,7 +255,6 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 			return nil, apperror.NotFound("Order")
 		}
 		grand, status, orderParty, orderBranch = o.GrandTotal, o.Status, o.PartyID, o.BranchID
-		receipt = o.ReceiptAccountID
 	case contracts.OrderSalesReturn:
 		r, err := s.salesReturns.GetReturn(ctx, orderID)
 		if err != nil {
@@ -279,9 +274,6 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 		// nor offsettable (CreditSettled is 0 for a charge-kind return).
 		grand, status, orderParty, orderBranch = r.Total-r.CreditSettled, r.Status, so.PartyID, r.Branch
 		charge = r.Kind == salesreturncontracts.KindCharge
-		if charge {
-			receipt = so.ReceiptAccountID
-		}
 	case contracts.OrderPurchaseReturn:
 		r, err := s.purchaseReturns.GetReturn(ctx, orderID)
 		if err != nil {
@@ -327,7 +319,7 @@ func (s *Service) resolveOrder(ctx context.Context, branchID, partyID int64, ord
 		paid -= used
 	}
 	return &orderRef{orderType: orderType, orderID: orderID,
-		grandTotal: grand, outstanding: grand - paid, charge: charge, receiptAccountID: receipt}, nil
+		grandTotal: grand, outstanding: grand - paid, charge: charge}, nil
 }
 
 // CreateOption sets optional payment data.
@@ -500,7 +492,6 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 	seen := map[string]bool{}
 	stored := make([]*contracts.Allocation, 0, len(allocs))
 	paymentDir := direction
-	var billAccount int64 // first allocated bill's rekening tujuan
 	for i, a := range allocs {
 		tag := "alokasi baris " + strconv.Itoa(i+1) + ": "
 		if a.OrderType == "" {
@@ -538,14 +529,11 @@ func (s *Service) createLocked(ctx context.Context, actorID, branchID, partyID i
 		}
 		total += a.Amount
 		stored = append(stored, &contracts.Allocation{OrderType: a.OrderType, OrderID: a.OrderID, Amount: a.Amount})
-		if billAccount == 0 && wantDir == contracts.DirectionIn {
-			billAccount = ref.receiptAccountID
-		}
 	}
 	if total != amount {
 		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "amount", Message: "harus sama dengan total alokasi"}})
 	}
-	cashAccount, err := s.resolveCashAccount(ctx, method, o.cashAccountID, billAccount)
+	cashAccount, err := s.resolveCashAccount(ctx, method, o.cashAccountID, 0)
 	if err != nil {
 		return nil, false, err
 	}

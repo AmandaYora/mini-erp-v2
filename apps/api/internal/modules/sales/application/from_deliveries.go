@@ -62,8 +62,6 @@ type FromDeliveriesInput struct {
 	AssignedUserID   int64
 	TaxInvoiceNumber string
 	TaxInvoiceDate   string
-	// ReceiptAccountID is the bill's rekening tujuan (ADR-0026); 0 = default.
-	ReceiptAccountID int64
 	// Lines price the stock lines of the notes (matched by product/variant/uom;
 	// a line the notes do not carry is refused). Missing = catalog/member price.
 	Lines []FromDeliveriesLine
@@ -279,7 +277,7 @@ func (s *Service) planFromDeliveries(ctx context.Context, branchID int64, in Fro
 	oi := OrderInput{
 		PartyID: first.PartyID, Channel: contracts.ChannelRegular, OrderDate: orderDate,
 		DueDate: strings.TrimSpace(in.DueDate), PaymentTerms: terms, TaxType: taxType, TaxRate: in.TaxRate,
-		Notes: in.Notes, AssignedUserID: in.AssignedUserID, ReceiptAccountID: in.ReceiptAccountID,
+		Notes: in.Notes, AssignedUserID: in.AssignedUserID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate,
 		ShipToLabel: first.ShipToLabel, ShipToRecipient: first.ShipToRecipient,
 		ShipToPhone: first.ShipToPhone, ShipToAddress: first.ShipToAddress,

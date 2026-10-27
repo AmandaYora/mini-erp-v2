@@ -12,7 +12,6 @@ import { referenceLabel } from "@/modules/payment/types";
 import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
 import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
-import { initialPaymentAccount } from "@/modules/finance/lib/bank-accounts";
 import {
   buildOrderPaymentSchema,
   toOrderPaymentPayload,
@@ -36,8 +35,6 @@ interface Props {
   /** 0 = walk-in (tanpa pihak): alokasi tetap eksplisit ke order ini. */
   partyId: number;
   outstanding: number;
-  /** Rekening tujuan tagihan (order jual, ADR-0026) — nilai awal rekening transfer. */
-  billAccountId?: number | null;
 }
 
 /**
@@ -54,12 +51,11 @@ export function OrderPaymentModal({
   orderNumber,
   partyId,
   outstanding,
-  billAccountId = null,
 }: Props) {
   const bank = useBankAccounts();
-  // null = belum dipilih: nilai efektif = rekening tagihan, lalu default.
+  // null = belum dipilih: nilai efektif = rekening default (ADR-0026: rekening dipilih saat bayar).
   const [cashAccountId, setCashAccountId] = useState<number | null>(null);
-  const effectiveAccount = cashAccountId ?? initialPaymentAccount(bank.all, billAccountId);
+  const effectiveAccount = cashAccountId ?? bank.defaultAccountId;
   const [amount, setAmount] = useState(String(outstanding));
   const [method, setMethod] = useState<"cash" | "transfer" | "check">("cash");
   const [paidAt, setPaidAt] = useState(todayWIB());

@@ -3,6 +3,7 @@ package integration
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	financeapp "mini-erp/internal/modules/finance/application"
 	financecontracts "mini-erp/internal/modules/finance/contracts"
 	paymentapp "mini-erp/internal/modules/payment/application"
-	salesapp "mini-erp/internal/modules/sales/application"
 	"mini-erp/internal/shared/apperror"
 )
 
@@ -148,10 +148,6 @@ func TestTransferWithoutRekeningKeepsBankMapping(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
 	soID := sellFixture(t, ctx(), fx, 2)
-	so, _ := testMods.sales.Service().GetByID(ctx(), soID)
-	if so.ReceiptAccountID != 0 {
-		t.Fatalf("rekening tujuan without rekening = %d", so.ReceiptAccountID)
-	}
 	total := orderTotal(t, soID)
 	pay, err := testMods.payment.Service().Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", total, payAll(soID, total))
 	if err != nil {
@@ -168,55 +164,33 @@ func TestTransferWithoutRekeningKeepsBankMapping(t *testing.T) {
 	}
 }
 
-func TestRekeningOnBillsPaymentsAndJournals(t *testing.T) {
+// The rekening is chosen when the payment is recorded (ADR-0026 revisi,
+// analysis/005): a transfer names one or takes the company default, and the
+// journal debits that rekening's account.
+func TestRekeningOnPaymentsAndJournals(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
 	bca := mkRekening(t, "1011", "BCA", "123", true)
 	mdr := mkRekening(t, "1012", "Mandiri", "456", false)
-	sales := testMods.sales.Service()
 	pays := testMods.payment.Service()
 	fin := testMods.finance.Service()
 
-	// A new bill takes the default rekening; an explicit one wins; an archived
-	// or unknown one is refused.
+	// A transfer without an explicit rekening takes the default (BCA).
 	soID := sellFixture(t, ctx(), fx, 4)
-	so, _ := sales.GetByID(ctx(), soID)
-	if so.ReceiptAccountID != bca.AccountID {
-		t.Fatalf("default rekening tujuan = %d, want BCA %d", so.ReceiptAccountID, bca.AccountID)
-	}
-	in := salesapp.OrderInput{
-		PartyID: fx.customerID, Channel: "regular", PaymentTerms: "cod", TaxType: "none", ReceiptAccountID: mdr.AccountID,
-		Items: []salesapp.LineInput{{ProductID: fx.productID, VariantID: fx.variantID, UOM: "pcs", Qty: 1}},
-	}
-	so2, err := sales.CreateOrder(ctx(), 0, fx.branchID, in)
-	if err != nil || so2.ReceiptAccountID != mdr.AccountID {
-		t.Fatalf("explicit rekening: %v %+v", err, so2)
-	}
-	in.ReceiptAccountID = 999999
-	if _, err := sales.CreateOrder(ctx(), 0, fx.branchID, in); err == nil {
-		t.Fatal("unknown rekening tujuan accepted")
-	} else {
-		wantFieldErr(t, err, "receiptAccountId")
-	}
-
-	// A transfer without an explicit rekening follows the bill (Mandiri on
-	// so2), never the default; the journal debits that rekening's account.
-	if _, err := sales.ConfirmOrder(ctx(), 0, fx.branchID, so2.ID); err != nil {
-		t.Fatalf("confirm so2: %v", err)
-	}
-	t2 := orderTotal(t, so2.ID)
-	p2, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", t2, payAll(so2.ID, t2))
+	so2 := sellFixture(t, ctx(), fx, 1)
+	t2 := orderTotal(t, so2)
+	p2, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", t2, payAll(so2, t2))
 	if err != nil {
 		t.Fatalf("pay so2: %v", err)
 	}
-	if p2.CashAccountID != mdr.AccountID {
-		t.Fatalf("payment rekening = %d, want the bill's Mandiri %d", p2.CashAccountID, mdr.AccountID)
+	if p2.CashAccountID != bca.AccountID {
+		t.Fatalf("payment rekening = %d, want the default BCA %d", p2.CashAccountID, bca.AccountID)
 	}
 	if _, err := fin.Post(ctx(), 0, fx.branchID, "payment", p2.ID); err != nil {
 		t.Fatalf("post p2: %v", err)
 	}
-	if got := accountNet(t, fx.branchID, "1012"); got != t2 {
-		t.Fatalf("1012 = %d, want %d", got, t2)
+	if got := accountNet(t, fx.branchID, "1011"); got != t2 {
+		t.Fatalf("1011 = %d, want %d", got, t2)
 	}
 	if got := accountNet(t, fx.branchID, financecontracts.CodeBank); got != 0 {
 		t.Fatalf("1010 moved by a rekening payment: %d", got)
@@ -230,7 +204,7 @@ func TestRekeningOnBillsPaymentsAndJournals(t *testing.T) {
 	} else {
 		wantFieldErr(t, err, "cashAccountId")
 	}
-	// Explicit rekening on the payment wins over the bill's.
+	// An explicit rekening on the payment wins over the default.
 	p1, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", total/2, payAll(soID, total/2),
 		paymentapp.WithCashAccount(mdr.AccountID))
 	if err != nil || p1.CashAccountID != mdr.AccountID {
@@ -238,6 +212,9 @@ func TestRekeningOnBillsPaymentsAndJournals(t *testing.T) {
 	}
 	if _, err := fin.Post(ctx(), 0, fx.branchID, "payment", p1.ID); err != nil {
 		t.Fatalf("post p1: %v", err)
+	}
+	if got := accountNet(t, fx.branchID, "1012"); got != total/2 {
+		t.Fatalf("1012 = %d, want %d", got, total/2)
 	}
 
 	// Wrong rekening fixed through a correction: the old journal is reversed,
@@ -255,56 +232,26 @@ func TestRekeningOnBillsPaymentsAndJournals(t *testing.T) {
 	if _, err := fin.Post(ctx(), 0, fx.branchID, "payment", fixed.ID); err != nil {
 		t.Fatalf("post corrected: %v", err)
 	}
-	if got := accountNet(t, fx.branchID, "1012"); got != t2 {
-		t.Fatalf("1012 after correction = %d, want %d (p1 reversed)", got, t2)
+	if got := accountNet(t, fx.branchID, "1012"); got != 0 {
+		t.Fatalf("1012 after correction = %d, want 0 (p1 reversed)", got)
 	}
-	if got := accountNet(t, fx.branchID, "1011"); got != total/2 {
-		t.Fatalf("1011 after correction = %d, want %d", got, total/2)
+	if got := accountNet(t, fx.branchID, "1011"); got != t2+total/2 {
+		t.Fatalf("1011 after correction = %d, want %d", got, t2+total/2)
 	}
 
-	// Archived rekening: no new payment may name it, and the bill's archived
-	// rekening falls back to the default instead of failing the payment.
+	// Archived rekening: no new payment may name it; the default still applies.
 	if _, err := fin.SetBankAccountStatus(ctx(), 0, mdr.ID, false); err != nil {
 		t.Fatalf("archive mandiri: %v", err)
 	}
-	so3, err := sales.CreateOrder(ctx(), 0, fx.branchID, salesapp.OrderInput{
-		PartyID: fx.customerID, Channel: "regular", PaymentTerms: "cod", TaxType: "none", ReceiptAccountID: bca.AccountID,
-		Items: []salesapp.LineInput{{ProductID: fx.productID, VariantID: fx.variantID, UOM: "pcs", Qty: 1}},
-	})
-	if err != nil {
-		t.Fatalf("so3: %v", err)
-	}
-	if _, err := testMods.db.Exec(`UPDATE sales_orders SET receipt_account_id = ? WHERE id = ?`, mdr.AccountID, so3.ID); err != nil {
-		t.Fatalf("point so3 at the archived rekening: %v", err)
-	}
-	if _, err := sales.ConfirmOrder(ctx(), 0, fx.branchID, so3.ID); err != nil {
-		t.Fatalf("confirm so3: %v", err)
-	}
-	t3 := orderTotal(t, so3.ID)
-	if _, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", t3, payAll(so3.ID, t3),
+	so3 := sellFixture(t, ctx(), fx, 1)
+	t3 := orderTotal(t, so3)
+	if _, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", t3, payAll(so3, t3),
 		paymentapp.WithCashAccount(mdr.AccountID)); err == nil {
 		t.Fatal("payment to an archived rekening accepted")
 	}
-	p3, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", t3, payAll(so3.ID, t3))
+	p3, err := pays.Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", t3, payAll(so3, t3))
 	if err != nil || p3.CashAccountID != bca.AccountID {
-		t.Fatalf("fallback to default: %v %+v", err, p3)
-	}
-	// Editing an unrelated header field of a bill whose rekening was archived
-	// keeps working (re-sending the current rekening is always accepted).
-	got3, _ := sales.GetByID(ctx(), so3.ID)
-	edit := salesapp.OrderInput{
-		PartyID: got3.PartyID, Channel: got3.Channel, PaymentTerms: got3.PaymentTerms, TaxType: got3.TaxType,
-		Notes: "catatan baru", ReceiptAccountID: got3.ReceiptAccountID, HeaderOnly: true,
-		Items: []salesapp.LineInput{{ProductID: fx.productID, VariantID: fx.variantID, UOM: "pcs", Qty: 1}},
-	}
-	if _, err := sales.UpdateOrder(ctx(), 0, fx.branchID, so3.ID, edit); err != nil {
-		t.Fatalf("header edit with archived rekening: %v", err)
-	}
-	// An update that does not send the field (older client) keeps the bill's rekening.
-	edit.ReceiptAccountID = 0
-	edit.Notes = "catatan lagi"
-	if after, err := sales.UpdateOrder(ctx(), 0, fx.branchID, so3.ID, edit); err != nil || after.ReceiptAccountID != mdr.AccountID {
-		t.Fatalf("update without rekening re-pointed the bill: %v %+v", err, after)
+		t.Fatalf("default rekening: %v %+v", err, p3)
 	}
 
 	// "Kas & Bank" counts every cash/bank account, rekening included.
@@ -319,12 +266,12 @@ func TestRekeningOnBillsPaymentsAndJournals(t *testing.T) {
 	}
 }
 
-// Once rekening exist, a transfer must name one (or inherit the bill's / the
-// default); with no default and no bill rekening it is refused.
+// Once rekening exist, a transfer must name one (or take the default); with
+// no default it is refused.
 func TestTransferRequiresRekeningOnceConfigured(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
-	soID := sellFixture(t, ctx(), fx, 2) // created before any rekening: none on the bill
+	soID := sellFixture(t, ctx(), fx, 2)
 	mkRekening(t, "1011", "BCA", "123", false)
 	total := orderTotal(t, soID)
 	_, err := testMods.payment.Service().Create(ctx(), 0, fx.branchID, fx.customerID, "transfer", "", "", total, payAll(soID, total))
@@ -338,30 +285,42 @@ func TestTransferRequiresRekeningOnceConfigured(t *testing.T) {
 	}
 }
 
-// The rekening tujuan of a completed bill can still change (dedicated,
-// audited endpoint); a cancelled one cannot.
-func TestSetReceiptAccountOnCompletedBill(t *testing.T) {
+// Orders carry no rekening any more (ADR-0026 revisi): the dedicated endpoint
+// is gone, an order payload from the previous web build that still sends
+// receiptAccountId is accepted and ignored, and the COD settlement of a
+// shipment carries the rekening chosen on the spot.
+func TestOrdersCarryNoRekening(t *testing.T) {
 	freshDB(t)
 	fx := newShop(t, ctx())
-	bca := mkRekening(t, "1011", "BCA", "123", true)
+	if err := bootstrap.EnsureAuthz(ctx(), testMods.user.Service()); err != nil {
+		t.Fatalf("seed authz: %v", err)
+	}
+	mkRekening(t, "1011", "BCA", "123", true)
 	mdr := mkRekening(t, "1012", "Mandiri", "456", false)
-	soID := sellFixture(t, ctx(), fx, 2)
-	deliverAll(t, ctx(), fx, soID, 2)
-	so, _ := testMods.sales.Service().GetByID(ctx(), soID)
-	if so.Status != "completed" || so.ReceiptAccountID != bca.AccountID {
-		t.Fatalf("order = %s rekening %d", so.Status, so.ReceiptAccountID)
+	h := routeServer(t).Handler()
+	tok := guardUser(t, fx.branchID, "rk-sales", []string{"sales.view", "sales.create", "sales.update"})
+	body := fmt.Sprintf(`{"partyId":%d,"channel":"regular","paymentTerms":"cod","taxType":"none","receiptAccountId":%d,
+		"items":[{"productId":%d,"variantId":%d,"uom":"pcs","qty":1}]}`, fx.customerID, mdr.AccountID, fx.productID, fx.variantID)
+	rec := doReq(h, http.MethodPost, "/api/v1/sales-orders", tok, body)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("create with legacy receiptAccountId = %d %s", rec.Code, rec.Body.String())
 	}
-	upd, err := testMods.sales.Service().SetReceiptAccount(ctx(), 0, fx.branchID, soID, mdr.AccountID)
-	if err != nil || upd.ReceiptAccountID != mdr.AccountID {
-		t.Fatalf("set rekening: %v %+v", err, upd)
+	if strings.Contains(rec.Body.String(), "receiptAccountId") {
+		t.Fatalf("order view still exposes receiptAccountId: %s", rec.Body.String())
 	}
-	var n int
-	if err := testMods.db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action_key = 'sales_orders.receipt_account_change' AND entity_id = ?`, soID).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("audit rows = %d %v", n, err)
+	var created struct {
+		Data struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
 	}
-	if _, err := testMods.sales.Service().SetReceiptAccount(ctx(), 0, fx.branchID, soID, 0); err == nil {
-		t.Fatal("empty rekening accepted")
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.Data.ID == 0 {
+		t.Fatalf("decode created order: %v %s", err, rec.Body.String())
 	}
+	if rec := doReq(h, http.MethodPut, fmt.Sprintf("/api/v1/sales-orders/%d/receipt-account", created.Data.ID), tok,
+		fmt.Sprintf(`{"receiptAccountId":%d}`, mdr.AccountID)); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("receipt-account route = %d, want gone", rec.Code)
+	}
+
 	// The COD settlement of a shipment carries the rekening chosen on the spot.
 	so2 := sellFixture(t, ctx(), fx, 1)
 	dn, err := testMods.delivery.Service().Create(ctx(), 0, fx.branchID, so2, "2026-09-10", "", deliveryapp.DocInput{},

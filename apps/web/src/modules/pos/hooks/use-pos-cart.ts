@@ -733,7 +733,7 @@ export function usePosCart() {
     }
     const transferAccount = !payLater && values.method === "transfer" ? bankAccountId : null;
     if (!payLater && values.method === "transfer" && bankAccounts.required && transferAccount === null) {
-      setCheckoutError("Pilih rekening tujuan transfer.");
+      setCheckoutError("Pilih rekening untuk transfer.");
       return;
     }
     setCheckoutError(null);
@@ -760,7 +760,6 @@ export function usePosCart() {
         shipToAddressId: effectiveShipTo,
         taxType,
         taxRate,
-        receiptAccountId: transferAccount,
         items,
       });
     } catch (err) {

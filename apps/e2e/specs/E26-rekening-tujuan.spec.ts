@@ -2,9 +2,9 @@ import { test, expect } from "@playwright/test";
 import { call, confirmSO, createSO, drainPosting, ok, partyByCode, productByCode, today } from "../helpers/api";
 import { collectErrors, loginAs } from "../helpers/ui";
 
-// Rekening perusahaan (ADR-0026): admin membuat dua rekening (BCA default, Mandiri), order baru membawa
-// rekening default, admin mengganti rekening tujuan di detail order, pembayaran transfer terisi rekening
-// itu dan dijurnal ke akunnya. Di akhir rekening diarsipkan agar spec berikutnya kembali ke perilaku
+// Rekening perusahaan (ADR-0026, revisi analysis/005): admin membuat dua rekening (BCA default, Mandiri);
+// order tidak membawa rekening; saat Catat pembayaran transfer "Ke rekening" terisi default, kasir
+// menggantinya ke Mandiri, dan pembayaran dijurnal ke akun Mandiri. Di akhir rekening diarsipkan agar spec berikutnya kembali ke perilaku
 // tanpa rekening (transfer ke akun pemetaan "bank").
 test.describe.serial("E26 rekening tujuan → pembayaran transfer → jurnal per rekening", () => {
   let bca: any;
@@ -60,11 +60,11 @@ test.describe.serial("E26 rekening tujuan → pembayaran transfer → jurnal per
     }
   });
 
-  test("order baru membawa rekening default; admin menggantinya di detail order", async ({ page }) => {
+  test("order tanpa rekening; Catat pembayaran transfer terisi default dan diganti ke Mandiri", async ({ page }) => {
     const customer = await partyByCode("customers", "C005");
     const p = await productByCode("P003");
     const so = await createSO("admin", customer.id, [{ p, qty: 2 }]);
-    expect(so.receiptAccountId).toBe(bca.accountId);
+    expect(so).not.toHaveProperty("receiptAccountId");
     await confirmSO("admin", so.id);
     orderId = so.id;
     total = so.grandTotal;
@@ -72,19 +72,16 @@ test.describe.serial("E26 rekening tujuan → pembayaran transfer → jurnal per
     const errors = collectErrors(page);
     await loginAs(page, "admin");
     await page.goto(`/sales-orders/${orderId}`);
-    await expect(page.getByText("BCA 1110001 a.n. PT E2E")).toBeVisible();
-    await page.getByRole("button", { name: "Ubah rekening tujuan" }).click();
-    const dialog = page.getByRole("dialog", { name: "Ubah rekening tujuan" });
-    await dialog.getByRole("combobox").selectOption(String(mandiri.accountId));
-    await dialog.getByRole("button", { name: "Simpan", exact: true }).click();
-    await expect(page.getByText("Mandiri 2220002 a.n. PT E2E")).toBeVisible();
-    const after = await ok<any>("admin", "GET", `/sales-orders/${orderId}`);
-    expect(after.receiptAccountId).toBe(mandiri.accountId);
+    await expect(page.getByRole("button", { name: "Catat pembayaran" }).first()).toBeVisible();
+    // Order tidak menampilkan atau mengubah rekening (ADR-0026 revisi): rekening dipilih saat bayar.
+    await expect(page.getByText("Rekening tujuan")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Ubah rekening tujuan" })).toHaveCount(0);
 
-    // Pembayaran transfer: "Ke rekening" terisi rekening tujuan order (Mandiri).
+    // Pembayaran transfer: "Ke rekening" terisi rekening default (BCA), kasir menggantinya ke Mandiri.
     await page.getByRole("button", { name: "Catat pembayaran" }).first().click();
     await page.getByLabel("Metode").selectOption("transfer");
-    await expect(page.getByLabel("Ke rekening")).toHaveValue(String(mandiri.accountId));
+    await expect(page.getByLabel("Ke rekening")).toHaveValue(String(bca.accountId));
+    await page.getByLabel("Ke rekening").selectOption(String(mandiri.accountId));
     await page.getByLabel("Referensi Transfer").fill("TRX-E26");
     await page.getByRole("button", { name: "Simpan pembayaran" }).click();
     // Tombol berganti "Menyimpan…" selama permintaan berjalan: tunggu pembayaran benar-benar tersimpan.
@@ -118,8 +115,7 @@ test.describe.serial("E26 rekening tujuan → pembayaran transfer → jurnal per
     const p = await productByCode("P003");
     const so = await createSO("admin", customer.id, [{ p, qty: 1 }]);
     await confirmSO("admin", so.id);
-    // Tagihan baru tanpa default: rekening tujuan kosong; transfer tanpa rekening ditolak (validasi 400).
-    expect(so.receiptAccountId ?? 0).toBe(0);
+    // Tanpa rekening default: transfer tanpa rekening ditolak (validasi 400).
     const denied = await call("admin", "POST", "/payments", {
       partyId: customer.id, amount: so.grandTotal, method: "transfer",
       allocations: [{ orderType: "sales", orderId: so.id, amount: so.grandTotal }],

@@ -36,7 +36,6 @@ func toOrder(r sqlc.GetOrderRow) *contracts.SalesOrder {
 		MemberCode:       r.MemberCode.String,
 		OrderDate:        r.OrderDate.Format(wireDateTime),
 		DueDate:          dbutil.FormatNullTime(r.DueDate),
-		ReceiptAccountID: r.ReceiptAccountID.Int64,
 		PaymentTerms:     r.PaymentTerms,
 		TaxType:          r.TaxType,
 		TaxRate:          r.TaxRate,

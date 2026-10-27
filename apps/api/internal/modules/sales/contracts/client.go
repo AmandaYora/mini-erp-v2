@@ -84,24 +84,19 @@ type SalesOrder struct {
 	PartyAddress string
 	Channel      string
 	// Origin: OriginStandard | OriginDelivery (built from direct delivery notes).
-	Origin       string
-	MemberCode   string
-	OrderDate    string
-	DueDate      string
-	PaymentTerms string
-	// ReceiptAccountID is the bill's rekening tujuan: the finance cash/bank GL
-	// account of the company bank account the customer is asked to pay into
-	// (ADR-0026). 0 = none chosen. Printed on the nota; transfer payments of
-	// the order prefill from it.
-	ReceiptAccountID int64
-	TaxType          string
-	TaxRate          float64
-	Subtotal         int64
-	DiscountTotal    int64
-	TaxTotal         int64
-	GrandTotal       int64
-	Status           string
-	Notes            string
+	Origin        string
+	MemberCode    string
+	OrderDate     string
+	DueDate       string
+	PaymentTerms  string
+	TaxType       string
+	TaxRate       float64
+	Subtotal      int64
+	DiscountTotal int64
+	TaxTotal      int64
+	GrandTotal    int64
+	Status        string
+	Notes         string
 	// Ship-to snapshot (C2): frozen at write time, never follows the
 	// address master afterwards.
 	ShipToAddressID int64

@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { draftKey, saveDraft } from "@/shared/lib/draft-storage";
 
-// Rekening tujuan tagihan (ADR-0026): order baru membawa rekening default,
-// pilihan kasir menggantikannya, dan tanpa rekening perusahaan kolom tidak tampil.
+// Rekening dipilih saat pembayaran dicatat, bukan di order (ADR-0026 revisi,
+// analysis/005): form Order Jual tidak punya isian rekening walau perusahaan punya
+// rekening, dan payload tidak membawa receiptAccountId.
 const create = vi.fn();
 vi.mock("@/modules/sales/services/sales.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/sales/services/sales.service")>();
@@ -80,28 +81,15 @@ const bca = {
 };
 const mandiri = { ...bca, id: 2, accountId: 12, accountCode: "1012", bankName: "Mandiri", accountNumber: "456", isDefault: false };
 
-describe("form order jual — rekening tujuan", () => {
-  it("order baru membawa rekening default; pilihan lain menggantikannya", async () => {
+describe("form order jual — tanpa rekening", () => {
+  it("tidak ada isian rekening walau ada rekening perusahaan; payload tanpa receiptAccountId", async () => {
     bankState.mockReturnValue({ all: [bca, mandiri], active: [bca, mandiri], defaultAccountId: 11, required: true, loading: false });
     seedDraft([line]);
     renderPage();
     await screen.findByText(/BRG-1/);
-    const select = screen.getByLabelText("Rekening tujuan") as HTMLSelectElement;
-    expect(select.value).toBe("11");
-    fireEvent.change(select, { target: { value: "12" } });
+    expect(screen.queryByLabelText(/Rekening/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Simpan order" }));
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create.mock.calls[0][0].receiptAccountId).toBe(12);
-  });
-
-  it("tanpa rekening perusahaan: kolom tidak tampil, payload 0 (server memakai default bila ada)", async () => {
-    bankState.mockReturnValue({ all: [], active: [], defaultAccountId: null, required: false, loading: false });
-    seedDraft([line]);
-    renderPage();
-    await screen.findByText(/BRG-1/);
-    expect(screen.queryByLabelText("Rekening tujuan")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Simpan order" }));
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-    expect(create.mock.calls[0][0].receiptAccountId).toBe(0);
+    expect(create.mock.calls[0][0]).not.toHaveProperty("receiptAccountId");
   });
 });

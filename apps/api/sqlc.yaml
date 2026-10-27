@@ -235,6 +235,7 @@ sql:
       - migrations/000033_sales_corrections.up.sql
       - migrations/000043_sales_origin.up.sql
       - migrations/000047_sales_receipt_account.up.sql
+      - migrations/000049_sales_drop_receipt_account.up.sql
     queries: internal/modules/sales/infrastructure/queries
     gen:
       go:

@@ -63,8 +63,6 @@ import { loadActiveProductPage } from "@/modules/products/lib/product-picker";
 import { ScanDialog } from "@/modules/pos/components/ScanDialog";
 import type { ScanOutcome } from "@/modules/pos/lib/scan-session";
 import type { Product } from "@/modules/products/types";
-import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
-import { BankAccountSelect } from "@/modules/finance/components/BankAccountSelect";
 
 /** Satu baris editor. uoms/variants difoto dari detail produk saat baris
  * ditambah (dipilih ulang per baris), catalogPrice = harga katalog/server
@@ -125,8 +123,6 @@ interface SalesFormDraft {
   /** Alamat sekali pakai (SL-01); opsional agar draf lama tetap terbaca. */
   shipAdHoc?: ShipAdHoc;
   assignedUserId?: number | null;
-  /** Rekening tujuan (ADR-0026); opsional agar draf lama tetap terbaca. */
-  receiptAccountId?: number | null;
   taxInvoiceNumber: string;
   taxInvoiceDate: string;
   /** Opsional: draf lama (sebelum kontrol PPN) tidak membawanya. */
@@ -244,10 +240,6 @@ function SalesOrderStandardForm() {
   const [shipToAddressId, setShipToAddressId] = useState<number | null>(draft?.shipToAddressId ?? null);
   const [shipAdHoc, setShipAdHoc] = useState<ShipAdHoc>(draft?.shipAdHoc ?? EMPTY_AD_HOC);
   const [assignedUserId, setAssignedUserId] = useState<number | null>(draft?.assignedUserId ?? null);
-  // Rekening tujuan (ADR-0026): order baru terisi rekening default sampai dipilih lain.
-  const bank = useBankAccounts();
-  const [receiptAccountId, setReceiptAccountId] = useState<number | null>(draft?.receiptAccountId ?? null);
-  const effectiveReceipt = receiptAccountId ?? (isEdit ? null : bank.defaultAccountId);
   const [quickCustomerOpen, setQuickCustomerOpen] = useState(false);
   const [taxInvoiceNumber, setTaxInvoiceNumber] = useState(draft?.taxInvoiceNumber ?? "");
   const [taxInvoiceDate, setTaxInvoiceDate] = useState(draft?.taxInvoiceDate ?? "");
@@ -289,14 +281,13 @@ function SalesOrderStandardForm() {
       shipToAddressId,
       shipAdHoc,
       assignedUserId,
-      receiptAccountId,
       taxInvoiceNumber,
       taxInvoiceDate,
       taxType,
       taxRate,
       lines,
     }),
-    [partyId, pickedCustomer, orderDate, paymentTerms, dueDate, notes, shipToAddressId, shipAdHoc, assignedUserId, receiptAccountId, taxInvoiceNumber, taxInvoiceDate, taxType, taxRate, lines],
+    [partyId, pickedCustomer, orderDate, paymentTerms, dueDate, notes, shipToAddressId, shipAdHoc, assignedUserId, taxInvoiceNumber, taxInvoiceDate, taxType, taxRate, lines],
   );
   useDraftAutosave(formDraftKey, draftSnapshot, isSalesDraftEmpty);
 
@@ -403,7 +394,6 @@ function SalesOrderStandardForm() {
           shipToAddressId: o.shipToAddressId > 0 ? o.shipToAddressId : null,
           // Alamat tersimpan di order tanpa id buku alamat = alamat sekali pakai.
           assignedUserId: (o.assignedUserId ?? 0) > 0 ? (o.assignedUserId ?? null) : null,
-          receiptAccountId: (o.receiptAccountId ?? 0) > 0 ? (o.receiptAccountId ?? null) : null,
           shipAdHoc:
             o.shipToAddressId <= 0 && (o.shipToAddress ?? "").trim() !== ""
               ? {
@@ -506,7 +496,6 @@ function SalesOrderStandardForm() {
     setShipToAddressId(editBundle.shipToAddressId);
     setShipAdHoc(editBundle.shipAdHoc);
     setAssignedUserId(editBundle.assignedUserId);
-    setReceiptAccountId(editBundle.receiptAccountId);
     setTaxInvoiceNumber(editBundle.taxInvoiceNumber);
     setTaxInvoiceDate(editBundle.taxInvoiceDate);
     setLines(editBundle.lines);
@@ -696,7 +685,6 @@ function SalesOrderStandardForm() {
       taxRate,
       notes: v.notes,
       assignedUserId: assignedUserId ?? 0,
-      receiptAccountId: effectiveReceipt ?? 0,
       shipToAddressId: adHocActive ? 0 : (shipToAddressId ?? 0),
       ...(adHocFilled
         ? {
@@ -921,22 +909,6 @@ function SalesOrderStandardForm() {
                   id="f-due"
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
-                  disabled={readOnly}
-                />
-              </FormField>
-            )}
-            {(bank.active.length > 0 || effectiveReceipt !== null) && (
-              <FormField
-                label="Rekening tujuan"
-                htmlFor="f-receipt-account"
-                helperText="Dicetak di nota; pembayaran transfer order ini terisi rekening ini."
-              >
-                <BankAccountSelect
-                  id="f-receipt-account"
-                  options={bank.active}
-                  all={bank.all}
-                  value={effectiveReceipt}
-                  onChange={(id) => setReceiptAccountId(id)}
                   disabled={readOnly}
                 />
               </FormField>

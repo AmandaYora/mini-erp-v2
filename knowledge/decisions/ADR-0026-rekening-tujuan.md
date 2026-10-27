@@ -6,6 +6,8 @@ Accepted (2026-10-26). Disetujui pemilik sebagai rekomendasi final. Analisis dan
 **Revisi 2026-10-26** ([analysis/004](../../analysis/004-satu-sumber-rekening/analysis.md)): master adalah satu-satunya
 sumber rekening. Editor rekening di Pengaturan › Perusahaan dihapus; rekening teks lama dipindahkan otomatis sekali
 saat start (butir 9). Butir 6–9 dan Consequences di bawah sudah memuat revisi ini.
+**Revisi 2026-10-27** ([analysis/005](../../analysis/005-rekening-saat-bayar/analysis.md)): rekening hanya dipilih saat
+pembayaran dicatat. Rekening tujuan di order jual dihapus (butir 2), dan nota mencetak daftar rekening dokumen (butir 6).
 Merevisi catatan `finance_cash_accounts` di `DB_SCHEMA.md` §6 dan menambah satu pengecualian pada
 ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifikasi: akuntan.**
 
@@ -28,16 +30,15 @@ ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifik
    (`finance_accounts.is_cash`) miliknya sendiri. Akun pemetaan `cash` (kas tunai) tidak boleh
    menjadi rekening. Saldo tetap milik akun buku besar, tabel ini tidak menyimpan saldo.
    Modul lain menyimpan **id akun buku besar** rekening sebagai acuan (ID primitif).
-2. **Rekening tujuan di order jual** (`sales_orders.receipt_account_id`). SO adalah tagihan (nota
-   mencetak SO).
-   - Order baru: rekening default, kecuali pengguna memilih yang lain.
-   - Bisa diubah sebagai kolom ringan pada order terkonfirmasi.
-   - Untuk order apa pun yang tidak batal, termasuk yang sudah selesai, bisa diubah lewat
-     `PUT /sales-orders/{id}/receipt-account` dengan audit sebelum/sesudah.
-   - Update yang tidak mengirim kolom ini mempertahankan nilainya.
-3. **Rekening pembayaran** (`payments.cash_account_id`), hanya untuk transfer/cek. Urutan penentuan:
+2. **~~Rekening tujuan di order jual~~ — dihapus (revisi 2026-10-27).** Order tidak menyimpan rekening:
+   rekening yang benar baru diketahui saat uang masuk, dan pembukuan hanya memakai rekening pembayaran.
+   Kolom `sales_orders.receipt_account_id` (000047) dihapus migrasi `000049_sales_drop_receipt_account`,
+   `PUT /sales-orders/{id}/receipt-account` dihapus, dan isian di form/detail order hilang. `receiptAccountId`
+   dari klien lama masih diterima di body order tetapi diabaikan (decoder menolak kolom tak dikenal).
+3. **Rekening pembayaran** (`payments.cash_account_id`), hanya untuk transfer/cek, dipilih saat pembayaran
+   dicatat ("Ke/Dari rekening"). Urutan penentuan:
    1. pilihan pengguna;
-   2. rekening tujuan tagihan yang dialokasi, bila masih aktif;
+   2. pada koreksi pembayaran: rekening pembayaran asli, bila masih aktif;
    3. rekening default.
 
    Aturan tambahan:
@@ -57,10 +58,10 @@ ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifik
    ("Transfer ke", "Ke/Dari rekening", baris REKENING struk POS) hanya tercetak bila **Tampilkan rekening** di toolbar
    cetak dicentang. Bawaan mati, pilihan tidak disimpan, dan hanya muncul bila dokumen itu punya rekening. Aturan di
    bawah menentukan rekening *mana* yang tercetak saat dicentang.
-   - Nota/tagihan yang masih bersisa mencetak satu baris "Transfer ke: …" di kaki, dan baris ini
-     tetap tercetak pada kertas kontinu yang preprinted.
+   - Nota/tagihan yang masih bersisa mencetak satu baris "Transfer ke: …" berisi **daftar rekening dokumen**
+     di kaki, dan baris ini tetap tercetak pada kertas kontinu yang preprinted.
    - Bukti pembayaran mencetak "Ke/Dari rekening".
-   - Struk POS transfer atau piutang mencetak rekening itu saja. Struk lain mencetak daftar rekening
+   - Struk POS transfer mencetak rekening pembayaran itu saja. Struk lain mencetak daftar rekening
      dokumen seperti sistem lama.
    - Daftar rekening dokumen diambil dari master (aktif + tampil di dokumen). Daftar teks lama di
      profil dokumen (`document_profile.bankAccounts`, umumnya hasil migrasi) hanya dicetak selama master

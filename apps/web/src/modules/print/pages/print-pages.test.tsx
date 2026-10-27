@@ -466,17 +466,27 @@ describe("rekening di hasil cetak hanya bila dicentang (bawaan tidak tercetak)",
     withBanks.identity = { ...profileState.identity, bankAccounts: [] };
   });
 
-  it("nota bersisa: 'Transfer ke' tersembunyi sampai 'Tampilkan rekening' dicentang", async () => {
-    fetchSales.mockResolvedValue(order({ receiptAccountId: 11 }));
+  it("nota bersisa: 'Transfer ke' (daftar rekening dokumen) tersembunyi sampai 'Tampilkan rekening' dicentang", async () => {
+    withBanks.identity = {
+      ...profileState.identity,
+      bankAccounts: [{ bank: "BCA", holder: "PT Uji", number: "123" }, { bank: "Mandiri", holder: "PT Uji", number: "456" }],
+    };
+    fetchSales.mockResolvedValue(order());
     renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
     const toggle = await screen.findByRole("checkbox", { name: "Tampilkan rekening" });
     expect((toggle as HTMLInputElement).checked).toBe(false);
     expect(screen.queryByText(/Transfer ke/)).toBeNull();
     await userEvent.click(toggle);
-    expect(screen.getByText("Transfer ke: BCA 123 a.n. PT Uji")).toBeTruthy();
+    expect(screen.getByText("Transfer ke: BCA 123 a.n. PT Uji / Mandiri 456 a.n. PT Uji")).toBeTruthy();
   });
 
-  it("nota tanpa rekening tujuan: tidak ada pilihan rekening", async () => {
+  it("nota lunas atau tanpa rekening dokumen: tidak ada pilihan rekening", async () => {
+    fetchSales.mockResolvedValue(order({ paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid" }));
+    renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
+    await screen.findByText("Nota Penjualan Lunas");
+    expect(screen.queryByRole("checkbox", { name: "Tampilkan rekening" })).toBeNull();
+    cleanup();
+    withBanks.identity = { ...profileState.identity, bankAccounts: [] };
     fetchSales.mockResolvedValue(order());
     renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
     await screen.findByText("Tagihan - Bayar Sebagian");

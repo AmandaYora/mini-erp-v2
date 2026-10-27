@@ -428,13 +428,7 @@ export function FromDeliveriesForm({ deliveryIds }: FromDeliveriesFormProps) {
     // clientRef yang sama dipakai ulang bila percobaan sebelumnya gagal di tengah:
     // server melanjutkan orkestrasi (finish_from_deliveries), bukan membuat order kedua.
     const clientRef = clientRefFor(deliveryIds);
-    const receipt = transferAccount();
-    const body: FromDeliveriesPayload = {
-      ...previewBody,
-      settlement: settlementPayload(),
-      ...(receipt !== null ? { receiptAccountId: receipt } : {}),
-      clientRef,
-    };
+    const body: FromDeliveriesPayload = { ...previewBody, settlement: settlementPayload(), clientRef };
     setSubmitting(true);
     try {
       const res = await salesService.createFromDeliveries(body);

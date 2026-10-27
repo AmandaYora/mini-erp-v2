@@ -54,7 +54,6 @@ import {
 import type { ProductOptionRow } from "@/modules/products/types";
 import { useAsyncData } from "@/shared/hooks/use-async-data";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
-import { initialPaymentAccount } from "@/modules/finance/lib/bank-accounts";
 import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
 import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 
@@ -121,7 +120,7 @@ export default function DeliveryDetailPage() {
   // "" = tanpa pelunasan (SJ parsial / order sudah lunas — server mengabaikan).
   const [settleMode, setSettleMode] = useState<"" | "pay_now" | "switch_to_net">("");
   const [payMethod, setPayMethod] = useState<"cash" | "transfer" | "check">("cash");
-  // Rekening pelunasan transfer/cek (ADR-0026): null = rekening tujuan order, lalu default.
+  // Rekening pelunasan transfer/cek (ADR-0026): null = rekening default.
   const bank = useBankAccounts();
   const [payAccount, setPayAccount] = useState<number | null>(null);
   const [payDate, setPayDate] = useState(todayWIB());
@@ -168,7 +167,7 @@ export default function DeliveryDetailPage() {
   // Peringatan lunak dari pembuatan draf (DL-04): dibawa lewat state navigasi.
   const createWarnings = ((useLocation().state as { warnings?: string[] } | null)?.warnings ?? []).filter(Boolean);
   const so: SalesOrderOption | null = data?.so ?? null;
-  const effectivePayAccount = payAccount ?? initialPaymentAccount(bank.all, so?.receiptAccountId ?? null);
+  const effectivePayAccount = payAccount ?? bank.defaultAccountId;
   const products: Map<number, ProductOptionRow> = data?.products ?? new Map();
   usePageCrumb(note?.number);
 

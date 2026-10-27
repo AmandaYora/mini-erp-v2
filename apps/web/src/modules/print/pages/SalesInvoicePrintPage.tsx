@@ -21,7 +21,7 @@ import {
   printItemName,
   resolveShipToContact,
   terbilangRupiah,
-  transferToLine,
+  transferToListLine,
 } from "@/modules/print/document";
 import {
   readHideLetterhead,
@@ -58,12 +58,12 @@ export default function SalesInvoicePrintPage() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
-  const { identity, paper, corrupt, warning, loading: profileLoading, bankAccounts } = usePrintProfile();
+  const { identity, paper, corrupt, warning, loading: profileLoading } = usePrintProfile();
 
   const orderId = Number(id);
   // Catatan bebas sebelum cetak — hanya tercetak, tidak pernah disimpan ke order.
   const [printNotes, setPrintNotes] = useState("");
-  // Rekening tujuan hanya tercetak bila dicentang sebelum cetak (bawaan tidak).
+  // Rekening hanya tercetak bila dicentang sebelum cetak (bawaan tidak).
   const [showBank, setShowBank] = useState(false);
 
   const { data: order, loading, error } = useAsyncData(
@@ -102,8 +102,8 @@ export default function SalesInvoicePrintPage() {
   const hideDiscount = effectiveHideDiscount(readHideDiscount(searchParams), order);
   const printDiscount = orderPrintDiscount(order);
   const totals = documentTotals(order, hideDiscount);
-  // "Transfer ke: …" hanya untuk tagihan yang masih bersisa dan punya rekening tujuan (ADR-0026).
-  const transferLine = totals.outstanding > 0 ? transferToLine(bankAccounts, order.receiptAccountId) : "";
+  // "Transfer ke: …" = daftar rekening dokumen, hanya untuk tagihan yang masih bersisa (ADR-0026).
+  const transferLine = totals.outstanding > 0 ? transferToListLine(identity.bankAccounts) : "";
   // Kolom Disc hanya bila ada baris yang punya diskonnya sendiri.
   const showDiscColumn = hasLineDiscount(order.items) && !hideDiscount;
   const dueDate = dueDateCell(order);
@@ -252,7 +252,7 @@ export default function SalesInvoicePrintPage() {
 
       <div className="nota-foot">
         <div>
-          {/* Rekening tujuan tagihan (ADR-0026): satu baris di kaki, tetap tercetak di form preprinted. */}
+          {/* Rekening perusahaan (ADR-0026): satu baris di kaki, tetap tercetak di form preprinted. */}
           {showBank && transferLine !== "" ? (
             <div style={{ fontWeight: 700 }}>{transferLine}</div>
           ) : null}

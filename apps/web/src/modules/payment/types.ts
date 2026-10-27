@@ -74,7 +74,7 @@ export interface PaymentCreatePayload {
   amountTendered?: number;
   /** Referensi transfer / nomor cek (maks 100 karakter). */
   reference?: string;
-  /** Rekening perusahaan transfer/cek (ADR-0026). Kosong = rekening tujuan tagihan, lalu default. */
+  /** Rekening perusahaan transfer/cek (ADR-0026). Kosong = rekening default. */
   cashAccountId?: number;
   /** Kosong = backend alokasi FIFO otomatis (handler.go: Create). */
   allocations?: AllocationInput[];

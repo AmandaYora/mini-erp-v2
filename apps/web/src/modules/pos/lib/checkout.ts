@@ -35,8 +35,6 @@ export interface BuildPosOrderInput {
   notes?: string;
   /** Alamat kirim opt-in (id buku alamat pelanggan); diabaikan untuk walk-in. */
   shipToAddressId?: number | null;
-  /** Rekening tujuan (ADR-0026); null/0 = default perusahaan di server. */
-  receiptAccountId?: number | null;
   items: PosOrderLinePayload[];
 }
 
@@ -45,9 +43,8 @@ export const POS_NOTES_MAX = 1000;
 /** Bagian opsional payload: catatan dan alamat kirim (SL-07). */
 function optionalFields(
   input: BuildPosOrderInput,
-): Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate" | "receiptAccountId"> {
-  const out: Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate" | "receiptAccountId"> = {};
-  if (input.receiptAccountId != null && input.receiptAccountId > 0) out.receiptAccountId = input.receiptAccountId;
+): Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate"> {
+  const out: Pick<PosOrderPayload, "notes" | "shipToAddressId" | "taxType" | "taxRate"> = {};
   if (input.taxType === "include" || input.taxType === "exclude") {
     const rate = input.taxRate ?? 0;
     if (!Number.isFinite(rate) || rate <= 0 || rate > 100) {

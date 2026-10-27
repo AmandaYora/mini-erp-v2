@@ -45,8 +45,7 @@ func orderView(o *contracts.SalesOrder) map[string]any {
 		"partyPhone": o.PartyPhone, "partyAddress": o.PartyAddress,
 		"channel": o.Channel, "origin": o.Origin, "memberCode": o.MemberCode,
 		"orderDate": o.OrderDate, "dueDate": o.DueDate, "paymentTerms": o.PaymentTerms,
-		"receiptAccountId": o.ReceiptAccountID,
-		"taxType":          o.TaxType, "taxRate": o.TaxRate,
+		"taxType": o.TaxType, "taxRate": o.TaxRate,
 		"subtotal": o.Subtotal, "discountTotal": o.DiscountTotal,
 		"taxTotal": o.TaxTotal, "grandTotal": o.GrandTotal,
 		"status": o.Status, "notes": o.Notes,
@@ -80,20 +79,23 @@ type linePayload struct {
 }
 
 type orderPayload struct {
-	PartyID          int64         `json:"partyId"`
-	Channel          string        `json:"channel"`
-	OrderDate        string        `json:"orderDate"`
-	DueDate          string        `json:"dueDate"`
-	PaymentTerms     string        `json:"paymentTerms"`
-	TaxType          string        `json:"taxType"`
-	TaxRate          float64       `json:"taxRate"`
-	Notes            string        `json:"notes"`
-	ShipToAddressID  int64         `json:"shipToAddressId"`
-	ShipToLabel      string        `json:"shipToLabel"`
-	ShipToRecipient  string        `json:"shipToRecipient"`
-	ShipToPhone      string        `json:"shipToPhone"`
-	ShipToAddress    string        `json:"shipToAddress"`
-	AssignedUserID   int64         `json:"assignedUserId"`
+	PartyID         int64   `json:"partyId"`
+	Channel         string  `json:"channel"`
+	OrderDate       string  `json:"orderDate"`
+	DueDate         string  `json:"dueDate"`
+	PaymentTerms    string  `json:"paymentTerms"`
+	TaxType         string  `json:"taxType"`
+	TaxRate         float64 `json:"taxRate"`
+	Notes           string  `json:"notes"`
+	ShipToAddressID int64   `json:"shipToAddressId"`
+	ShipToLabel     string  `json:"shipToLabel"`
+	ShipToRecipient string  `json:"shipToRecipient"`
+	ShipToPhone     string  `json:"shipToPhone"`
+	ShipToAddress   string  `json:"shipToAddress"`
+	AssignedUserID  int64   `json:"assignedUserId"`
+	// ReceiptAccountID is ignored: the rekening is chosen when a payment is
+	// recorded (ADR-0026 revisi, analysis/005). Still accepted so a tab with
+	// the previous web build does not fail on the unknown field.
 	ReceiptAccountID int64         `json:"receiptAccountId"`
 	TaxInvoiceNumber string        `json:"taxInvoiceNumber"`
 	TaxInvoiceDate   string        `json:"taxInvoiceDate"`
@@ -128,7 +130,6 @@ func toInput(in orderPayload) application.OrderInput {
 		ShipToLabel:     in.ShipToLabel, ShipToRecipient: in.ShipToRecipient,
 		ShipToPhone: in.ShipToPhone, ShipToAddress: in.ShipToAddress,
 		AssignedUserID:   in.AssignedUserID,
-		ReceiptAccountID: in.ReceiptAccountID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate,
 		ClientRef: in.ClientRef, Reason: in.Reason, HeaderOnly: in.HeaderOnly,
 	}
@@ -263,29 +264,6 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Sales order disimpan", orderView(o))
 }
 
-// SetReceiptAccount handles PUT /api/v1/sales-orders/{id}/receipt-account:
-// the bill's rekening tujuan only (ADR-0026), completed orders included.
-func (h *Handler) SetReceiptAccount(w http.ResponseWriter, r *http.Request) {
-	id, err := httpx.PathInt(r, "id")
-	if err != nil {
-		response.Fail(w, apperror.NotFound("Sales order"))
-		return
-	}
-	var in struct {
-		ReceiptAccountID int64 `json:"receiptAccountId"`
-	}
-	if fields := httpx.DecodeJSON(r, &in); fields != nil {
-		response.Fail(w, apperror.Validation("", fields))
-		return
-	}
-	o, appErr := h.svc.SetReceiptAccount(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, in.ReceiptAccountID)
-	if appErr != nil {
-		response.FailErr(w, appErr)
-		return
-	}
-	response.OK(w, "Rekening tujuan disimpan", orderView(o))
-}
-
 // Confirm handles POST /api/v1/sales-orders/{id}/confirm.
 func (h *Handler) Confirm(w http.ResponseWriter, r *http.Request) {
 	id, err := httpx.PathInt(r, "id")
@@ -370,17 +348,18 @@ func (h *Handler) ShortClose(w http.ResponseWriter, r *http.Request) {
 // jalan" (ADR-0022): the notes, the header, prices per note line, extra
 // non-stock lines and the cash settlement.
 type fromDeliveriesPayload struct {
-	DeliveryIDs      []int64 `json:"deliveryIds" validate:"required"`
-	OrderDate        string  `json:"orderDate"`
-	PaymentTerms     string  `json:"paymentTerms"`
-	DueDate          string  `json:"dueDate"`
-	TaxType          string  `json:"taxType"`
-	TaxRate          float64 `json:"taxRate"`
-	Notes            string  `json:"notes"`
-	AssignedUserID   int64   `json:"assignedUserId"`
-	ReceiptAccountID int64   `json:"receiptAccountId"`
-	TaxInvoiceNumber string  `json:"taxInvoiceNumber"`
-	TaxInvoiceDate   string  `json:"taxInvoiceDate"`
+	DeliveryIDs    []int64 `json:"deliveryIds" validate:"required"`
+	OrderDate      string  `json:"orderDate"`
+	PaymentTerms   string  `json:"paymentTerms"`
+	DueDate        string  `json:"dueDate"`
+	TaxType        string  `json:"taxType"`
+	TaxRate        float64 `json:"taxRate"`
+	Notes          string  `json:"notes"`
+	AssignedUserID int64   `json:"assignedUserId"`
+	// ReceiptAccountID is ignored (see orderPayload).
+	ReceiptAccountID int64  `json:"receiptAccountId"`
+	TaxInvoiceNumber string `json:"taxInvoiceNumber"`
+	TaxInvoiceDate   string `json:"taxInvoiceDate"`
 	Lines            []struct {
 		ProductID       int64   `json:"productId" validate:"required"`
 		VariantID       int64   `json:"variantId" validate:"required"`
@@ -409,7 +388,6 @@ func toFromDeliveriesInput(in fromDeliveriesPayload) application.FromDeliveriesI
 	out := application.FromDeliveriesInput{
 		DeliveryIDs: in.DeliveryIDs, OrderDate: in.OrderDate, PaymentTerms: in.PaymentTerms, DueDate: in.DueDate,
 		TaxType: in.TaxType, TaxRate: in.TaxRate, Notes: in.Notes, AssignedUserID: in.AssignedUserID,
-		ReceiptAccountID: in.ReceiptAccountID,
 		TaxInvoiceNumber: in.TaxInvoiceNumber, TaxInvoiceDate: in.TaxInvoiceDate, ClientRef: in.ClientRef,
 	}
 	for _, l := range in.Lines {
@@ -545,7 +523,6 @@ func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permissio
 	mux.Handle("POST /api/v1/sales-orders/from-deliveries", perm("sales.create", authcontracts.Guard(h.FromDeliveries, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/{id}", perm("sales.view", authcontracts.Guard(h.Get, branchGuard)))
 	mux.Handle("PUT /api/v1/sales-orders/{id}", perm("sales.update", authcontracts.Guard(h.Update, branchGuard)))
-	mux.Handle("PUT /api/v1/sales-orders/{id}/receipt-account", perm("sales.update", authcontracts.Guard(h.SetReceiptAccount, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/confirm", perm("sales.update", authcontracts.Guard(h.Confirm, branchGuard)))
 	mux.Handle("POST /api/v1/sales-orders/{id}/cancel", perm("sales.archive", authcontracts.Guard(h.Cancel, branchGuard)))
 	mux.Handle("GET /api/v1/sales-orders/{id}/close-short/preview", perm("sales.archive", authcontracts.Guard(h.ShortClosePreview, branchGuard)))

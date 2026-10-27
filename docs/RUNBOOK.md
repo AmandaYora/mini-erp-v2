@@ -36,8 +36,8 @@ vs berkas di `/app/migrations`); pesannya menyebut perintah migrate di atas.
 jangan `up` ulang membabi buta.
 
 Rantai migrasi saat ini: baseline per modul `000001`–`000018` ditambah migrasi bernomor `000019`, `000020`, `000021`, `000022`,
-`000023`, `000031`–`000037`, `000039`–`000048` (nomor 000024–000030 dan 000038 sengaja kosong). Sesudah `migrate up`,
-`schema_migrations.version` harus **48** dengan
+`000023`, `000031`–`000037`, `000039`–`000049` (nomor 000024–000030 dan 000038 sengaja kosong). Sesudah `migrate up`,
+`schema_migrations.version` harus **49** dengan
 `dirty=0`; riwayat kolom/tabel baru dan dampak ETL ada di [DB_SCHEMA.md §8](DB_SCHEMA.md#8-riwayat-migrasi-bernomor-sesudah-baseline).
 Migrasi baru memakai nomor berikutnya yang bebas (`ls apps/api/migrations`) dan wajib punya `.down.sql`.
 
@@ -437,7 +437,7 @@ seperti sebelumnya (transfer ke 1010, tanpa pemilih).
    transfer belum tercatat atau salah catat lama) — jangan dipaksakan nol tanpa penjelasan. Satu rekening: tidak perlu jurnal.
 4. Cek: laporan **Kas & Rekening** menampilkan tiap rekening dengan saldo = rekening koran; dasbor "Kas & Bank" tidak berubah
    oleh reklasifikasi (hanya pindah akun).
-5. Umumkan ke kasir/admin: order baru otomatis berisi rekening default (bisa diganti), transfer wajib memilih rekening,
-   salah pilih diperbaiki lewat **Koreksi pembayaran**.
+5. Umumkan ke kasir/admin: rekening dipilih saat **Catat pembayaran** transfer/cek ("Ke rekening", terisi default, bisa
+   diganti); order tidak memilih rekening; salah pilih diperbaiki lewat **Koreksi pembayaran**.
 
 Pemetaan `bank` tetap menunjuk 1010 (sudah berjurnal, tidak bisa dipindah); pembayaran lama tanpa rekening tetap di 1010.

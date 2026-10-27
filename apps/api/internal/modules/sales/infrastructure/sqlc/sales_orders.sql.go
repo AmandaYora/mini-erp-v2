@@ -28,8 +28,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
-       receipt_account_id
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE id = ?
 `
@@ -66,7 +65,6 @@ type GetOrderRow struct {
 	CreditApprovedAt sql.NullTime
 	CreatedAt        time.Time
 	Origin           string
-	ReceiptAccountID sql.NullInt64
 }
 
 // Sales order header + lines (F8-18). Twin of purchasing/infrastructure/queries/
@@ -107,7 +105,6 @@ func (q *Queries) GetOrder(ctx context.Context, id int64) (GetOrderRow, error) {
 		&i.CreditApprovedAt,
 		&i.CreatedAt,
 		&i.Origin,
-		&i.ReceiptAccountID,
 	)
 	return i, err
 }
@@ -118,8 +115,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
-       receipt_account_id
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE branch_id = ? AND client_ref = ?
 `
@@ -161,7 +157,6 @@ type GetOrderByClientRefRow struct {
 	CreditApprovedAt sql.NullTime
 	CreatedAt        time.Time
 	Origin           string
-	ReceiptAccountID sql.NullInt64
 }
 
 func (q *Queries) GetOrderByClientRef(ctx context.Context, arg GetOrderByClientRefParams) (GetOrderByClientRefRow, error) {
@@ -199,7 +194,6 @@ func (q *Queries) GetOrderByClientRef(ctx context.Context, arg GetOrderByClientR
 		&i.CreditApprovedAt,
 		&i.CreatedAt,
 		&i.Origin,
-		&i.ReceiptAccountID,
 	)
 	return i, err
 }
@@ -210,8 +204,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
-       receipt_account_id
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE branch_id = ? AND number = ?
 `
@@ -253,7 +246,6 @@ type GetOrderByNumberRow struct {
 	CreditApprovedAt sql.NullTime
 	CreatedAt        time.Time
 	Origin           string
-	ReceiptAccountID sql.NullInt64
 }
 
 func (q *Queries) GetOrderByNumber(ctx context.Context, arg GetOrderByNumberParams) (GetOrderByNumberRow, error) {
@@ -291,7 +283,6 @@ func (q *Queries) GetOrderByNumber(ctx context.Context, arg GetOrderByNumberPara
 		&i.CreditApprovedAt,
 		&i.CreatedAt,
 		&i.Origin,
-		&i.ReceiptAccountID,
 	)
 	return i, err
 }
@@ -370,9 +361,8 @@ INSERT INTO sales_orders
    payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
    grand_total, status, notes, ship_to_address_id, ship_to_label,
    ship_to_recipient, ship_to_phone, ship_to_address,
-   tax_invoice_number, tax_invoice_date, client_ref, created_by, updated_by, assigned_user_id, origin,
-   receipt_account_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+   tax_invoice_number, tax_invoice_date, client_ref, created_by, updated_by, assigned_user_id, origin)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertOrderParams struct {
@@ -403,7 +393,6 @@ type InsertOrderParams struct {
 	UpdatedBy        sql.NullInt64
 	AssignedUserID   sql.NullInt64
 	Origin           string
-	ReceiptAccountID sql.NullInt64
 }
 
 func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (sql.Result, error) {
@@ -435,7 +424,6 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (sql.R
 		arg.UpdatedBy,
 		arg.AssignedUserID,
 		arg.Origin,
-		arg.ReceiptAccountID,
 	)
 }
 
@@ -720,31 +708,6 @@ func (q *Queries) ListOrdersByParty(ctx context.Context, arg ListOrdersByPartyPa
 	return items, nil
 }
 
-const setReceiptAccount = `-- name: SetReceiptAccount :exec
-UPDATE sales_orders
-SET receipt_account_id = ?, updated_at = ?, updated_by = ?
-WHERE id = ?
-`
-
-type SetReceiptAccountParams struct {
-	ReceiptAccountID sql.NullInt64
-	Now              time.Time
-	UpdatedBy        sql.NullInt64
-	ID               int64
-}
-
-// Rekening tujuan of a bill that may no longer take header edits (completed,
-// still unpaid) — ADR-0026.
-func (q *Queries) SetReceiptAccount(ctx context.Context, arg SetReceiptAccountParams) error {
-	_, err := q.db.ExecContext(ctx, setReceiptAccount,
-		arg.ReceiptAccountID,
-		arg.Now,
-		arg.UpdatedBy,
-		arg.ID,
-	)
-	return err
-}
-
 const setStatus = `-- name: SetStatus :exec
 UPDATE sales_orders
 SET status = ?, updated_at = ?, updated_by = ?,
@@ -937,7 +900,7 @@ SET due_date = ?, notes = ?,
     ship_to_address_id = ?, ship_to_label = ?, ship_to_recipient = ?,
     ship_to_phone = ?, ship_to_address = ?,
     tax_invoice_number = ?, tax_invoice_date = ?,
-    assigned_user_id = ?, receipt_account_id = ?,
+    assigned_user_id = ?,
     updated_at = ?, updated_by = ?
 WHERE id = ?
 `
@@ -953,7 +916,6 @@ type UpdateHeaderLightParams struct {
 	TaxInvoiceNumber sql.NullString
 	TaxInvoiceDate   sql.NullTime
 	AssignedUserID   sql.NullInt64
-	ReceiptAccountID sql.NullInt64
 	Now              time.Time
 	UpdatedBy        sql.NullInt64
 	ID               int64
@@ -971,7 +933,6 @@ func (q *Queries) UpdateHeaderLight(ctx context.Context, arg UpdateHeaderLightPa
 		arg.TaxInvoiceNumber,
 		arg.TaxInvoiceDate,
 		arg.AssignedUserID,
-		arg.ReceiptAccountID,
 		arg.Now,
 		arg.UpdatedBy,
 		arg.ID,
@@ -987,7 +948,7 @@ SET party_id = ?, channel = ?, member_code = ?,
     ship_to_address_id = ?, ship_to_label = ?, ship_to_recipient = ?,
     ship_to_phone = ?, ship_to_address = ?,
     tax_invoice_number = ?, tax_invoice_date = ?,
-    assigned_user_id = ?, receipt_account_id = ?,
+    assigned_user_id = ?,
     updated_at = ?, updated_by = ?
 WHERE id = ?
 `
@@ -1014,7 +975,6 @@ type UpdateOrderParams struct {
 	TaxInvoiceNumber sql.NullString
 	TaxInvoiceDate   sql.NullTime
 	AssignedUserID   sql.NullInt64
-	ReceiptAccountID sql.NullInt64
 	Now              time.Time
 	UpdatedBy        sql.NullInt64
 	ID               int64
@@ -1043,7 +1003,6 @@ func (q *Queries) UpdateOrder(ctx context.Context, arg UpdateOrderParams) error 
 		arg.TaxInvoiceNumber,
 		arg.TaxInvoiceDate,
 		arg.AssignedUserID,
-		arg.ReceiptAccountID,
 		arg.Now,
 		arg.UpdatedBy,
 		arg.ID,

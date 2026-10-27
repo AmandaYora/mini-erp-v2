@@ -121,7 +121,7 @@ type RecordInput struct {
 	ClientRef      string
 	Notes          string
 	// CashAccountID names the company rekening of a transfer/check (ADR-0026);
-	// 0 = the order's rekening tujuan, else the default.
+	// 0 = the default.
 	CashAccountID int64
 }
 

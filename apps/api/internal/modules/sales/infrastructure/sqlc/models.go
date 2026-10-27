@@ -50,7 +50,6 @@ type SalesOrder struct {
 	ShortClosedAt    sql.NullTime
 	ShortClosedBy    sql.NullInt64
 	Origin           string
-	ReceiptAccountID sql.NullInt64
 }
 
 type SalesOrderItem struct {

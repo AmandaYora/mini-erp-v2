@@ -86,7 +86,18 @@ export function printedBankAccounts(
   return master.length > 0 ? documentBankAccounts(master) : legacy;
 }
 
-/** "Transfer ke: BCA 123 a.n. PT X" untuk rekening tujuan satu dokumen; "" bila tidak ada.
+/**
+ * "Transfer ke: BCA 123 a.n. PT X / Mandiri 456 a.n. PT X" — daftar rekening dokumen di kaki
+ * nota (ADR-0026 revisi: order tidak membawa rekening sendiri); "" bila daftar kosong.
+ */
+export function transferToListLine(list: DocumentBankAccount[]): string {
+  const parts = list
+    .filter((b) => clean(b.number) !== "")
+    .map((b) => `${clean(b.bank)} ${clean(b.number)}${clean(b.holder) ? ` a.n. ${clean(b.holder)}` : ""}`);
+  return parts.length > 0 ? `Transfer ke: ${parts.join(" / ")}` : "";
+}
+
+/** "Transfer ke: BCA 123 a.n. PT X" untuk rekening satu pembayaran; "" bila tidak ada.
  * Label kosong = tanpa awalan ("BCA 123 a.n. PT X"). */
 export function transferToLine(
   list: { accountId: number; bankName: string; accountHolder: string; accountNumber: string }[] | undefined,

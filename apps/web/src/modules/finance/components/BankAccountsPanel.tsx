@@ -84,7 +84,7 @@ export function BankAccountsPanel({ accounts, cashAccountId, canManage, onChartC
       <SectionCard
         flush
         title="Rekening bank perusahaan"
-        description="Dipilih sebagai rekening tujuan tagihan dan rekening pembayaran transfer/cek."
+        description="Dipilih saat pembayaran transfer/cek dicatat."
         actions={
           canManage ? (
             <Button

@@ -16,9 +16,9 @@ import (
 // --- bank accounts (rekening perusahaan, ADR-0026) ---------------------------
 //
 // A rekening is bank identity on top of one cash/bank GL account (aset,
-// is_cash). Sales stores the GL account id as the bill's rekening tujuan,
-// payment stores it as the account the money moved through, and the payment
-// journal posts to it. The balance lives on the GL account only.
+// is_cash). Payment stores the GL account id as the account the money moved
+// through (chosen when the payment is recorded), and the payment journal
+// posts to it. The balance lives on the GL account only.
 
 // BankAccountInput creates or edits a rekening. AccountID names an existing
 // cash/bank account; 0 with AccountCode creates that account first.

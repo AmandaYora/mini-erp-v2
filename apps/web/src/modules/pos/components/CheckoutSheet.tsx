@@ -214,7 +214,7 @@ function PaymentForm({ pos }: { pos: PosCartApi }) {
               {pos.bankAccounts.required && (
                 <div>
                   <label htmlFor="pos-bank-account" className="mb-1.5 block text-sm font-medium text-foreground">
-                    Rekening tujuan <span aria-hidden className="text-destructive">*</span>
+                    Ke rekening <span aria-hidden className="text-destructive">*</span>
                   </label>
                   <BankAccountSelect
                     id="pos-bank-account"

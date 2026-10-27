@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { documentBankAccounts, printedBankAccounts, transferToLine } from "@/modules/print/document";
+import { documentBankAccounts, printedBankAccounts, transferToLine, transferToListLine } from "@/modules/print/document";
 
 const bca = { accountId: 11, bankName: "BCA", accountNumber: "123", accountHolder: "PT Uji", showOnDocuments: true, status: "active" };
 const hidden = { ...bca, accountId: 12, bankName: "Mandiri", showOnDocuments: false };
@@ -18,7 +18,14 @@ describe("rekening di dokumen cetak (ADR-0026)", () => {
     expect(printedBankAccounts([hidden, archived], legacy)).toEqual([]);
   });
 
-  it("baris transfer ke rekening tujuan dokumen", () => {
+  it("baris transfer nota = daftar rekening dokumen", () => {
+    expect(transferToListLine([{ bank: "BCA", holder: "PT Uji", number: "123" }, { bank: "BNI", holder: "", number: "9" }])).toBe(
+      "Transfer ke: BCA 123 a.n. PT Uji / BNI 9",
+    );
+    expect(transferToListLine([{ bank: "BCA", holder: "", number: " " }])).toBe("");
+  });
+
+  it("baris transfer ke rekening satu pembayaran", () => {
     expect(transferToLine([bca, hidden], 12)).toBe("Transfer ke: Mandiri 123 a.n. PT Uji");
     expect(transferToLine([bca], 11, "")).toBe("BCA 123 a.n. PT Uji");
     // Rekening yang sudah diarsipkan tetap tercetak di dokumen lamanya.

@@ -8,8 +8,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
-       receipt_account_id
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE id = ?;
 
@@ -19,8 +18,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
-       receipt_account_id
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE branch_id = ? AND number = ?;
 
@@ -30,8 +28,7 @@ SELECT id, number, branch_id, party_id, channel, member_code,
        discount_total, tax_total, grand_total, status, notes,
        ship_to_address_id, ship_to_label, ship_to_recipient, ship_to_phone,
        ship_to_address, tax_invoice_number, tax_invoice_date, client_ref,
-       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin,
-       receipt_account_id
+       created_by, assigned_user_id, credit_approved_by, credit_approved_at, created_at, origin
 FROM sales_orders
 WHERE branch_id = ? AND client_ref = ?;
 
@@ -50,9 +47,8 @@ INSERT INTO sales_orders
    payment_terms, tax_type, tax_rate, subtotal, discount_total, tax_total,
    grand_total, status, notes, ship_to_address_id, ship_to_label,
    ship_to_recipient, ship_to_phone, ship_to_address,
-   tax_invoice_number, tax_invoice_date, client_ref, created_by, updated_by, assigned_user_id, origin,
-   receipt_account_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+   tax_invoice_number, tax_invoice_date, client_ref, created_by, updated_by, assigned_user_id, origin)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateOrder :exec
 UPDATE sales_orders
@@ -62,7 +58,7 @@ SET party_id = ?, channel = ?, member_code = ?,
     ship_to_address_id = ?, ship_to_label = ?, ship_to_recipient = ?,
     ship_to_phone = ?, ship_to_address = ?,
     tax_invoice_number = ?, tax_invoice_date = ?,
-    assigned_user_id = ?, receipt_account_id = ?,
+    assigned_user_id = ?,
     updated_at = sqlc.arg(now), updated_by = ?
 WHERE id = ?;
 
@@ -83,16 +79,9 @@ SET due_date = ?, notes = ?,
     ship_to_address_id = ?, ship_to_label = ?, ship_to_recipient = ?,
     ship_to_phone = ?, ship_to_address = ?,
     tax_invoice_number = ?, tax_invoice_date = ?,
-    assigned_user_id = ?, receipt_account_id = ?,
+    assigned_user_id = ?,
     updated_at = sqlc.arg(now), updated_by = ?
 WHERE id = ?;
-
--- name: SetReceiptAccount :exec
--- Rekening tujuan of a bill that may no longer take header edits (completed,
--- still unpaid) — ADR-0026.
-UPDATE sales_orders
-SET receipt_account_id = sqlc.narg(receipt_account_id), updated_at = sqlc.arg(now), updated_by = sqlc.arg(updated_by)
-WHERE id = sqlc.arg(id);
 
 -- name: SetStatus :exec
 -- completed_at is stamped (stamp = now) the moment the order becomes completed.
