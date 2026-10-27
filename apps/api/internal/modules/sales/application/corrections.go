@@ -87,7 +87,7 @@ func orderSnapshot(o *contracts.SalesOrder) map[string]any {
 		"taxType": o.TaxType, "taxRate": o.TaxRate, "notes": o.Notes, "shipTo": shipTo,
 		"taxInvoiceNumber": o.TaxInvoiceNumber, "taxInvoiceDate": day(o.TaxInvoiceDate),
 		"assignedUserId": o.AssignedUserID,
-		"subtotal": o.Subtotal, "discountTotal": o.DiscountTotal, "taxTotal": o.TaxTotal,
+		"subtotal":       o.Subtotal, "discountTotal": o.DiscountTotal, "taxTotal": o.TaxTotal,
 		"grandTotal": o.GrandTotal, "lines": lines,
 	}
 }

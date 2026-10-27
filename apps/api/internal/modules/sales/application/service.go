@@ -191,7 +191,7 @@ type OrderInput struct {
 	ShipToPhone     string
 	ShipToAddress   string
 	// AssignedUserID is the person in charge of the order (SL-09); 0 = none.
-	AssignedUserID int64
+	AssignedUserID   int64
 	TaxInvoiceNumber string
 	TaxInvoiceDate   string
 	// ClientRef makes creation idempotent per client cart (<= 64 chars).
