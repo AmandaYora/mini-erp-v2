@@ -5,14 +5,15 @@ package apperror
 type Code string
 
 const (
-	CodeValidation   Code = "validation_failed"
-	CodeUnauthorized Code = "unauthorized"
-	CodeRefreshRaced Code = "refresh_raced"
-	CodeForbidden    Code = "forbidden"
-	CodeNotFound     Code = "not_found"
-	CodeConflict     Code = "conflict"
-	CodeRateLimited  Code = "rate_limited"
-	CodeInternal     Code = "internal_error"
+	CodeValidation       Code = "validation_failed"
+	CodeUnauthorized     Code = "unauthorized"
+	CodeRefreshRaced     Code = "refresh_raced"
+	CodeForbidden        Code = "forbidden"
+	CodeNotFound         Code = "not_found"
+	CodeMethodNotAllowed Code = "method_not_allowed"
+	CodeConflict         Code = "conflict"
+	CodeRateLimited      Code = "rate_limited"
+	CodeInternal         Code = "internal_error"
 )
 
 // FieldError describes one rejected payload field.
@@ -48,6 +49,8 @@ func HTTPStatus(c Code) int {
 		return 403
 	case CodeNotFound:
 		return 404
+	case CodeMethodNotAllowed:
+		return 405
 	case CodeConflict:
 		return 409
 	case CodeRateLimited:
@@ -82,6 +85,12 @@ func NotFound(resource string) *AppError {
 		resource = "Data"
 	}
 	return &AppError{Code: CodeNotFound, Message: resource + " tidak ditemukan"}
+}
+
+// MethodNotAllowed is for a known path called with a method it does not
+// accept. The caller sets the Allow header.
+func MethodNotAllowed() *AppError {
+	return &AppError{Code: CodeMethodNotAllowed, Message: "Metode tidak didukung untuk endpoint ini"}
 }
 
 // Conflict is for duplicate keys and state clashes. The message must name

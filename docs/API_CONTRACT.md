@@ -50,6 +50,11 @@ Frontend **tidak boleh** membuang `message` dan menggantinya dengan teks generik
 KI-04/KI-17 sistem lama, di mana pesan spesifik dari server dibuang di lapisan frontend dan
 pengguna hanya melihat kode mesin atau pesan generik.
 
+Path di bawah `/api/` yang tidak dikenali router selalu dijawab amplop gagal, tidak pernah
+halaman SPA: `404` + `code: "not_found"` ("Endpoint tidak ditemukan") bila path tidak ada, atau
+`405` + `code: "method_not_allowed"` dengan header `Allow` bila path ada tetapi metodenya salah.
+Hanya path di luar `/api/` yang jatuh ke `index.html`.
+
 ### Terpaginasi
 
 ```json

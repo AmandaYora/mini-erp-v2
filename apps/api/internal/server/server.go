@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"mini-erp/internal/config"
+	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/clientip"
 	"mini-erp/internal/shared/response"
 	"mini-erp/internal/shared/signedurl"
@@ -48,7 +49,43 @@ func New(cfg *config.Config, log *slog.Logger) *Server {
 	})
 	s.mux.HandleFunc("/readyz", s.handleReady)
 	s.mux.Handle("/api/v1/metrics", MetricsHandler(cfg.MetricsToken))
+	// Unknown API paths answer with the JSON envelope, never the SPA shell: a
+	// client calling a removed route must see a failure it can parse.
+	s.mux.HandleFunc(apiFallbackPattern, s.handleUnknownAPI)
+	s.mux.HandleFunc("/api", s.handleUnknownAPI)
 	return s
+}
+
+// apiFallbackPattern catches every /api/ path no module route claimed.
+const apiFallbackPattern = "/api/"
+
+// apiMethods are the methods module routes register; HEAD is implied by GET.
+var apiMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+
+// handleUnknownAPI answers 405 when the path exists under another method and
+// 404 otherwise. The catch-all hides ServeMux's own 405 (it matches every
+// method), so the other methods are probed against the mux here.
+func (s *Server) handleUnknownAPI(w http.ResponseWriter, r *http.Request) {
+	var allowed []string
+	for _, m := range apiMethods {
+		if m == r.Method {
+			continue
+		}
+		probe := r.Clone(r.Context())
+		probe.Method = m
+		if _, pattern := s.mux.Handler(probe); pattern != "" && pattern != apiFallbackPattern && pattern != "/api" {
+			allowed = append(allowed, m)
+			if m == http.MethodGet {
+				allowed = append(allowed, http.MethodHead)
+			}
+		}
+	}
+	if len(allowed) > 0 {
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
+		response.Fail(w, apperror.MethodNotAllowed())
+		return
+	}
+	response.Fail(w, apperror.NotFound("Endpoint"))
 }
 
 // SetErrorReporter installs the sink for panics and unexpected 5xx responses
@@ -96,7 +133,8 @@ func (s *Server) MarkNotReady() {
 // MountStatic serves the built SPA from dir, falling back to index.html for
 // client-side routes. Skipped silently when PUBLIC_DIR is empty or missing —
 // the normal dev case, where Vite serves the frontend instead.
-// http.ServeMux matches the longest pattern, so /api/v1/... still wins over /.
+// http.ServeMux matches the longest pattern, so /api/v1/... and the /api/
+// fallback still win over /.
 func (s *Server) MountStatic(dir string) {
 	if dir == "" {
 		return
