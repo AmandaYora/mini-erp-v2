@@ -1,4 +1,5 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveIdentity } from "@/modules/print/document";
@@ -447,5 +448,69 @@ describe("struk termal POS (sama dengan sistem lama)", () => {
     await screen.findByText("Tono Kasir");
     expect(screen.queryByText("DPP")).toBeNull();
     expect(screen.queryByText(/^PPN/)).toBeNull();
+  });
+});
+
+describe("rekening di hasil cetak hanya bila dicentang (bawaan tidak tercetak)", () => {
+  const bca = {
+    id: 1, accountId: 11, accountCode: "1010", accountName: "Rekening Bank", bankName: "BCA", accountNumber: "123",
+    accountHolder: "PT Uji", showOnDocuments: true, isDefault: true, sortOrder: 0, status: "active",
+  };
+  const withBanks = profileState as typeof profileState & { bankAccounts?: unknown[] };
+  beforeEach(() => {
+    withBanks.bankAccounts = [bca];
+    withBanks.identity = { ...profileState.identity, bankAccounts: [{ bank: "BCA", holder: "PT Uji", number: "123" }] };
+  });
+  afterEach(() => {
+    withBanks.bankAccounts = undefined;
+    withBanks.identity = { ...profileState.identity, bankAccounts: [] };
+  });
+
+  it("nota bersisa: 'Transfer ke' tersembunyi sampai 'Tampilkan rekening' dicentang", async () => {
+    fetchSales.mockResolvedValue(order({ receiptAccountId: 11 }));
+    renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
+    const toggle = await screen.findByRole("checkbox", { name: "Tampilkan rekening" });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByText(/Transfer ke/)).toBeNull();
+    await userEvent.click(toggle);
+    expect(screen.getByText("Transfer ke: BCA 123 a.n. PT Uji")).toBeTruthy();
+  });
+
+  it("nota tanpa rekening tujuan: tidak ada pilihan rekening", async () => {
+    fetchSales.mockResolvedValue(order());
+    renderAt("/print/sales/5", "/print/sales/:id", <SalesInvoicePrintPage />);
+    await screen.findByText("Tagihan - Bayar Sebagian");
+    expect(screen.queryByRole("checkbox", { name: "Tampilkan rekening" })).toBeNull();
+  });
+
+  it("bukti pembayaran transfer: 'Ke rekening' tersembunyi sampai dicentang", async () => {
+    fetchReceipt.mockResolvedValue({
+      payment: {
+        id: 9, number: "PAY-9", partyId: 7, partyName: "Budi", partyType: "customer", partyPhone: "", partyAddress: "",
+        direction: "in", amount: 50000, method: "transfer", paidAt: "2026-10-02T09:00:00+07:00", notes: "", status: "active",
+        reference: "", amountTendered: 0, change: 0, cashAccountId: 11,
+        allocations: [{ orderType: "sales", orderId: 5, orderNumber: "SO-0005", amount: 50000 }],
+      },
+      order: { number: "SO-0005", total: 180000 },
+      history: [],
+    });
+    renderAt("/print/payments/9", "/print/payments/:id", <PaymentReceiptPrintPage />);
+    const toggle = await screen.findByRole("checkbox", { name: "Tampilkan rekening" });
+    expect(screen.queryByText("Ke rekening")).toBeNull();
+    await userEvent.click(toggle);
+    expect(screen.getByText("Ke rekening")).toBeTruthy();
+    expect(screen.getByText("BCA 123 a.n. PT Uji")).toBeTruthy();
+  });
+
+  it("struk POS: baris REKENING tersembunyi sampai dicentang", async () => {
+    fetchPos.mockResolvedValue({
+      order: order({ channel: "pos", paymentTerms: "cod", paidAmount: 180000, outstandingAmount: 0, paymentStatus: "paid", cashierName: "Tono Kasir" }),
+      payments: [{ id: 9, number: "PAY-9", method: "cash", paidAt: "2026-10-01T10:00:00+07:00", status: "active", amount: 180000, amountTendered: 200000, allocations: [] }],
+    });
+    renderAt("/print/pos/5", "/print/pos/:orderId", <PosThermalReceiptPage />);
+    const toggle = await screen.findByRole("checkbox", { name: "Tampilkan rekening" });
+    expect(screen.queryByText(/^REKENING :/)).toBeNull();
+    await userEvent.click(toggle);
+    expect(screen.getByText("REKENING : PT Uji (BCA 123)")).toBeTruthy();
   });
 });

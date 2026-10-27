@@ -13,6 +13,7 @@ import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { PrintLayout } from "@/modules/print/components/PrintLayout";
+import { ShowBankToggle } from "@/modules/print/components/ShowBankToggle";
 import { Letterhead } from "@/modules/print/components/Letterhead";
 import {
   formatDocDateTime,
@@ -62,6 +63,8 @@ export default function SalesInvoicePrintPage() {
   const orderId = Number(id);
   // Catatan bebas sebelum cetak — hanya tercetak, tidak pernah disimpan ke order.
   const [printNotes, setPrintNotes] = useState("");
+  // Rekening tujuan hanya tercetak bila dicentang sebelum cetak (bawaan tidak).
+  const [showBank, setShowBank] = useState(false);
 
   const { data: order, loading, error } = useAsyncData(
     async (): Promise<SalesOrder> => {
@@ -99,6 +102,8 @@ export default function SalesInvoicePrintPage() {
   const hideDiscount = effectiveHideDiscount(readHideDiscount(searchParams), order);
   const printDiscount = orderPrintDiscount(order);
   const totals = documentTotals(order, hideDiscount);
+  // "Transfer ke: …" hanya untuk tagihan yang masih bersisa dan punya rekening tujuan (ADR-0026).
+  const transferLine = totals.outstanding > 0 ? transferToLine(bankAccounts, order.receiptAccountId) : "";
   // Kolom Disc hanya bila ada baris yang punya diskonnya sendiri.
   const showDiscColumn = hasLineDiscount(order.items) && !hideDiscount;
   const dueDate = dueDateCell(order);
@@ -144,6 +149,7 @@ export default function SalesInvoicePrintPage() {
               )}
             </label>
           ) : null}
+          {transferLine !== "" ? <ShowBankToggle checked={showBank} onChange={setShowBank} /> : null}
           <label className="print-toolbar-option" style={{ alignItems: "flex-start" }}>
             <span>Notes (opsional, hanya tampil di hasil cetak — tidak disimpan):</span>
             <textarea
@@ -247,8 +253,8 @@ export default function SalesInvoicePrintPage() {
       <div className="nota-foot">
         <div>
           {/* Rekening tujuan tagihan (ADR-0026): satu baris di kaki, tetap tercetak di form preprinted. */}
-          {totals.outstanding > 0 && transferToLine(bankAccounts, order.receiptAccountId) !== "" ? (
-            <div style={{ fontWeight: 700 }}>{transferToLine(bankAccounts, order.receiptAccountId)}</div>
+          {showBank && transferLine !== "" ? (
+            <div style={{ fontWeight: 700 }}>{transferLine}</div>
           ) : null}
           <div style={{ whiteSpace: "pre-wrap" }}>{printNotes}</div>
         </div>

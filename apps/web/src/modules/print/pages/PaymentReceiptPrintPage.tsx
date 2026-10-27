@@ -6,12 +6,14 @@
 // (tidak ada di sistem lama): satu order -> ringkasan tagihan legacy; beberapa
 // order -> tabel alokasi menggantikan ringkasan itu.
 
+import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { formatIDR } from "@/shared/lib/format";
 import { toApiError } from "@/shared/services/http-client";
 import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { PrintLayout } from "@/modules/print/components/PrintLayout";
+import { ShowBankToggle } from "@/modules/print/components/ShowBankToggle";
 import { formatDocDate, formatDocDateTime, printMethodLabel, transferToLine } from "@/modules/print/document";
 import { readPaperMode, withPaperModeParam, type PrintPaperMode } from "@/modules/print/paper";
 import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
@@ -35,6 +37,8 @@ export default function PaymentReceiptPrintPage() {
   const { paper, corrupt, warning, loading: profileLoading, bankAccounts } = usePrintProfile();
 
   const paymentId = Number(id);
+  // Rekening pembayaran hanya tercetak bila dicentang sebelum cetak (bawaan tidak).
+  const [showBank, setShowBank] = useState(false);
 
   const { data, loading, error } = useAsyncData(
     async (): Promise<PaymentReceiptData & { billing: Record<string, AllocationBilling> }> => {
@@ -82,6 +86,7 @@ export default function PaymentReceiptPrintPage() {
   const orderNumber =
     order?.number ?? (payment.allocations.length > 0 ? payment.allocations.map((a) => a.orderNumber).join(", ") : "-");
   const companyName = company?.name?.trim() || "Mini ERP";
+  const bankLine = transferToLine(bankAccounts, payment.cashAccountId, "");
 
   return (
     <PrintLayout
@@ -93,6 +98,7 @@ export default function PaymentReceiptPrintPage() {
       letterheadToggle={null}
       notice={<PrintProfileNotice corrupt={corrupt} warning={warning} />}
       mainClassName={isContinuous ? "kwitansi-page continuous" : "kwitansi-page"}
+      extraToolbar={bankLine !== "" ? <ShowBankToggle checked={showBank} onChange={setShowBank} /> : undefined}
     >
       <div className="kwitansi-head">
         <div>
@@ -129,10 +135,10 @@ export default function PaymentReceiptPrintPage() {
             <span>No. Order</span><strong>{orderNumber}</strong>
             <span>Tanggal</span><span>{formatDocDateTime(payment.paidAt)}</span>
             <span>Metode</span><span>{printMethodLabel(payment.method)}</span>
-            {transferToLine(bankAccounts, payment.cashAccountId) !== "" ? (
+            {showBank && bankLine !== "" ? (
               <>
                 <span>{payment.direction === "out" ? "Dari rekening" : "Ke rekening"}</span>
-                <span>{transferToLine(bankAccounts, payment.cashAccountId, "")}</span>
+                <span>{bankLine}</span>
               </>
             ) : null}
             <span>Referensi</span><span>{payment.reference.trim() || "-"}</span>

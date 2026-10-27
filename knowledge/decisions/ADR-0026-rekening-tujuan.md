@@ -53,7 +53,10 @@ ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifik
    - Bila kosong, tetap memakai pemetaan `cash`/`bank`. Pembayaran historis dan hasil ETL tidak berubah.
 5. **"Kas & Bank" di dasbor** = jumlah semua akun aset kas (`CashOnHand`), bukan kunci `cash`+`bank`.
    Tanpa perubahan ini, rekening baru tidak ikut terhitung.
-6. **Cetak (pengecualian ADR-0018 D12).**
+6. **Cetak (pengecualian ADR-0018 D12).** Revisi 2026-10-27 (permintaan pengguna): setiap rekening di hasil cetak
+   ("Transfer ke", "Ke/Dari rekening", baris REKENING struk POS) hanya tercetak bila **Tampilkan rekening** di toolbar
+   cetak dicentang. Bawaan mati, pilihan tidak disimpan, dan hanya muncul bila dokumen itu punya rekening. Aturan di
+   bawah menentukan rekening *mana* yang tercetak saat dicentang.
    - Nota/tagihan yang masih bersisa mencetak satu baris "Transfer ke: …" di kaki, dan baris ini
      tetap tercetak pada kertas kontinu yang preprinted.
    - Bukti pembayaran mencetak "Ke/Dari rekening".

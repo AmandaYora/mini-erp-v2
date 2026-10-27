@@ -32,6 +32,7 @@ import {
   withHideDiscountParam,
 } from "@/modules/print/lib/sales-document";
 import { PrintProfileNotice } from "@/modules/print/components/PrintProfileNotice";
+import { ShowBankToggle } from "@/modules/print/components/ShowBankToggle";
 import { usePrintProfile } from "@/modules/print/hooks/usePrintProfile";
 import { fetchPosReceipt, type PosReceiptData } from "@/modules/print/services/print-fetch";
 import {
@@ -54,6 +55,8 @@ export default function PosThermalReceiptPage() {
   const { identity, warning, loading: profileLoading, bankAccounts } = usePrintProfile();
 
   const [printing, setPrinting] = useState(false);
+  // Rekening hanya tercetak bila dicentang sebelum cetak (bawaan tidak).
+  const [showBank, setShowBank] = useState(false);
 
   const id = Number(orderId);
   const paymentIdParam = searchParams.get("paymentId");
@@ -221,6 +224,9 @@ export default function PosThermalReceiptPage() {
             )}
           </label>
         ) : null}
+        {rekeningLine !== "" ? (
+          <ShowBankToggle checked={showBank} onChange={setShowBank} className="thermal-toolbar-option" />
+        ) : null}
         <button type="button" onClick={() => void handlePrint()} disabled={printing}>
           {printing ? "Mencetak…" : "Cetak Struk"}
         </button>
@@ -308,7 +314,7 @@ export default function PosThermalReceiptPage() {
         <div className="thermal-separator" />
 
         <footer className="thermal-center">
-          {rekeningLine !== "" ? <div className="thermal-rekening">{rekeningLine}</div> : null}
+          {showBank && rekeningLine !== "" ? <div className="thermal-rekening">{rekeningLine}</div> : null}
           <div className="thermal-note">{returnNote}</div>
           <div className="thermal-footer">{thanksNote}</div>
         </footer>
