@@ -34,6 +34,7 @@ export const receiptSettlementSchema = z
     dueDate: z.string().default(""),
     notes: z.string().trim().max(255, "Catatan maksimal 255 karakter").default(""),
     cashAccountId: z.number().int().positive().nullable().default(null),
+    kasAccountId: z.number().int().positive().nullable().default(null),
   })
   .superRefine((v, ctx) => {
     if (v.mode === "switch_to_net") {
@@ -66,6 +67,7 @@ export function toSettlementPayload(v: ReceiptSettlementFormValues): ReceiptSett
   if (v.reference.trim() !== "") out.reference = v.reference.trim();
   if (v.notes.trim() !== "") out.notes = v.notes.trim();
   if (v.method !== "cash" && v.cashAccountId !== null) out.cashAccountId = v.cashAccountId;
+  if (v.method === "cash" && v.kasAccountId !== null) out.cashAccountId = v.kasAccountId;
   return out;
 }
 

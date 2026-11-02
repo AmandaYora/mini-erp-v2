@@ -238,7 +238,7 @@ func TestSettlementCap(t *testing.T) {
 		t.Fatalf("confirm return: %v", err)
 	}
 	if _, err := m.salesreturn.Service().AddSettlement(ctx(), 0, fx.branchID, ret.ID,
-		salesreturnapp.SettlementInput{Type: "refund", Amount: ret.Total + 1}); err == nil {
+		salesreturnapp.SettlementInput{Type: "refund", Amount: ret.Total + 1, PaymentMethod: "cash"}); err == nil {
 		t.Fatal("expected rejection for over-settlement, got nil")
 	}
 	if _, err := m.salesreturn.Service().AddSettlement(ctx(), 0, fx.branchID, ret.ID,
@@ -246,7 +246,7 @@ func TestSettlementCap(t *testing.T) {
 		t.Fatal("expected rejection for unknown type, got nil")
 	}
 	done, err := m.salesreturn.Service().AddSettlement(ctx(), 0, fx.branchID, ret.ID,
-		salesreturnapp.SettlementInput{Type: "refund", Amount: ret.Total})
+		salesreturnapp.SettlementInput{Type: "refund", Amount: ret.Total, PaymentMethod: "cash"})
 	if err != nil {
 		t.Fatalf("add settlement: %v", err)
 	}
@@ -277,11 +277,11 @@ func TestSettlementCap(t *testing.T) {
 		t.Fatalf("confirm purchase return: %v", err)
 	}
 	if _, err := m.purchasereturn.Service().AddSettlement(ctx(), 0, fx.branchID, pret.ID,
-		purchasereturnapp.SettlementInput{Type: "refund", Amount: pret.Total + 1}); err == nil {
+		purchasereturnapp.SettlementInput{Type: "refund", Amount: pret.Total + 1, PaymentMethod: "cash"}); err == nil {
 		t.Fatal("expected rejection for purchase over-settlement, got nil")
 	}
 	pdone, err := m.purchasereturn.Service().AddSettlement(ctx(), 0, fx.branchID, pret.ID,
-		purchasereturnapp.SettlementInput{Type: "refund", Amount: pret.Total})
+		purchasereturnapp.SettlementInput{Type: "refund", Amount: pret.Total, PaymentMethod: "cash"})
 	if err != nil {
 		t.Fatalf("add purchase settlement: %v", err)
 	}

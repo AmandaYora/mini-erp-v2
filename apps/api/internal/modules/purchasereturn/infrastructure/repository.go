@@ -260,6 +260,14 @@ func (r *Repository) InsertSettlement(ctx context.Context, returnID int64, s *co
 
 // InsertSettlementAudited inserts the memo row and runs the audit hook in the
 // same transaction (ADR-0011): a failing trail rolls the row back.
+// DeletePaymentSettlements drops the refund/collect memo rows mirroring one
+// payment (reference = payment number). Idempotent.
+func (r *Repository) DeletePaymentSettlements(ctx context.Context, returnID int64, paymentNumber string) error {
+	return r.q.DeletePaymentSettlements(ctx, sqlc.DeletePaymentSettlementsParams{
+		ReturnID: returnID, ReferenceNumber: sql.NullString{String: paymentNumber, Valid: true},
+	})
+}
+
 func (r *Repository) InsertSettlementAudited(ctx context.Context, returnID int64, s *contracts.Settlement, actorID int64, hook func(ctx context.Context, tx *sql.Tx, id int64) error) (int64, error) {
 	settleDate, err := parseReturnDate(s.Date)
 	if err != nil {

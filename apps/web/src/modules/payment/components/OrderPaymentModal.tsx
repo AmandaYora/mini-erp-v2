@@ -10,6 +10,9 @@ import { paymentService } from "@/modules/payment/services/payment.service";
 import { cashChange } from "@/modules/payment/lib/fifo";
 import { referenceLabel } from "@/modules/payment/types";
 import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { PaymentCashAccountField } from "@/modules/payment/components/PaymentCashAccountField";
+import { useCashAccounts } from "@/modules/finance/hooks/use-cash-accounts";
+import { cashAccountForPayload, initialCashAccount, rememberCashAccount } from "@/modules/finance/lib/cash-accounts";
 import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import {
@@ -56,6 +59,11 @@ export function OrderPaymentModal({
   // null = belum dipilih: nilai efektif = rekening default (ADR-0026: rekening dipilih saat bayar).
   const [cashAccountId, setCashAccountId] = useState<number | null>(null);
   const effectiveAccount = cashAccountId ?? bank.defaultAccountId;
+  const cash = useCashAccounts();
+  const kasDirection = orderType === "purchase" ? "out" : "in";
+  // null = belum dipilih: nilai efektif = kas terakhir untuk arah ini, lalu Kas Tunai.
+  const [kasChoice, setKasChoice] = useState<number | null>(null);
+  const effectiveKas = kasChoice ?? initialCashAccount(cash.all, kasDirection);
   const [amount, setAmount] = useState(String(outstanding));
   const [method, setMethod] = useState<"cash" | "transfer" | "check">("cash");
   const [paidAt, setPaidAt] = useState(todayWIB());
@@ -84,6 +92,7 @@ export function OrderPaymentModal({
       setSaving(false);
       setClientRef(newClientRef());
       setCashAccountId(null);
+      setKasChoice(null);
     }
   }
 
@@ -116,8 +125,15 @@ export function OrderPaymentModal({
     setSaving(true);
     try {
       const res = await paymentService.create(
-        toOrderPaymentPayload(parsed.data, { partyId, orderType, orderId, clientRef, cashAccountId: effectiveAccount }),
+        toOrderPaymentPayload(parsed.data, {
+          partyId,
+          orderType,
+          orderId,
+          clientRef,
+          cashAccountId: method === "cash" ? cashAccountForPayload(cash.all, effectiveKas) : effectiveAccount,
+        }),
       );
+      if (method === "cash") rememberCashAccount(kasDirection, cashAccountForPayload(cash.all, effectiveKas) ?? null);
       toast.fromServer(res.message, "Pembayaran dicatat", res.data.number);
       onPaid();
     } catch (err) {
@@ -181,22 +197,32 @@ export function OrderPaymentModal({
           </FormField>
         </div>
         {method === "cash" ? (
-          <FormField
-            label="Uang diterima"
-            errorText={errors.amountTendered}
-            helperText={
-              tendered.trim() !== "" && Number.isFinite(tenderedNum) && Number.isFinite(amountNum)
-                ? `Kembalian ${formatIDR(cashChange(tenderedNum, amountNum))}`
-                : "Opsional, untuk kembalian."
-            }
-          >
-            <RupiahInput
-              value={tendered}
-              onValueChange={setTendered}
-              invalid={Boolean(errors.amountTendered)}
-              aria-label="Uang diterima"
+          <>
+            <PaymentCashAccountField
+              cash={cash}
+              method={method}
+              value={effectiveKas}
+              onChange={setKasChoice}
+              direction={kasDirection}
+              errorText={errors.cashAccountId}
             />
-          </FormField>
+            <FormField
+              label="Uang diterima"
+              errorText={errors.amountTendered}
+              helperText={
+                tendered.trim() !== "" && Number.isFinite(tenderedNum) && Number.isFinite(amountNum)
+                  ? `Kembalian ${formatIDR(cashChange(tenderedNum, amountNum))}`
+                  : "Opsional, untuk kembalian."
+              }
+            >
+              <RupiahInput
+                value={tendered}
+                onValueChange={setTendered}
+                invalid={Boolean(errors.amountTendered)}
+                aria-label="Uang diterima"
+              />
+            </FormField>
+          </>
         ) : (
           <>
             <PaymentBankAccountField

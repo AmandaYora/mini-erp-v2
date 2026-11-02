@@ -48,7 +48,7 @@ const SOURCES: DocumentSource[] = [
         key: `so-${r.id}`,
         kind: "Order jual",
         number: r.number,
-        detail: join(r.partyName || "Tunai", statusLabel(r.status)),
+        detail: join(r.partyName || "Umum", statusLabel(r.status)),
         path: `${ROUTE_PATHS.salesOrders}/${r.id}`,
       })),
   },

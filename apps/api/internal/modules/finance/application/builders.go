@@ -372,8 +372,9 @@ func (s *Service) buildPayment(ctx context.Context, branchID, paymentID int64) (
 	if kind.skip {
 		return nil, "", "", apperror.Conflict("Pembayaran offset tidak dijurnal: retur sudah mengurangi tagihan di pembukuan")
 	}
-	// The cash leg posts to the payment's rekening (ADR-0026) when it names
-	// one, otherwise to the method's mapping (cash / bank) as before.
+	// The cash leg posts to the payment's rekening (ADR-0026) or, for cash, its
+	// kas (Kas Besar, …) when it names one, otherwise to the method's mapping
+	// (cash / bank) as before.
 	cashLeg := rawLeg{key: kind.cashKey, partyID: advanceParty(kind, p), note: p.Number}
 	if p.CashAccountID > 0 && (kind.cashKey == "cash" || kind.cashKey == "bank") {
 		a, err := s.repo.AccountByID(ctx, p.CashAccountID)

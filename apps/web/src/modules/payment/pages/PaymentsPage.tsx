@@ -27,6 +27,8 @@ import { toast } from "@/shared/stores/toast.store";
 import { useAuthStore } from "@/modules/auth/stores/auth.store";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import { bankAccountByAccountId, bankAccountLabel } from "@/modules/finance/lib/bank-accounts";
+import { useCashAccounts } from "@/modules/finance/hooks/use-cash-accounts";
+import { cashAccountByAccountId } from "@/modules/finance/lib/cash-accounts";
 import { BankAccountSelect } from "@/modules/finance/components/BankAccountSelect";
 import { ROUTE_PATHS } from "@/app/routes/route-paths";
 import { paymentService } from "@/modules/payment/services/payment.service";
@@ -74,6 +76,7 @@ export default function PaymentsPage() {
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const bank = useBankAccounts();
+  const cash = useCashAccounts();
   const canCreate = can("payment.create");
 
   const [tab, setTab] = useUrlTab(TABS, "daftar");
@@ -467,7 +470,9 @@ export default function PaymentsPage() {
                       <Badge tone="neutral">{methodLabel(r.method)}</Badge>
                       {(() => {
                         const b = bankAccountByAccountId(bank.all, r.cashAccountId);
-                        return b ? <span className="text-xs text-muted-foreground">{b.bankName} {b.accountNumber}</span> : null;
+                        if (b) return <span className="text-xs text-muted-foreground">{b.bankName} {b.accountNumber}</span>;
+                        const k = r.method === "cash" ? cashAccountByAccountId(cash.all, r.cashAccountId) : undefined;
+                        return k ? <span className="text-xs text-muted-foreground">{k.name}</span> : null;
                       })()}
                       {paymentKind(r) !== "bill" && (
                         <span className="text-xs text-muted-foreground">{paymentKindLabel(r)}</span>

@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -337,6 +338,64 @@ func (s *Service) CheckBankAccount(ctx context.Context, accountID int64, field s
 		return apperror.Validation("", []apperror.FieldError{{Field: field, Message: "akun buku besar rekening tidak aktif"}})
 	}
 	return nil
+}
+
+// CheckCashAccount implements contracts.BankAccountClient.
+func (s *Service) CheckCashAccount(ctx context.Context, accountID int64, field string) error {
+	opts, err := s.CashAccountOptions(ctx)
+	if err != nil {
+		return err
+	}
+	for _, o := range opts {
+		if o.AccountID == accountID && o.Status == "active" {
+			return nil
+		}
+	}
+	return apperror.Validation("", []apperror.FieldError{{Field: field, Message: "akun kas tidak ditemukan, sudah diarsipkan, atau merupakan rekening bank"}})
+}
+
+// CashAccountOptions lists the kas a cash payment can name (archived ones too,
+// so old payments keep their label; pickers offer only status=active): cash
+// asset accounts that are no rekening and not the bank mapping, the `cash`
+// mapping first as the default.
+func (s *Service) CashAccountOptions(ctx context.Context) ([]*contracts.CashAccountOption, error) {
+	accounts, err := s.repo.ListAccounts(ctx, "")
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	banks, err := s.repo.ListBankAccounts(ctx, "")
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	rekening := make(map[int64]bool, len(banks))
+	for _, b := range banks {
+		rekening[b.AccountID] = true
+	}
+	cash, err := s.repo.MappingAccount(ctx, "cash")
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	bank, err := s.repo.MappingAccount(ctx, "bank")
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	out := []*contracts.CashAccountOption{}
+	for _, a := range accounts {
+		if a.Type != contracts.AccountAsset || !a.IsCash || rekening[a.ID] || (bank != nil && bank.ID == a.ID) {
+			continue
+		}
+		out = append(out, &contracts.CashAccountOption{
+			AccountID: a.ID, Code: a.Code, Name: a.Name, Status: a.Status,
+			IsDefault: cash != nil && cash.ID == a.ID,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].IsDefault != out[j].IsDefault {
+			return out[i].IsDefault
+		}
+		return out[i].Code < out[j].Code
+	})
+	return out, nil
 }
 
 // CashOnHand implements contracts.FinanceClient: every cash/bank asset

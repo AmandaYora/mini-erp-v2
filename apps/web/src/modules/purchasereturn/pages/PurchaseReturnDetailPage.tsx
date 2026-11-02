@@ -42,6 +42,9 @@ import { purchaseReturnSettlementSchema } from "@/modules/purchasereturn/schemas
 import { purchaseReturnService } from "@/modules/purchasereturn/services/purchase-return.service";
 import { purchaseReturnRail } from "@/modules/purchasereturn/lib/purchase-return-rail";
 import { purchaseSettlementTypeLabel } from "@/modules/purchasereturn/types";
+import { SettlementPaymentFields } from "@/modules/payment/components/SettlementPaymentFields";
+import { useSettlementPayment } from "@/modules/payment/hooks/use-settlement-payment";
+import { methodLabel } from "@/modules/payment/types";
 import type {
   PurchaseReturn,
   PurchaseReturnItem,
@@ -82,7 +85,9 @@ export default function PurchaseReturnDetailPage() {
   const [settleType, setSettleType] = useState("");
   const [settleDate, setSettleDate] = useState(todayWIB());
   const [settleAmount, setSettleAmount] = useState("");
-  const [settleMethod, setSettleMethod] = useState("");
+  // Refund supplier = pembayaran masuk sungguhan (masuk laporan kas): metode + kas/rekening.
+  const settleMovesMoney = settleType === "refund";
+  const settlePay = useSettlementPayment("in");
   const [settleRef, setSettleRef] = useState("");
   const [settleNotes, setSettleNotes] = useState("");
   const [settleError, setSettleError] = useState<string | null>(null);
@@ -139,7 +144,7 @@ export default function PurchaseReturnDetailPage() {
     setSettleType("");
     setSettleDate(todayWIB());
     setSettleAmount(ret && ret.externalRemaining > 0 ? String(ret.externalRemaining) : "");
-    setSettleMethod("");
+    settlePay.reset();
     setSettleRef("");
     setSettleNotes("");
     setSettleError(null);
@@ -152,12 +157,17 @@ export default function PurchaseReturnDetailPage() {
       type: settleType,
       date: settleDate.trim(),
       amount: settleAmount,
-      paymentMethod: settleMethod.trim(),
+      paymentMethod: settleMovesMoney ? settlePay.method : "",
       referenceNumber: settleRef.trim(),
       notes: settleNotes.trim(),
     });
     if (!parsed.success) {
       setSettleError(parsed.error.issues[0]?.message ?? "Form belum valid.");
+      return;
+    }
+    const accountError = settleMovesMoney ? settlePay.accountError() : null;
+    if (accountError) {
+      setSettleError(accountError);
       return;
     }
     setSettleError(null);
@@ -170,6 +180,7 @@ export default function PurchaseReturnDetailPage() {
         paymentMethod: parsed.data.paymentMethod || undefined,
         referenceNumber: parsed.data.referenceNumber || undefined,
         notes: parsed.data.notes || undefined,
+        ...(settleMovesMoney ? { cashAccountId: settlePay.payloadAccount(), clientRef: settlePay.clientRef } : {}),
       })
       .then((res) => {
         setRet(res.data);
@@ -284,7 +295,7 @@ export default function PurchaseReturnDetailPage() {
             <SectionCard
               flush
               title="Penyelesaian"
-              description="Cara kelebihan nilai retur diselesaikan dengan supplier. Refund bergerak lewat modul pembayaran; saldo supplier dijurnal sebagai uang muka supplier."
+              description="Cara kelebihan nilai retur diselesaikan dengan supplier. Refund dicatat sebagai pembayaran (nomornya di kolom referensi, masuk laporan kas); saldo supplier dijurnal sebagai uang muka supplier."
             >
               <DataTable<PurchaseReturnSettlement>
                 rows={ret.settlements}
@@ -304,7 +315,7 @@ export default function PurchaseReturnDetailPage() {
                         <p>{purchaseSettlementTypeLabel(r.type)}</p>
                         {(r.paymentMethod || r.referenceNumber || r.notes) && (
                           <p className="text-xs text-muted-foreground">
-                            {[r.paymentMethod, r.referenceNumber, r.notes].filter(Boolean).join(" · ")}
+                            {[r.paymentMethod && methodLabel(r.paymentMethod), r.referenceNumber, r.notes].filter(Boolean).join(" · ")}
                           </p>
                         )}
                       </div>
@@ -388,7 +399,7 @@ export default function PurchaseReturnDetailPage() {
       <FormSheet
         open={settleOpen}
         title="Catat penyelesaian"
-        description={`Kelebihan yang bisa diselesaikan: ${formatIDR(ret.externalRemaining)}. Nilai retur lebih dulu mengurangi hutang ke supplier; hanya kelebihannya yang bisa direfund atau dijadikan saldo supplier.`}
+        description={`Kelebihan yang bisa diselesaikan: ${formatIDR(ret.externalRemaining)}. Nilai retur lebih dulu mengurangi hutang ke supplier; hanya kelebihannya yang bisa direfund atau dijadikan saldo supplier. Refund dicatat sebagai pembayaran masuk dan masuk laporan kas.`}
         onClose={() => {
           if (!settleBusy) setSettleOpen(false);
         }}
@@ -442,15 +453,7 @@ export default function PurchaseReturnDetailPage() {
           <FormField label="Tanggal" helperText="Kosongkan untuk hari ini (server).">
             <DateInput value={settleDate} onChange={(e) => setSettleDate(e.target.value)} disabled={settleBusy} />
           </FormField>
-          <FormField label="Metode pembayaran">
-            <TextInput
-              value={settleMethod}
-              maxLength={50}
-              onChange={(e) => setSettleMethod(e.target.value)}
-              placeholder="Tunai / transfer / …"
-              disabled={settleBusy}
-            />
-          </FormField>
+          {settleMovesMoney && <SettlementPaymentFields pay={settlePay} direction="in" disabled={settleBusy} />}
           <FormField label="Nomor referensi">
             <TextInput
               value={settleRef}

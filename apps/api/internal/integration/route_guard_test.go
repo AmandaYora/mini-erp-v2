@@ -92,6 +92,9 @@ var authnOnlyRoutes = map[string]bool{
 	// ADR-0026: every role that bills or records a transfer picks a company
 	// rekening; the handler adds RequireBranch itself (TestBankAccountOptions).
 	"GET /api/v1/finance/bank-accounts/options": true,
+	// A cash payment names the kas it moves through (Kas Tunai, Kas Besar);
+	// the handler adds RequireBranch itself.
+	"GET /api/v1/finance/cash-accounts/options": true,
 }
 
 // noBranchPrefixes are permission-guarded areas that deliberately work

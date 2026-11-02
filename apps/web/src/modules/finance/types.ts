@@ -20,6 +20,16 @@ export interface Account {
 
 /** Rekening perusahaan (ADR-0026): identitas bank di atas satu akun kas/bank sendiri.
  * Modul lain menyimpan `accountId` (akun buku besar) sebagai acuan rekening. */
+/** Akun kas (Kas Tunai, Kas Besar, …) yang bisa dipakai pembayaran tunai: akun aset kas
+ * yang bukan rekening. isDefault = pemetaan "cash" (tujuan tunai tanpa pilihan). */
+export interface CashAccountOption {
+  accountId: number;
+  code: string;
+  name: string;
+  isDefault: boolean;
+  status: "active" | "archived";
+}
+
 export interface BankAccount {
   id: number;
   accountId: number;

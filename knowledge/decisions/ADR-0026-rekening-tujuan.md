@@ -10,6 +10,8 @@ saat start (butir 9). Butir 6–9 dan Consequences di bawah sudah memuat revisi 
 pembayaran dicatat. Rekening tujuan di order jual dihapus (butir 2), dan nota mencetak daftar rekening dokumen (butir 6).
 Merevisi catatan `finance_cash_accounts` di `DB_SCHEMA.md` §6 dan menambah satu pengecualian pada
 ADR-0018 D12 (dokumen cetak). **Angka saldo per rekening untuk jurnal reklasifikasi: akuntan.**
+**Direvisi sebagian oleh [ADR-0027](ADR-0027-kas-tunai-dan-refund-retur.md) (2026-11-02):** pembayaran tunai boleh
+menunjuk akun kas yang bukan rekening (mis. Kas Besar); butir 3 "Tunai tidak membawa rekening" tetap berlaku untuk rekening.
 
 ## Context
 - Perusahaan punya beberapa rekening (BCA, Mandiri, …). Kasir dan pembuat order tidak bisa

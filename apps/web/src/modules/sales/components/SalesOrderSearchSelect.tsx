@@ -29,7 +29,7 @@ export interface SalesOrderSearchSelectProps {
 function formatSalesOrderOption(order: SalesOrder): OrderOption {
   return {
     value: order.id,
-    label: `${order.number} — ${order.partyName || "Tunai"}`,
+    label: `${order.number} — ${order.partyName || "Umum"}`,
     description: `${formatDate(order.orderDate)} · ${formatIDR(order.grandTotal)}`,
     order,
   };

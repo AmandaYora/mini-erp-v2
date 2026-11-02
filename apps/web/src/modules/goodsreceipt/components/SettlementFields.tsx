@@ -1,7 +1,11 @@
+import { useEffect } from "react";
 import { DateInput, FormField, SelectInput, TextInput } from "@/shared/components/ui";
 import type { SettlementDraft } from "@/modules/goodsreceipt/lib/settlement-draft";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
+import { PaymentCashAccountField } from "@/modules/payment/components/PaymentCashAccountField";
+import { useCashAccounts } from "@/modules/finance/hooks/use-cash-accounts";
+import { initialCashAccount, rememberCashAccount } from "@/modules/finance/lib/cash-accounts";
 
 interface SettlementFieldsProps {
   value: SettlementDraft;
@@ -16,6 +20,12 @@ export function SettlementFields({ value, errors, canPay, canSwitchNet, onChange
   const patch = (p: Partial<SettlementDraft>) => onChange({ ...value, ...p });
   // Rekening sumber transfer/cek (ADR-0026): kosong = default perusahaan (server memakai yang sama).
   const bank = useBankAccounts();
+  // Kas sumber tunai (mis. Kas Besar): terisi kas terakhir untuk bayar keluar, lalu Kas Tunai.
+  const cash = useCashAccounts();
+  const needsKas = value.mode === "pay_now" && value.method === "cash" && cash.shown && value.kasAccountId == null;
+  useEffect(() => {
+    if (needsKas) onChange({ ...value, kasAccountId: initialCashAccount(cash.all, "out") });
+  }, [needsKas, cash.all, value, onChange]);
   return (
     <div className="rounded-md border border-border p-4">
       <p className="text-sm font-semibold text-foreground">Pelunasan order COD</p>
@@ -58,6 +68,17 @@ export function SettlementFields({ value, errors, canPay, canSwitchNet, onChange
             <FormField label="Tanggal Bayar" errorText={errors.paymentDate}>
               <DateInput value={value.paymentDate} onChange={(e) => patch({ paymentDate: e.target.value })} />
             </FormField>
+            <PaymentCashAccountField
+              cash={cash}
+              method={value.method}
+              value={value.kasAccountId ?? null}
+              onChange={(id) => {
+                rememberCashAccount("out", id);
+                patch({ kasAccountId: id });
+              }}
+              direction="out"
+              errorText={errors.cashAccountId}
+            />
             <PaymentBankAccountField
               bank={bank}
               method={value.method}

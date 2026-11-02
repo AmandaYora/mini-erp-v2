@@ -39,7 +39,9 @@ satu orang.
 | **Branch Scope** | `branchId` yang selalu diturunkan dari sesi terautentikasi (modul `auth`), tidak pernah dari body request. Tidak ada scope perusahaan (ADR-0009). |
 | **Rekening perusahaan** | Rekening bank milik perusahaan (bank, nomor, atas nama) di modul `finance` (`finance_bank_accounts`), masing-masing tertaut ke satu akun kas/bank sendiri di buku besar sehingga saldonya bisa dicocokkan dengan rekening koran. Modul lain menunjuknya lewat id akun buku besar itu (ADR-0026). |
 | **Rekening pembayaran** (dulu juga "rekening tujuan") | Rekening perusahaan yang menerima/mengeluarkan uang satu pembayaran transfer/cek, dipilih saat pembayaran dicatat ("Ke/Dari rekening"), terisi rekening default. Order tidak menyimpan rekening (ADR-0026 revisi 2026-10-27). |
-| **Rekening pembayaran** | Rekening perusahaan tempat uang transfer/cek benar-benar masuk atau keluar, disimpan per pembayaran; jurnalnya ke akun rekening itu. Tunai tidak memakai rekening (ADR-0026). |
+| **Rekening pembayaran** | Rekening perusahaan tempat uang transfer/cek benar-benar masuk atau keluar, disimpan per pembayaran; jurnalnya ke akun rekening itu. Tunai tidak memakai rekening (ADR-0026), tetapi boleh memakai akun kas (lihat **Kas pembayaran**). |
+| **Kas pembayaran** | Akun kas (aset bertanda Kas, bukan rekening) tempat uang tunai satu pembayaran masuk/keluar, mis. Kas Tunai atau Kas Besar ("Dari/Ke kas"). Disimpan di kolom yang sama dengan rekening pembayaran; kosong = Kas Tunai. Pemilih tampil bila ada lebih dari satu kas (ADR-0027). |
+| **Umum** (pembeli walk-in) | Nama tampilan penjualan tanpa pelanggan (POS walk-in, `partyId` 0). Dulu "Tunai", yang terbaca seperti metode bayar (ADR-0027). |
 | **Retur sebagian** | Retur sejumlah qty kurang dari yang terkirim/diterima (mis. order 5, retur 1), boleh berulang selama sisa (terkirim − sudah diretur) masih ada; nilainya prorata dari harga, diskon, dan pajak baris asli. Form memakai pola pilih-dulu: qty awal kosong, "Retur semua sisa" untuk retur penuh. |
 
 ## Peran Pengguna (Role Bawaan)

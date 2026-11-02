@@ -166,6 +166,10 @@ type ReturnsClient interface {
 	// back to 0 (and the auto memo with it), so the order balance and the
 	// refundable remainder read the same as the books. Idempotent.
 	ReleaseAutoOffset(ctx context.Context, returnID int64) error
+	// ReleaseSettlementPayment drops the refund / collect memo that mirrors a
+	// payment the payment module just cancelled (the memo carries the payment
+	// number), so the remainder can be settled again. Idempotent.
+	ReleaseSettlementPayment(ctx context.Context, returnID int64, paymentNumber string) error
 }
 
 // PermissionCatalog lists this module's permission codes for the seed.

@@ -54,15 +54,37 @@ func (s *Service) SetReverser(r financecontracts.SourceReverser) { s.reverser = 
 func (s *Service) SetBankAccounts(b financecontracts.BankAccountClient) { s.banks = b }
 
 // resolveCashAccount settles the rekening (finance cash/bank GL account id) a
-// payment moves through (ADR-0026). Cash, offset and saldo legs carry none.
-// Transfer/check take the requested rekening, else the fallback (the corrected
+// payment moves through (ADR-0026). Cash may name a kas (Kas Tunai, Kas Besar —
+// any cash account that is no rekening); none = the `cash` mapping. Offset and
+// saldo legs carry none. Transfer/check take the requested rekening, else the fallback (the corrected
 // payment's) when it is still active, else the company default. The rekening is
 // chosen when the payment is recorded, never on the bill (ADR-0026 revisi). Once the company has rekening, one is required — with
 // none configured the payment keeps the method's mapping (0).
 func (s *Service) resolveCashAccount(ctx context.Context, method string, requested, fallback int64) (int64, error) {
+	if method == contracts.MethodCash {
+		if requested == 0 && fallback == 0 {
+			return 0, nil
+		}
+		if s.banks == nil {
+			if requested != 0 {
+				return 0, apperror.Internal(errBanksUnwired)
+			}
+			return 0, nil
+		}
+		if requested != 0 {
+			if err := s.banks.CheckCashAccount(ctx, requested, "cashAccountId"); err != nil {
+				return 0, err
+			}
+			return requested, nil
+		}
+		if s.banks.CheckCashAccount(ctx, fallback, "cashAccountId") == nil {
+			return fallback, nil
+		}
+		return 0, nil
+	}
 	if method != contracts.MethodTransfer && method != contracts.MethodCheck {
 		if requested != 0 {
-			return 0, apperror.Validation("", []apperror.FieldError{{Field: "cashAccountId", Message: "rekening hanya untuk transfer atau cek"}})
+			return 0, apperror.Validation("", []apperror.FieldError{{Field: "cashAccountId", Message: "akun kas/rekening hanya untuk tunai, transfer, atau cek"}})
 		}
 		return 0, nil
 	}
@@ -834,6 +856,9 @@ func (s *Service) CancelWithReason(ctx context.Context, actorID, branchID, id in
 	if err := s.releaseAutoOffset(ctx, first); err != nil {
 		return nil, err
 	}
+	if err := s.releaseReturnSettlement(ctx, first); err != nil {
+		return nil, err
+	}
 	return s.GetByID(ctx, id)
 }
 
@@ -874,6 +899,22 @@ func (s *Service) releaseAutoOffset(ctx context.Context, first *contracts.Paymen
 		return s.salesReturns.ReleaseAutoOffset(ctx, returnID)
 	case orderType == contracts.OrderPurchaseReturn && s.purchaseReturns != nil:
 		return s.purchaseReturns.ReleaseAutoOffset(ctx, returnID)
+	}
+	return nil
+}
+
+// releaseReturnSettlement tells a return that the payment its refund/collect
+// memo mirrors is gone (client ref settle:…, ReturnSettlementRef). Like
+// releaseAutoOffset it runs on replays too, so a crash in between heals.
+func (s *Service) releaseReturnSettlement(ctx context.Context, p *contracts.Payment) error {
+	orderType, returnID, ok := contracts.ParseReturnSettlementRef(p.ClientRef)
+	switch {
+	case !ok:
+		return nil
+	case orderType == contracts.OrderSalesReturn && s.salesReturns != nil:
+		return s.salesReturns.ReleaseSettlementPayment(ctx, returnID, p.Number)
+	case orderType == contracts.OrderPurchaseReturn && s.purchaseReturns != nil:
+		return s.purchaseReturns.ReleaseSettlementPayment(ctx, returnID, p.Number)
 	}
 	return nil
 }
@@ -1467,24 +1508,23 @@ func (s *Service) PaidForOrdersAsOf(ctx context.Context, orderType string, ids [
 // outstanding, and the call is idempotent per ClientRef (a replay returns the
 // payment already recorded and reports replayed=true).
 func (s *Service) RecordForOrder(ctx context.Context, in contracts.RecordInput) (*contracts.Payment, bool, error) {
-	if in.OrderType != contracts.OrderSales && in.OrderType != contracts.OrderPurchase && in.OrderType != contracts.OrderSalesReturn {
-		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "orderType", Message: "harus sales, purchase, atau sales_return"}})
+	switch in.OrderType {
+	case contracts.OrderSales, contracts.OrderPurchase, contracts.OrderSalesReturn, contracts.OrderPurchaseReturn:
+	default:
+		return nil, false, apperror.Validation("", []apperror.FieldError{{Field: "orderType", Message: "harus sales, purchase, sales_return, atau purchase_return"}})
 	}
 	var partyID int64
 	switch in.OrderType {
 	case contracts.OrderSalesReturn:
-		// Exchange surcharge (K-04e): the customer owes us the difference of a
-		// replacement that costs more. Only the charge kind can be collected
-		// here; a refund-kind return would flip the money direction out.
+		// Either the exchange surcharge the customer owes (K-04e, charge kind:
+		// money in) or the refund the customer is owed (refund kind: money
+		// out). createPayment derives the direction from the return itself.
 		r, err := s.salesReturns.GetReturn(ctx, in.OrderID)
 		if err != nil {
 			return nil, false, apperror.Internal(err)
 		}
 		if r == nil || r.Branch != in.BranchID {
 			return nil, false, apperror.NotFound("Retur")
-		}
-		if r.Kind != salesreturncontracts.KindCharge {
-			return nil, false, apperror.Conflict("Retur ini bukan tambah bayar tukar: tidak ada tagihan selisih yang bisa dipungut")
 		}
 		so, err := s.sales.GetByID(ctx, r.OrderID)
 		if err != nil {
@@ -1494,6 +1534,23 @@ func (s *Service) RecordForOrder(ctx context.Context, in contracts.RecordInput) 
 			return nil, false, apperror.NotFound("Order")
 		}
 		partyID = so.PartyID
+	case contracts.OrderPurchaseReturn:
+		// The supplier refunds us the returned goods (money in).
+		r, err := s.purchaseReturns.GetReturn(ctx, in.OrderID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if r == nil || r.Branch != in.BranchID {
+			return nil, false, apperror.NotFound("Retur")
+		}
+		po, err := s.purchasing.GetByID(ctx, r.OrderID)
+		if err != nil {
+			return nil, false, apperror.Internal(err)
+		}
+		if po == nil {
+			return nil, false, apperror.NotFound("Order")
+		}
+		partyID = po.PartyID
 	case contracts.OrderSales:
 		o, err := s.sales.GetByID(ctx, in.OrderID)
 		if err != nil {

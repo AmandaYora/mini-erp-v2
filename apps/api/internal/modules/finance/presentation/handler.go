@@ -528,10 +528,14 @@ func (h *Handler) ListTaxPeriods(w http.ResponseWriter, r *http.Request) {
 // bank-accounts/options takes authentication plus the branch guard but no
 // permission: every role that records a bill or a transfer picks a rekening
 // and every printed bill shows it (ADR-0026, same pattern as
-// company/print-profile).
+// company/print-profile). cash-accounts/options follows the same rule: every
+// role that records a cash payment picks the kas it moves through.
 func RegisterRoutes(mux *http.ServeMux, h *Handler, perm authcontracts.Permission, branchGuard func(http.Handler) http.Handler, authn func(func(http.ResponseWriter, *http.Request)) http.Handler) {
 	mux.Handle("GET /api/v1/finance/bank-accounts/options", authn(func(w http.ResponseWriter, r *http.Request) {
 		authcontracts.RequireBranch(http.HandlerFunc(h.ListBankAccounts)).ServeHTTP(w, r)
+	}))
+	mux.Handle("GET /api/v1/finance/cash-accounts/options", authn(func(w http.ResponseWriter, r *http.Request) {
+		authcontracts.RequireBranch(http.HandlerFunc(h.CashAccountOptions)).ServeHTTP(w, r)
 	}))
 	mux.Handle("GET /api/v1/finance/bank-accounts", perm("finance.view", authcontracts.Guard(h.ListBankAccounts, branchGuard)))
 	mux.Handle("POST /api/v1/finance/bank-accounts", perm("finance.manage", authcontracts.Guard(h.CreateBankAccount, branchGuard)))

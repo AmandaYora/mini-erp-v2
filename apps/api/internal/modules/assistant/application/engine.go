@@ -401,7 +401,7 @@ func (e *Engine) pendingOrders(ctx context.Context, branches []*branchcontracts.
 		empty = false
 		fmt.Fprintf(&b, "%s:\n", br.Name)
 		for _, o := range so {
-			fmt.Fprintf(&b, "- %s (%s, %s) %s\n", o.Number, orderStatusID(o.Status), partyOrTunai(o), fmtIDR(o.GrandTotal))
+			fmt.Fprintf(&b, "- %s (%s, %s) %s\n", o.Number, orderStatusID(o.Status), partyOrWalkIn(o), fmtIDR(o.GrandTotal))
 		}
 		for _, o := range po {
 			fmt.Fprintf(&b, "- %s (beli, %s, %s) %s\n", o.Number, orderStatusID(o.Status), o.PartyName, fmtIDR(o.GrandTotal))
@@ -425,7 +425,7 @@ func (e *Engine) orderStatus(ctx context.Context, branches []*branchcontracts.Br
 			rec.add("order_status", map[string]any{"number": number, "flow": "sales"},
 				map[string]any{"status": o.Status, "total": o.GrandTotal})
 			return fmt.Sprintf("%s (%s)\nStatus: %s\nCustomer: %s\nTanggal: %s\nTotal: %s",
-				o.Number, br.Name, orderStatusID(o.Status), partyOrTunaiSales(o),
+				o.Number, br.Name, orderStatusID(o.Status), partyOrWalkInSales(o),
 				shortDate(o.OrderDate), fmtIDR(o.GrandTotal)), nil
 		}
 		if o, err := e.purchasing.GetByNumber(ctx, br.ID, number); err != nil {
@@ -651,7 +651,7 @@ func (e *Engine) orderList(ctx context.Context, branches []*branchcontracts.Bran
 		empty = false
 		fmt.Fprintf(&b, "%s:\n", br.Name)
 		for _, o := range so {
-			fmt.Fprintf(&b, "- %s (%s, %s) %s\n", o.Number, orderStatusID(o.Status), partyOrTunai(o), fmtIDR(o.GrandTotal))
+			fmt.Fprintf(&b, "- %s (%s, %s) %s\n", o.Number, orderStatusID(o.Status), partyOrWalkIn(o), fmtIDR(o.GrandTotal))
 		}
 		for _, o := range po {
 			fmt.Fprintf(&b, "- %s (beli, %s, %s) %s\n", o.Number, orderStatusID(o.Status), o.PartyName, fmtIDR(o.GrandTotal))
@@ -734,22 +734,22 @@ func uomOrDash(u string) string {
 	return u
 }
 
-func partyOrTunai(o *salescontracts.OrderSummary) string {
+func partyOrWalkIn(o *salescontracts.OrderSummary) string {
 	if o.PartyName != "" {
 		return o.PartyName
 	}
 	if o.PartyID == 0 {
-		return "Tunai"
+		return salescontracts.WalkInPartyName
 	}
 	return "-"
 }
 
-func partyOrTunaiSales(o *salescontracts.SalesOrder) string {
+func partyOrWalkInSales(o *salescontracts.SalesOrder) string {
 	if o.PartyName != "" {
 		return o.PartyName
 	}
 	if o.PartyID == 0 {
-		return "Tunai"
+		return salescontracts.WalkInPartyName
 	}
 	return "-"
 }

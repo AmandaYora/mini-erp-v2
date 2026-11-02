@@ -58,7 +58,7 @@ describe("lib dasbor", () => {
     expect(items[0].detail).toBe("Terlambat 2 hari");
     expect(items[0].to).toBe("/sales-orders?search=SO-2");
     expect(items[1].to).toBe("/stock/items/7");
-    expect(items[2].title).toBe("SO-1 · Tunai");
+    expect(items[2].title).toBe("SO-1 · Umum");
     expect(buildActionItems(null, null, "2026-10-16")).toEqual([]);
   });
 

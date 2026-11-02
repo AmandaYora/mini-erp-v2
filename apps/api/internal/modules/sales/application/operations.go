@@ -137,7 +137,7 @@ func (s *Service) OpenShipmentsFiltered(ctx context.Context, branchID int64, f c
 			o.Items = []*contracts.Item{}
 		}
 		if o.PartyID == 0 {
-			o.PartyName = "Tunai"
+			o.PartyName = contracts.WalkInPartyName
 			continue
 		}
 		o.PartyName = names[o.PartyID]
@@ -226,7 +226,7 @@ func (s *Service) PriorityOrders(ctx context.Context, branchID int64, limit int)
 	}
 	for _, p := range rows {
 		if p.PartyID == 0 {
-			p.PartyName = "Tunai"
+			p.PartyName = contracts.WalkInPartyName
 		} else {
 			p.PartyName = names[p.PartyID]
 		}
@@ -271,7 +271,7 @@ func (s *Service) ReportOrders(ctx context.Context, branchID int64, status, from
 	}
 	for _, r := range rows {
 		if r.PartyID == 0 {
-			r.PartyName = "Tunai"
+			r.PartyName = contracts.WalkInPartyName
 			continue
 		}
 		r.PartyName = names[r.PartyID]

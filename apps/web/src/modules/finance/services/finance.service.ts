@@ -39,6 +39,7 @@ import type {
   Account,
   AccountMappings,
   BankAccount,
+  CashAccountOption,
   BatchItem,
   BatchPostResult,
   CloseDayResult,
@@ -186,6 +187,8 @@ export const financeService = {
   bankAccounts: () => apiGet<BankAccount[]>("/api/v1/finance/bank-accounts"),
 
   bankAccountOptions: () => apiGet<BankAccount[]>("/api/v1/finance/bank-accounts/options"),
+
+  cashAccountOptions: () => apiGet<CashAccountOption[]>("/api/v1/finance/cash-accounts/options"),
 
   createBankAccount: (body: BankAccountPayload) =>
     apiPostFull<BankAccount>("/api/v1/finance/bank-accounts", body),

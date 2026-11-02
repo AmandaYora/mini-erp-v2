@@ -303,6 +303,23 @@ func (q *Queries) ConfirmedQtyByOrders(ctx context.Context, poIds []int64) ([]Co
 	return items, nil
 }
 
+const deletePaymentSettlements = `-- name: DeletePaymentSettlements :exec
+DELETE FROM purchase_return_settlements
+WHERE return_id = ? AND reference_number = ? AND settlement_type IN ('refund')
+`
+
+type DeletePaymentSettlementsParams struct {
+	ReturnID        int64
+	ReferenceNumber sql.NullString
+}
+
+// A refund/collect memo goes with the payment it mirrors (its number is the
+// memo's reference) when the payment module cancels that payment.
+func (q *Queries) DeletePaymentSettlements(ctx context.Context, arg DeletePaymentSettlementsParams) error {
+	_, err := q.db.ExecContext(ctx, deletePaymentSettlements, arg.ReturnID, arg.ReferenceNumber)
+	return err
+}
+
 const getCreditSettlement = `-- name: GetCreditSettlement :one
 SELECT s.id, s.return_id, r.number, r.branch_id, r.purchase_order_id,
   s.settlement_type, s.settlement_date, s.amount, r.status

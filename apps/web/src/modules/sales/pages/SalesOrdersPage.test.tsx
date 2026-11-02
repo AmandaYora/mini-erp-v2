@@ -32,7 +32,7 @@ const row = {
   id: 7,
   number: "SO-0007",
   partyId: 0,
-  partyName: "Tunai",
+  partyName: "Umum",
   channel: "regular",
   orderDate: "2026-10-01",
   dueDate: "",
@@ -86,12 +86,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("daftar order jual", () => {
-  it("membaca filter dari URL, mengirimnya ke server dengan AbortSignal, dan menampilkan Tunai", async () => {
+  it("membaca filter dari URL, mengirimnya ke server dengan AbortSignal, dan menampilkan Umum untuk walk-in", async () => {
     renderPage(
       "/sales-orders?status=confirmed,completed&paymentTerms=net&partyId=4&from=2026-10-01&to=2026-10-31&sort=total&dir=asc",
     );
     expect(await screen.findByText("SO-0007")).toBeInTheDocument();
-    expect(screen.getByText("Tunai")).toBeInTheDocument();
+    expect(screen.getByText("Umum")).toBeInTheDocument();
     const [params, signal] = list.mock.calls[0];
     expect(params).toEqual({
       status: "confirmed,completed",

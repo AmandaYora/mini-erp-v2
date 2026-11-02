@@ -225,6 +225,23 @@ type BankAccountClient interface {
 	// CheckBankAccount validates that accountID is the GL account of an ACTIVE
 	// rekening. The error is a field validation error on `field`.
 	CheckBankAccount(ctx context.Context, accountID int64, field string) error
+	// CheckCashAccount validates that accountID is an ACTIVE cash-in-hand GL
+	// account a cash payment may move through (Kas Tunai, Kas Besar, …): an
+	// active cash asset that is neither a rekening nor the bank mapping. The
+	// error is a field validation error on `field`.
+	CheckCashAccount(ctx context.Context, accountID int64, field string) error
+}
+
+// CashAccountOption is one kas (cash-in-hand GL account) a cash payment can
+// name: every active-or-archived cash asset that is not a rekening and not the
+// bank mapping. IsDefault marks the `cash` mapping (Kas Tunai) — what a cash
+// payment that names no kas posts to.
+type CashAccountOption struct {
+	AccountID int64  `json:"accountId"`
+	Code      string `json:"code"`
+	Name      string `json:"name"`
+	IsDefault bool   `json:"isDefault"`
+	Status    string `json:"status"`
 }
 
 // HealthClient is finance's read-only data-health surface (ADR-0025): grouped

@@ -336,7 +336,7 @@ describe("form order jual — pindai QR / barcode (SL-10)", () => {
 describe("form order jual — koreksi order terkonfirmasi", () => {
   function confirmedOrder(editMode: string) {
     return {
-      id: 7, number: "SO-0007", branchId: 1, partyId: 0, partyName: "Tunai", channel: "pos", memberCode: "",
+      id: 7, number: "SO-0007", branchId: 1, partyId: 0, partyName: "Umum", channel: "pos", memberCode: "",
       orderDate: "2026-10-01 10:00:00", dueDate: "", paymentTerms: "cod", taxType: "none", taxRate: 0,
       subtotal: 100000, discountTotal: 0, taxTotal: 0, grandTotal: 100000, status: "confirmed", notes: "",
       shipToAddressId: 0, shipToLabel: "", shipToRecipient: "", shipToPhone: "", shipToAddress: "",

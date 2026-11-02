@@ -52,8 +52,8 @@ describe("SalesOrderSearchSelect", () => {
     await user.type(screen.getByPlaceholderText("Ketik nomor atau nama pelanggan…"), "bud");
     await waitFor(() => expect(list.mock.calls.at(-1)?.[0]).toMatchObject({ search: "bud" }));
 
-    // Walk-in tampil sebagai "Tunai"; memilih mengembalikan id + objek order.
-    await user.click(await screen.findByRole("option", { name: /SO-0008 — Tunai/ }));
+    // Walk-in tampil sebagai "Umum"; memilih mengembalikan id + objek order.
+    await user.click(await screen.findByRole("option", { name: /SO-0008 — Umum/ }));
     expect(onChange).toHaveBeenCalledWith(8, expect.objectContaining({ number: "SO-0008" }));
   });
 

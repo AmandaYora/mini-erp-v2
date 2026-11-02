@@ -232,6 +232,10 @@ export interface PurchaseReturnSettlementPayload {
   paymentMethod?: string;
   referenceNumber?: string;
   notes?: string;
+  /** Refund: kas (tunai) atau rekening (transfer/cek) tujuan; kosong = default. */
+  cashAccountId?: number;
+  /** Kunci idempoten satu refund (dicatat sebagai pembayaran). */
+  clientRef?: string;
 }
 
 export const PURCHASE_RETURN_STATUSES = ["draft", "confirmed", "cancelled"] as const;

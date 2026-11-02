@@ -84,7 +84,7 @@ describe("searchDocuments", () => {
     const hits = await searchDocuments("000123", all, new AbortController().signal);
     expect(po).toHaveBeenCalledWith({ search: "000123", page: 1, limit: 3 }, expect.any(AbortSignal));
     expect(hits.map((h) => h.key)).toEqual(["rtb-2", "so-1"]);
-    expect(hits[1].detail).toBe("Tunai · Draf");
+    expect(hits[1].detail).toBe("Umum · Draf");
   });
 
   it("teks yang bukan nomor tidak memanggil jaringan", async () => {

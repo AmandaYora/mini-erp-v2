@@ -143,7 +143,11 @@ export function usePosCart() {
   const [variantChoice, setVariantChoice] = useState<VariantChoiceState | null>(null);
 
   // --- keranjang ---
-  const [customerId, setCustomerIdState] = useState<number | null>(initialDraft.customerId);
+  // Pelanggan hanya dipulihkan dari draf yang checkout-nya sudah dimulai (partyId harus sama
+  // dengan order di server). Keranjang biasa kembali ke Umum/walk-in setelah pindah halaman.
+  const [customerId, setCustomerIdState] = useState<number | null>(
+    initialDraft.started ? initialDraft.customerId : null,
+  );
   // Diskon baris yang diturunkan otomatis karena harga efektif berubah (tampil menetap).
   const [discountNotice, setDiscountNotice] = useState<string | null>(null);
   const [cart, setCartState] = useState<CartLine[]>(initialDraft.lines);
@@ -943,6 +947,7 @@ export function usePosCart() {
   function resetTransaction() {
     clearDraft();
     setCart(() => []);
+    setCustomerIdState(null);
     setStarted(false);
     setHeldSnap({});
     setCartRef(newClientRef());

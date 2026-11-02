@@ -53,6 +53,8 @@ export function toOrderPaymentPayload(
   if (v.notes.trim() !== "") out.notes = v.notes.trim();
   if (v.method === "cash") {
     if (v.amountTendered.trim() !== "") out.amountTendered = Number(v.amountTendered);
+    // Kas asal/tujuan tunai (mis. Kas Besar); kosong = Kas Tunai.
+    if (ctx.cashAccountId) out.cashAccountId = ctx.cashAccountId;
   } else {
     if (v.reference.trim() !== "") out.reference = v.reference.trim();
     if (ctx.cashAccountId) out.cashAccountId = ctx.cashAccountId;

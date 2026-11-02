@@ -356,6 +356,10 @@ export interface ReturnSettlementPayload {
   paymentMethod?: string;
   referenceNumber?: string;
   notes?: string;
+  /** Refund / tambah bayar: kas (tunai) atau rekening (transfer/cek); kosong = default. */
+  cashAccountId?: number;
+  /** Kunci idempoten satu penyelesaian (refund / tambah bayar dicatat sebagai pembayaran). */
+  clientRef?: string;
 }
 
 /** Opsi produk untuk editor barang pengganti (search-options: id/code/name). */

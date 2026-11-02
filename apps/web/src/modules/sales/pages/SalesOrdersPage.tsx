@@ -409,7 +409,7 @@ export default function SalesOrdersPage() {
               ),
             },
             { header: "Tanggal", sortKey: "date", render: (r) => formatDate(r.orderDate) },
-            { header: "Pelanggan", render: (r) => r.partyName || "Tunai" },
+            { header: "Pelanggan", render: (r) => r.partyName || "Umum" },
             {
               header: "Kanal",
               render: (r) => (

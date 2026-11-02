@@ -3,6 +3,7 @@ package contracts
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	usercontracts "mini-erp/internal/modules/user/contracts"
 )
@@ -107,11 +108,12 @@ type OffsetInput struct {
 }
 
 // RecordInput records ONE payment in full against ONE order (a delivery
-// settlement or a POS checkout). Idempotent per ClientRef.
+// settlement, a POS checkout, or the cash side of a return settlement).
+// Idempotent per ClientRef.
 type RecordInput struct {
 	ActorID        int64
 	BranchID       int64
-	OrderType      string // sales | purchase | sales_return (exchange surcharge only)
+	OrderType      string // sales | purchase | sales_return | purchase_return
 	OrderID        int64
 	Amount         int64 // 0 = the order's whole outstanding
 	Method         string
@@ -120,9 +122,48 @@ type RecordInput struct {
 	AmountTendered int64
 	ClientRef      string
 	Notes          string
-	// CashAccountID names the company rekening of a transfer/check (ADR-0026);
-	// 0 = the default.
+	// CashAccountID names the company rekening of a transfer/check (ADR-0026)
+	// or the kas of a cash payment; 0 = the default.
 	CashAccountID int64
+}
+
+// returnSettlementPrefix marks a payment recorded by a return's refund /
+// collect settlement (the memo row carries the payment number). Cancelling
+// such a payment releases its memo (ReleaseSettlementPayment).
+const returnSettlementPrefix = "settle:"
+
+// returnSettlementCodes shortens the order type inside the ref (client refs
+// are at most 64 characters).
+var returnSettlementCodes = map[string]string{OrderSalesReturn: "sr", OrderPurchaseReturn: "pr"}
+
+// ReturnSettlementRef is the client ref of a payment recorded by a return
+// settlement: settle:<sr|pr>:<returnID>:<key>, key = the caller's idempotency
+// key for that one settlement (at most 40 characters).
+func ReturnSettlementRef(orderType string, returnID int64, key string) string {
+	return returnSettlementPrefix + returnSettlementCodes[orderType] + ":" + strconv.FormatInt(returnID, 10) + ":" + key
+}
+
+// ParseReturnSettlementRef reads a ReturnSettlementRef back; ok=false for any
+// other client ref.
+func ParseReturnSettlementRef(ref string) (orderType string, returnID int64, ok bool) {
+	rest, found := strings.CutPrefix(ref, returnSettlementPrefix)
+	if !found {
+		return "", 0, false
+	}
+	parts := strings.SplitN(rest, ":", 3)
+	if len(parts) != 3 {
+		return "", 0, false
+	}
+	for t, code := range returnSettlementCodes {
+		if parts[0] == code {
+			id, err := strconv.ParseInt(parts[1], 10, 64)
+			if err != nil || id <= 0 {
+				return "", 0, false
+			}
+			return t, id, true
+		}
+	}
+	return "", 0, false
 }
 
 // OrderBalance is one document's outstanding position.

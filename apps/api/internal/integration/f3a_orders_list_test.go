@@ -103,7 +103,7 @@ func TestF3aSalesOrderListFilters(t *testing.T) {
 		t.Fatal("unknown payment terms must be rejected")
 	}
 
-	// partyName decoration and walk-in "Tunai".
+	// partyName decoration and walk-in "Umum".
 	res, err := m.sales.Service().List(ctx, fx.branchID, salesapp.ListFilter{}, 1, 50)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestF3aSalesOrderListFilters(t *testing.T) {
 	for _, o := range res.Orders {
 		names[o.ID] = o.PartyName
 	}
-	if names[a] != "Budi Santoso" || names[d] != "Tunai" || res.Total != 4 {
+	if names[a] != "Budi Santoso" || names[d] != "Umum" || res.Total != 4 {
 		t.Fatalf("partyName/total wrong: %v total=%d", names, res.Total)
 	}
 

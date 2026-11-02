@@ -14,6 +14,7 @@ import (
 	financeapp "mini-erp/internal/modules/finance/application"
 	financecontracts "mini-erp/internal/modules/finance/contracts"
 	paymentapp "mini-erp/internal/modules/payment/application"
+	paymentcontracts "mini-erp/internal/modules/payment/contracts"
 	"mini-erp/internal/shared/apperror"
 )
 
@@ -450,5 +451,78 @@ func TestImportLegacyBankAccountsNothingToMove(t *testing.T) {
 	}
 	if list, _ := testMods.finance.Service().ListBankAccounts(ctx(), ""); len(list) != 0 {
 		t.Fatalf("rekening = %d, want 0", len(list))
+	}
+}
+
+// A cash payment may name the kas it moves through (Kas Besar for supplier
+// payments): any cash account that is no rekening and not the bank mapping.
+// None named = the cash mapping (Kas Tunai), as before.
+func TestCashPaymentNamesKas(t *testing.T) {
+	freshDB(t)
+	fx := newShop(t, ctx())
+	if err := bootstrap.EnsureAuthz(ctx(), testMods.user.Service()); err != nil {
+		t.Fatalf("seed authz: %v", err)
+	}
+	fin := testMods.finance.Service()
+	pays := testMods.payment.Service()
+	kasBesar, err := fin.CreateAccount(ctx(), 0, "1002", "Kas Besar", financecontracts.AccountAsset, true)
+	if err != nil {
+		t.Fatalf("create kas besar: %v", err)
+	}
+	bca := mkRekening(t, "1011", "BCA", "123", true)
+
+	opts, err := fin.CashAccountOptions(ctx())
+	if err != nil {
+		t.Fatalf("options: %v", err)
+	}
+	if len(opts) != 2 || !opts[0].IsDefault || opts[0].Code != financecontracts.CodeCash || opts[1].AccountID != kasBesar.ID {
+		t.Fatalf("kas options = %+v, want Kas Tunai (default) then Kas Besar", opts)
+	}
+	for _, o := range opts {
+		if o.AccountID == bca.AccountID {
+			t.Fatal("rekening offered as kas")
+		}
+	}
+
+	poID := purchaseFixture(t, ctx(), fx, 10000, 2)
+	pay, _, err := pays.RecordForOrder(ctx(), paymentcontracts.RecordInput{
+		BranchID: fx.branchID, OrderType: paymentcontracts.OrderPurchase, OrderID: poID,
+		Amount: 5000, Method: "cash", CashAccountID: kasBesar.ID,
+	})
+	if err != nil {
+		t.Fatalf("pay supplier from kas besar: %v", err)
+	}
+	if pay.CashAccountID != kasBesar.ID {
+		t.Fatalf("payment kas = %d, want %d", pay.CashAccountID, kasBesar.ID)
+	}
+	if _, err := fin.Post(ctx(), 0, fx.branchID, "payment", pay.ID); err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	if got := accountNet(t, fx.branchID, "1002"); got != -5000 {
+		t.Fatalf("1002 = %d, want -5000", got)
+	}
+	if got := accountNet(t, fx.branchID, financecontracts.CodeCash); got != 0 {
+		t.Fatalf("Kas Tunai moved by a Kas Besar payment: %d", got)
+	}
+
+	// A rekening is no kas.
+	if _, _, err := pays.RecordForOrder(ctx(), paymentcontracts.RecordInput{
+		BranchID: fx.branchID, OrderType: paymentcontracts.OrderPurchase, OrderID: poID,
+		Amount: 1000, Method: "cash", CashAccountID: bca.AccountID,
+	}); err == nil {
+		t.Fatal("cash payment through a rekening accepted")
+	} else {
+		wantFieldErr(t, err, "cashAccountId")
+	}
+
+	// The endpoint serves every signed-in user with a branch.
+	h := routeServer(t).Handler()
+	tok := guardUser(t, fx.branchID, "kas-buyer", []string{"payment.create"})
+	rec := doReq(h, http.MethodGet, "/api/v1/finance/cash-accounts/options", tok, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Kas Besar") {
+		t.Fatalf("cash options = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := doReq(h, http.MethodGet, "/api/v1/finance/cash-accounts/options", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("cash options without token = %d, want 401", rec.Code)
 	}
 }

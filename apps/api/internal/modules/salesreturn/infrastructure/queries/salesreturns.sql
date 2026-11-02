@@ -191,3 +191,9 @@ SELECT return_id, CAST(COALESCE(SUM(amount), 0) AS SIGNED) AS total
 FROM sales_return_settlements
 WHERE return_id IN (sqlc.slice('return_ids')) AND settlement_type = 'customer_credit'
 GROUP BY return_id;
+
+-- name: DeletePaymentSettlements :exec
+-- A refund/collect memo goes with the payment it mirrors (its number is the
+-- memo's reference) when the payment module cancels that payment.
+DELETE FROM sales_return_settlements
+WHERE return_id = ? AND reference_number = ? AND settlement_type IN ('refund', 'collect_payment');

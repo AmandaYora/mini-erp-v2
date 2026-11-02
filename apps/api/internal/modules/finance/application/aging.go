@@ -6,6 +6,7 @@ import (
 	"time"
 
 	paymentcontracts "mini-erp/internal/modules/payment/contracts"
+	salescontracts "mini-erp/internal/modules/sales/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/timeutil"
 )
@@ -156,7 +157,7 @@ func (s *Service) AgingDocuments(ctx context.Context, branchID int64, kind, asOf
 		if l, ok := labels[rep.Documents[i].PartyID]; ok {
 			rep.Documents[i].PartyName = l.Name
 		} else if rep.Documents[i].PartyID == 0 {
-			rep.Documents[i].PartyName = "Tunai"
+			rep.Documents[i].PartyName = salescontracts.WalkInPartyName
 		}
 	}
 	sort.Slice(rep.Documents, func(i, j int) bool {

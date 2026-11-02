@@ -272,7 +272,7 @@ func TestReturnAuditAtomic(t *testing.T) {
 
 	release = blockAudit(t, "sales_returns.settle")
 	if _, err := m.salesreturn.Service().AddSettlement(ctx(), 0, fx.branchID, ret.ID,
-		salesreturnapp.SettlementInput{Type: "refund", Amount: 1000}); err == nil {
+		salesreturnapp.SettlementInput{Type: "refund", Amount: 1000, PaymentMethod: "cash"}); err == nil {
 		t.Fatal("settlement stored although its trail failed")
 	}
 	if n := countRows(t, `SELECT COUNT(*) FROM sales_return_settlements WHERE auto = 0`); n != 0 {
@@ -280,7 +280,7 @@ func TestReturnAuditAtomic(t *testing.T) {
 	}
 	release()
 	if _, err := m.salesreturn.Service().AddSettlement(ctx(), 0, fx.branchID, ret.ID,
-		salesreturnapp.SettlementInput{Type: "refund", Amount: 1000}); err != nil {
+		salesreturnapp.SettlementInput{Type: "refund", Amount: 1000, PaymentMethod: "cash"}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if n := auditCount(t, "sales_returns.settle"); n != 1 {

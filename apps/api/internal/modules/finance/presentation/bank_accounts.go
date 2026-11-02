@@ -46,6 +46,18 @@ func (h *Handler) ListBankAccounts(w http.ResponseWriter, r *http.Request) {
 	response.OK(w, "Data rekening", items)
 }
 
+// CashAccountOptions handles GET /api/v1/finance/cash-accounts/options (any
+// signed-in user with a branch: whoever records a cash payment picks the kas
+// it moves through, e.g. Kas Besar for supplier payments).
+func (h *Handler) CashAccountOptions(w http.ResponseWriter, r *http.Request) {
+	items, err := h.svc.CashAccountOptions(r.Context())
+	if err != nil {
+		response.FailErr(w, err)
+		return
+	}
+	response.OK(w, "Data akun kas", items)
+}
+
 // CreateBankAccount handles POST /api/v1/finance/bank-accounts.
 func (h *Handler) CreateBankAccount(w http.ResponseWriter, r *http.Request) {
 	var in bankAccountPayload

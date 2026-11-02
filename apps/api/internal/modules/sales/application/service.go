@@ -97,7 +97,7 @@ func (s *Service) enrich(ctx context.Context, o *contracts.SalesOrder) (*contrac
 	if p != nil {
 		o.PartyName, o.PartyPhone, o.PartyAddress = p.Name, p.Phone, p.Address
 	} else if o.PartyID == 0 {
-		o.PartyName = "Tunai"
+		o.PartyName = contracts.WalkInPartyName
 	}
 	return o, nil
 }
@@ -953,7 +953,7 @@ func (s *Service) prepareFilter(ctx context.Context, f *ListFilter) error {
 }
 
 // decorateParties fills PartyName for a page in one batch read; walk-in reads
-// "Tunai". Best-effort for deleted parties (name stays empty).
+// WalkInPartyName. Best-effort for deleted parties (name stays empty).
 func (s *Service) decorateParties(ctx context.Context, orders []*contracts.SalesOrder) error {
 	ids := make([]int64, 0, len(orders))
 	for _, o := range orders {
@@ -965,7 +965,7 @@ func (s *Service) decorateParties(ctx context.Context, orders []*contracts.Sales
 	}
 	for _, o := range orders {
 		if o.PartyID == 0 {
-			o.PartyName = "Tunai"
+			o.PartyName = contracts.WalkInPartyName
 			continue
 		}
 		o.PartyName = names[o.PartyID]
@@ -1001,7 +1001,7 @@ func (s *Service) List(ctx context.Context, branchID int64, f ListFilter, page, 
 
 // ListOrders lists lightweight rows for operational readers (assistant bot
 // tools). Party names resolve best-effort in one batch read (A3); walk-in
-// reads "Tunai".
+// reads WalkInPartyName.
 func (s *Service) ListOrders(ctx context.Context, branchID int64, statuses []string, from, to string, limit int) ([]*contracts.OrderSummary, error) {
 	rows, err := s.repo.ListSummaries(ctx, branchID, statuses, from, to, limit)
 	if err != nil {
@@ -1017,7 +1017,7 @@ func (s *Service) ListOrders(ctx context.Context, branchID int64, statuses []str
 	}
 	for _, r := range rows {
 		if r.PartyID == 0 {
-			r.PartyName = "Tunai"
+			r.PartyName = contracts.WalkInPartyName
 			continue
 		}
 		r.PartyName = names[r.PartyID]

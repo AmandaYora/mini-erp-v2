@@ -13,6 +13,9 @@ import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBan
 import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import { initialPaymentAccount, methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
+import { PaymentCashAccountField } from "@/modules/payment/components/PaymentCashAccountField";
+import { useCashAccounts } from "@/modules/finance/hooks/use-cash-accounts";
+import { cashAccountForPayload, initialCashAccount } from "@/modules/finance/lib/cash-accounts";
 
 interface CorrectPaymentModalProps {
   payment: Payment;
@@ -41,6 +44,11 @@ export function CorrectPaymentModal({ payment, submitting, serverError, onClose,
   const bank = useBankAccounts();
   const [cashAccountId, setCashAccountId] = useState<number | null>(null);
   const effectiveAccount = cashAccountId ?? initialPaymentAccount(bank.all, payment.cashAccountId ?? null);
+  // Kas tunai: awalnya kas pembayaran asli bila masih aktif.
+  const cash = useCashAccounts();
+  const kasDirection = payment.direction === "out" ? "out" : "in";
+  const [kasChoice, setKasChoice] = useState<number | null>(null);
+  const effectiveKas = kasChoice ?? initialCashAccount(cash.all, kasDirection, payment.cashAccountId ?? null);
 
   const amountNum = Number(amount);
   const tenderedNum = Number(tendered);
@@ -55,7 +63,12 @@ export function CorrectPaymentModal({ payment, submitting, serverError, onClose,
       amountTendered: method === "cash" && tendered.trim() ? tendered.trim() : undefined,
       notes: notes.trim() ? notes.trim() : undefined,
       reason,
-      cashAccountId: methodUsesBankAccount(method) && effectiveAccount !== null ? effectiveAccount : undefined,
+      cashAccountId:
+        method === "cash"
+          ? cashAccountForPayload(cash.all, effectiveKas)
+          : methodUsesBankAccount(method) && effectiveAccount !== null
+            ? effectiveAccount
+            : undefined,
     });
     const bankError = paymentBankAccountError(bank, method, effectiveAccount);
     if (!parsed.success || bankError) {
@@ -140,6 +153,14 @@ export function CorrectPaymentModal({ payment, submitting, serverError, onClose,
           />
         </FormField>
 
+        <PaymentCashAccountField
+          cash={cash}
+          method={method}
+          value={effectiveKas}
+          onChange={setKasChoice}
+          direction={kasDirection}
+          errorText={errors.cashAccountId}
+        />
         {method === "cash" ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField label="Uang diterima" errorText={errors.amountTendered} helperText="Opsional.">

@@ -19,6 +19,9 @@ import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBan
 import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import { methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
+import { PaymentCashAccountField } from "@/modules/payment/components/PaymentCashAccountField";
+import { useCashAccounts } from "@/modules/finance/hooks/use-cash-accounts";
+import { cashAccountForPayload, initialCashAccount, rememberCashAccount } from "@/modules/finance/lib/cash-accounts";
 
 interface AllocRow {
   key: number;
@@ -93,6 +96,11 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
   const effectiveAccount = cashAccountId ?? bank.defaultAccountId;
   const refundRows = rows.some((r) => r.orderType.endsWith("_return"));
   const moneyIn = (partyType === "supplier") === refundRows;
+  // Kas tunai (mis. Kas Besar): null = kas terakhir untuk arah ini, lalu Kas Tunai.
+  const cash = useCashAccounts();
+  const [kasChoice, setKasChoice] = useState<number | null>(null);
+  const effectiveKas = kasChoice ?? initialCashAccount(cash.all, moneyIn ? "in" : "out");
+  const kasPayload = cashAccountForPayload(cash.all, effectiveKas);
 
   const allocTotal = rows.reduce((sum, r) => {
     const n = Number(r.amount);
@@ -155,7 +163,12 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
       notes: notes.trim() ? notes.trim() : undefined,
       reference: reference.trim() ? reference.trim() : undefined,
       amountTendered: method === "cash" && tendered.trim() ? tendered.trim() : undefined,
-      cashAccountId: methodUsesBankAccount(method) && effectiveAccount !== null ? effectiveAccount : undefined,
+      cashAccountId:
+        method === "cash"
+          ? kasPayload
+          : methodUsesBankAccount(method) && effectiveAccount !== null
+            ? effectiveAccount
+            : undefined,
       clientRef,
       allocations: filled.map((r) => ({
         orderType: r.orderType,
@@ -175,6 +188,7 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
       return;
     }
     setErrors({});
+    if (method === "cash") rememberCashAccount(moneyIn ? "in" : "out", kasPayload ?? null);
     onSubmit(parsed.data);
   }
 
@@ -243,6 +257,14 @@ export function PaymentFormModal({ open, submitting, serverError, onClose, onSub
           />
         </FormField>
 
+        <PaymentCashAccountField
+          cash={cash}
+          method={method}
+          value={effectiveKas}
+          onChange={setKasChoice}
+          direction={moneyIn ? "in" : "out"}
+          errorText={errors.cashAccountId}
+        />
         {method === "cash" ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField

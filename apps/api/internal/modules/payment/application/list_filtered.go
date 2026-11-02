@@ -6,6 +6,7 @@ import (
 
 	"mini-erp/internal/modules/payment/contracts"
 	"mini-erp/internal/modules/payment/infrastructure"
+	salescontracts "mini-erp/internal/modules/sales/contracts"
 	"mini-erp/internal/shared/apperror"
 	"mini-erp/internal/shared/listquery"
 )
@@ -53,7 +54,7 @@ func (s *Service) ListFiltered(ctx context.Context, branchID int64, f ListFilter
 	}
 	for _, p := range payments {
 		if p.PartyID == 0 {
-			p.PartyName = "Tunai"
+			p.PartyName = salescontracts.WalkInPartyName
 		}
 	}
 	return &ListResult{Payments: payments, Total: total}, nil

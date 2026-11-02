@@ -162,6 +162,8 @@ func (h *Handler) AddSettlement(w http.ResponseWriter, r *http.Request) {
 		PaymentMethod   string `json:"paymentMethod"`
 		ReferenceNumber string `json:"referenceNumber"`
 		Notes           string `json:"notes"`
+		CashAccountID   int64  `json:"cashAccountId"`
+		ClientRef       string `json:"clientRef"`
 	}
 	if fields := httpx.DecodeJSON(r, &in); fields != nil {
 		response.Fail(w, apperror.Validation("", fields))
@@ -178,6 +180,7 @@ func (h *Handler) AddSettlement(w http.ResponseWriter, r *http.Request) {
 	ret, appErr := h.svc.AddSettlement(r.Context(), authcontracts.ActorID(r), authcontracts.BranchID(r), id, application.SettlementInput{
 		Type: in.Type, Date: in.Date, Amount: in.Amount,
 		PaymentMethod: in.PaymentMethod, ReferenceNumber: in.ReferenceNumber, Notes: in.Notes,
+		CashAccountID: in.CashAccountID, ClientRef: in.ClientRef,
 	})
 	if appErr != nil {
 		response.FailErr(w, appErr)

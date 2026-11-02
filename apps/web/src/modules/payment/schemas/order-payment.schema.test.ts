@@ -42,12 +42,14 @@ describe("orderPaymentSchema", () => {
     expect(p.allocations?.[0].orderType).toBe("purchase");
   });
 
-  it("rekening (ADR-0026) hanya ikut untuk transfer/cek", () => {
+  it("rekening (ADR-0026) untuk transfer/cek, akun kas untuk tunai", () => {
     const s = buildOrderPaymentSchema(100000);
     const transfer = s.parse({ ...ok, method: "transfer" });
     expect(toOrderPaymentPayload(transfer, { ...ctx, cashAccountId: 11 }).cashAccountId).toBe(11);
     expect(toOrderPaymentPayload(transfer, { ...ctx, cashAccountId: null }).cashAccountId).toBeUndefined();
     const cash = s.parse(ok);
-    expect(toOrderPaymentPayload(cash, { ...ctx, cashAccountId: 11 }).cashAccountId).toBeUndefined();
+    // Tunai membawa akun kas pilihan (mis. Kas Besar) bila pemanggil mengirimnya.
+    expect(toOrderPaymentPayload(cash, { ...ctx, cashAccountId: 11 }).cashAccountId).toBe(11);
+    expect(toOrderPaymentPayload(cash, { ...ctx, cashAccountId: null }).cashAccountId).toBeUndefined();
   });
 });

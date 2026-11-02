@@ -87,6 +87,14 @@ func (s *Service) ReleaseAutoOffset(ctx context.Context, returnID int64) error {
 	return nil
 }
 
+// ReleaseSettlementPayment implements contracts.ReturnsClient.
+func (s *Service) ReleaseSettlementPayment(ctx context.Context, returnID int64, paymentNumber string) error {
+	if err := s.repo.DeletePaymentSettlements(ctx, returnID, paymentNumber); err != nil {
+		return apperror.Internal(err)
+	}
+	return nil
+}
+
 // GetReturn resolves the payment-facing projection, or nil when missing.
 func (s *Service) GetReturn(ctx context.Context, id int64) (*contracts.Return, error) {
 	ret, err := s.repo.GetReturn(ctx, id)
@@ -1168,10 +1176,18 @@ type SettlementInput struct {
 	PaymentMethod   string
 	ReferenceNumber string
 	Notes           string
+	// CashAccountID names the kas (cash) or rekening (transfer/check) the
+	// money of a refund / collect moves through; 0 = the default.
+	CashAccountID int64
+	// ClientRef is the caller's idempotency key for this one settlement.
+	ClientRef string
 }
 
-// AddSettlement records how part of the return value was settled (memo-level:
-// money itself still moves through payments). Total settlements can never
+// AddSettlement records how part of the return value was settled. A refund or
+// an exchange surcharge moves money, so it is recorded as a payment first
+// (journalled to kas/bank like any payment) and the memo row then mirrors it
+// with the payment number as its reference; customer_credit stays memo-level
+// (journalled as a reclassification, K-04a). Total settlements can never
 // exceed the return total.
 func (s *Service) AddSettlement(ctx context.Context, actorID, branchID, id int64, in SettlementInput) (*contracts.SalesReturn, error) {
 	// Serialized per return: two concurrent settlements would both pass the
@@ -1248,20 +1264,99 @@ func (s *Service) addSettlementLocked(ctx context.Context, actorID, branchID, id
 			return nil, apperror.Conflict("Melebihi sisa retur yang belum direfund/diofset (sisa " + strconv.FormatInt(room, 10) + ")")
 		}
 	}
-	if _, err := s.repo.InsertSettlementAudited(ctx, ret.ID, &contracts.Settlement{
+	memo := &contracts.Settlement{
 		Type: in.Type, Date: date, Amount: in.Amount,
 		PaymentMethod:   strings.TrimSpace(in.PaymentMethod),
 		ReferenceNumber: strings.TrimSpace(in.ReferenceNumber),
 		Notes:           strings.TrimSpace(in.Notes),
-	}, actorID, func(ctx context.Context, tx *sql.Tx, settlementID int64) error {
+	}
+	if in.Type == contracts.SettleRefund || in.Type == contracts.SettleCollectPayment {
+		pay, err := s.recordSettlementPayment(ctx, actorID, branchID, ret, date, in, full.Settlements)
+		if err != nil {
+			return nil, err
+		}
+		for _, st := range full.Settlements {
+			if st.ReferenceNumber == pay.Number {
+				return s.GetByID(ctx, ret.ID) // replay: the memo already mirrors this payment
+			}
+		}
+		memo.Amount, memo.PaymentMethod, memo.ReferenceNumber = pay.Amount, pay.Method, pay.Number
+	}
+	if _, err := s.repo.InsertSettlementAudited(ctx, ret.ID, memo, actorID, func(ctx context.Context, tx *sql.Tx, settlementID int64) error {
 		return s.audit.LogTx(ctx, tx, auditcontracts.Entry{
 			Action: "sales_returns.settle", Entity: "sales_return", EntityID: ret.ID, BranchID: branchID, ActorID: actorID, Note: ret.Number,
-			After: map[string]any{"settlementId": settlementID, "type": in.Type, "amount": in.Amount, "date": date},
+			After: map[string]any{"settlementId": settlementID, "type": in.Type, "amount": memo.Amount, "date": date},
 		})
 	}); err != nil {
 		return nil, apperror.Internal(err)
 	}
 	return s.GetByID(ctx, ret.ID)
+}
+
+// recordSettlementPayment records the money of a refund (out) or an exchange
+// surcharge (in) as a payment against the return, idempotent per settlement:
+// the caller's ClientRef, else the count of earlier cash-moving memos (stable
+// under the return's lock until the memo is written).
+func (s *Service) recordSettlementPayment(ctx context.Context, actorID, branchID int64, ret *contracts.SalesReturn, date string, in SettlementInput, memos []*contracts.Settlement) (*paymentcontracts.Payment, error) {
+	if s.payments == nil {
+		return nil, apperror.Internal(errPaymentsNotWired)
+	}
+	method := strings.TrimSpace(in.PaymentMethod)
+	switch method {
+	case paymentcontracts.MethodCash, paymentcontracts.MethodTransfer, paymentcontracts.MethodCheck:
+	default:
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "paymentMethod", Message: "pilih tunai, transfer, atau cek"}})
+	}
+	clientKey := strings.TrimSpace(in.ClientRef)
+	if len(clientKey) > 40 {
+		return nil, apperror.Validation("", []apperror.FieldError{{Field: "clientRef", Message: "maksimal 40 karakter"}})
+	}
+	// Without a caller key the n-th cash-moving memo is the key. A key whose
+	// payment was cancelled since (memo released) or is already mirrored by a
+	// memo is used up, so skip past it.
+	n := 1
+	mirrored := map[string]bool{}
+	for _, m := range memos {
+		mirrored[m.ReferenceNumber] = true
+		if m.Type == contracts.SettleRefund || m.Type == contracts.SettleCollectPayment {
+			n++
+		}
+	}
+	notes := "Refund retur " + ret.Number
+	if in.Type == contracts.SettleCollectPayment {
+		notes = "Tambah bayar retur tukar " + ret.Number
+	}
+	if extra := strings.TrimSpace(in.Notes); extra != "" {
+		notes += ": " + extra
+	}
+	for attempt := 0; attempt < 50; attempt++ {
+		key := clientKey
+		if key == "" {
+			key = "n" + strconv.Itoa(n+attempt)
+		}
+		pay, _, err := s.payments.RecordForOrder(ctx, paymentcontracts.RecordInput{
+			ActorID: actorID, BranchID: branchID,
+			OrderType: paymentcontracts.OrderSalesReturn, OrderID: ret.ID,
+			Amount: in.Amount, Method: method, PaidAt: date,
+			Reference:     strings.TrimSpace(in.ReferenceNumber),
+			ClientRef:     paymentcontracts.ReturnSettlementRef(paymentcontracts.OrderSalesReturn, ret.ID, key),
+			Notes:         notes,
+			CashAccountID: in.CashAccountID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if clientKey != "" && pay.Status == "active" {
+			return pay, nil // the caller's own retry: the memo check upstream replays
+		}
+		if clientKey == "" && pay.Status == "active" && !mirrored[pay.Number] {
+			return pay, nil
+		}
+		if clientKey != "" {
+			return nil, apperror.Conflict("Pembayaran " + pay.Number + " untuk penyelesaian ini sudah dibatalkan; buka ulang form lalu catat lagi")
+		}
+	}
+	return nil, apperror.Conflict("Terlalu banyak pembayaran penyelesaian yang dibatalkan pada retur ini; catat lewat form dengan kunci baru")
 }
 
 // ContextLine is one SO line with its returnable remainder.

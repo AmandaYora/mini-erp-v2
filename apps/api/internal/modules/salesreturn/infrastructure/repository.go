@@ -395,6 +395,14 @@ func (r *Repository) ReleaseAutoOffset(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
+// DeletePaymentSettlements drops the refund/collect memo rows mirroring one
+// payment (reference = payment number). Idempotent.
+func (r *Repository) DeletePaymentSettlements(ctx context.Context, returnID int64, paymentNumber string) error {
+	return r.q.DeletePaymentSettlements(ctx, sqlc.DeletePaymentSettlementsParams{
+		ReturnID: returnID, ReferenceNumber: sql.NullString{String: paymentNumber, Valid: true},
+	})
+}
+
 // OrderIDsByReturns maps return id -> originating sales order id in one
 // grouped read. Unknown ids are simply absent from the result.
 func (r *Repository) OrderIDsByReturns(ctx context.Context, ids []int64) (map[int64]int64, error) {

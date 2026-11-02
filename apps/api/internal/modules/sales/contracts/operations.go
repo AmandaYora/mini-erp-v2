@@ -40,9 +40,14 @@ type OrderTotal struct {
 	DueDate    string // YYYY-MM-DD, empty when none
 }
 
+// WalkInPartyName labels a sale without a customer (POS walk-in, party 0)
+// wherever a party name is shown. It used to read "Tunai", which looked like
+// the payment method on screens where a walk-in paid by transfer.
+const WalkInPartyName = "Umum"
+
 // OpenShipment is one confirmed, shippable order with its lines for the
 // delivery work queue (J3). PartyName resolves best-effort like ListOrders;
-// walk-in reads "Tunai".
+// walk-in reads WalkInPartyName.
 type OpenShipment struct {
 	OrderID      int64  `json:"orderId"`
 	Number       string `json:"number"`

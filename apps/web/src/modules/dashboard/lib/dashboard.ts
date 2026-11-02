@@ -124,7 +124,7 @@ export function buildActionItems(
       key: `${purchase ? "po" : "so"}-${o.id}`,
       kind: "order",
       tone: late > 0 ? "danger" : "warning",
-      title: `${o.number} · ${o.partyName || (purchase ? "Supplier" : "Tunai")}`,
+      title: `${o.number} · ${o.partyName || (purchase ? "Supplier" : "Umum")}`,
       detail: orderDetail(o, late),
       to: `${purchase ? ROUTE_PATHS.purchaseOrders : ROUTE_PATHS.salesOrders}?search=${encodeURIComponent(o.number)}`,
     });

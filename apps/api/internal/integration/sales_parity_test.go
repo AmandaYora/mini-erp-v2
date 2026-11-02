@@ -202,7 +202,7 @@ func TestSalesOrderSummaryNetOfReturns(t *testing.T) {
 		t.Fatalf("paid-then-returned = %+v, want net 15000 paid 30000 outstanding 0 refundDue 15000 paid", sum)
 	}
 	if _, err := m.salesreturn.Service().AddSettlement(ctx(), 0, fx.branchID, ret2.ID,
-		salesreturnapp.SettlementInput{Type: "refund", Amount: 15000}); err != nil {
+		salesreturnapp.SettlementInput{Type: "refund", Amount: 15000, PaymentMethod: "cash"}); err != nil {
 		t.Fatalf("refund settlement: %v", err)
 	}
 	sum = summaryOf(t, paidSO)

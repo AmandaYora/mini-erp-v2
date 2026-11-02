@@ -49,6 +49,9 @@ import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import { methodUsesBankAccount } from "@/modules/finance/lib/bank-accounts";
 import { PaymentBankAccountField } from "@/modules/payment/components/PaymentBankAccountField";
 import { paymentBankAccountError } from "@/modules/finance/lib/bank-accounts";
+import { SettlementPaymentFields } from "@/modules/payment/components/SettlementPaymentFields";
+import { useSettlementPayment } from "@/modules/payment/hooks/use-settlement-payment";
+import { methodLabel } from "@/modules/payment/types";
 import {
   replacementStatusLabel,
   returnConditionLabel,
@@ -93,6 +96,7 @@ export default function SalesReturnDetailPage() {
   const canCancel = can("salesreturn.archive");
   const canAct = can("salesreturn.create");
   const canRefund = can("salesreturn.refund");
+  const canCollect = can("payment.create");
 
   const [ret, setRet] = useState<SalesReturn | null>(null);
   const [busy, setBusy] = useState(false);
@@ -135,7 +139,11 @@ export default function SalesReturnDetailPage() {
   const [settleType, setSettleType] = useState("");
   const [settleDate, setSettleDate] = useState(todayWIB());
   const [settleAmount, setSettleAmount] = useState("");
-  const [settleMethod, setSettleMethod] = useState("");
+  // Refund / tambah bayar = pembayaran sungguhan (masuk laporan kas): metode +
+  // rekening/kas, satu kunci idempoten per pembukaan form.
+  const settleMovesMoney = settleType === "refund" || settleType === "collect_payment";
+  const settleDirection = settleType === "collect_payment" ? "in" : "out";
+  const settlePay = useSettlementPayment(settleDirection);
   const [settleRef, setSettleRef] = useState("");
   const [settleNotes, setSettleNotes] = useState("");
   const [settleError, setSettleError] = useState<string | null>(null);
@@ -347,7 +355,7 @@ export default function SalesReturnDetailPage() {
     setSettleType("");
     setSettleDate(todayWIB());
     setSettleAmount("");
-    setSettleMethod("");
+    settlePay.reset();
     setSettleRef("");
     setSettleNotes("");
     setSettleError(null);
@@ -360,12 +368,17 @@ export default function SalesReturnDetailPage() {
       type: settleType,
       date: settleDate.trim(),
       amount: settleAmount,
-      paymentMethod: settleMethod.trim(),
+      paymentMethod: settleMovesMoney ? settlePay.method : "",
       referenceNumber: settleRef.trim(),
       notes: settleNotes.trim(),
     });
     if (!parsed.success) {
       setSettleError(parsed.error.issues[0]?.message ?? "Form belum valid.");
+      return;
+    }
+    const accountError = settleMovesMoney ? settlePay.accountError() : null;
+    if (accountError) {
+      setSettleError(accountError);
       return;
     }
     setSettleError(null);
@@ -378,6 +391,7 @@ export default function SalesReturnDetailPage() {
         paymentMethod: parsed.data.paymentMethod || undefined,
         referenceNumber: parsed.data.referenceNumber || undefined,
         notes: parsed.data.notes || undefined,
+        ...(settleMovesMoney ? { cashAccountId: settlePay.payloadAccount(), clientRef: settlePay.clientRef } : {}),
       })
       .then((res) => {
         setRet(res.data);
@@ -552,7 +566,7 @@ export default function SalesReturnDetailPage() {
             <SectionCard
               flush
               title="Penyelesaian"
-              description="Cara nilai retur diselesaikan. Refund & tagihan selisih bergerak lewat modul pembayaran; saldo pelanggan dijurnal sebagai uang muka pelanggan."
+              description="Cara nilai retur diselesaikan. Refund & tagihan selisih dicatat sebagai pembayaran (nomornya di kolom referensi, masuk laporan kas); saldo pelanggan dijurnal sebagai uang muka pelanggan."
             >
               <DataTable<ReturnSettlement>
                 rows={ret.settlements}
@@ -572,7 +586,7 @@ export default function SalesReturnDetailPage() {
                         <p>{settlementTypeLabel(r.type)}</p>
                         {(r.paymentMethod || r.referenceNumber || r.notes) && (
                           <p className="text-xs text-muted-foreground">
-                            {[r.paymentMethod, r.referenceNumber, r.notes].filter(Boolean).join(" · ")}
+                            {[r.paymentMethod && methodLabel(r.paymentMethod), r.referenceNumber, r.notes].filter(Boolean).join(" · ")}
                           </p>
                         )}
                       </div>
@@ -923,7 +937,7 @@ export default function SalesReturnDetailPage() {
         description={
           ret.chargeRemaining > 0
             ? `Selisih tukar yang belum ditagih: ${formatIDR(ret.chargeRemaining)}.`
-            : `Sisa yang bisa direfund atau dijadikan saldo pelanggan: ${formatIDR(ret.externalRemaining)}. Nilai retur lebih dulu mengurangi piutang order.`
+            : `Sisa yang bisa direfund atau dijadikan saldo pelanggan: ${formatIDR(ret.externalRemaining)}. Nilai retur lebih dulu mengurangi piutang order. Refund dicatat sebagai pembayaran keluar dan masuk laporan kas.`
         }
         onClose={() => {
           if (!settleBusy) setSettleOpen(false);
@@ -952,7 +966,7 @@ export default function SalesReturnDetailPage() {
               }}
             >
               <option value="">Pilih…</option>
-              {allowedTypes.includes("collect_payment") && (
+              {allowedTypes.includes("collect_payment") && canCollect && (
                 <option value="collect_payment">{settlementTypeLabel("collect_payment")}</option>
               )}
               {allowedTypes.includes("refund") && canRefund && (
@@ -993,15 +1007,9 @@ export default function SalesReturnDetailPage() {
           <FormField label="Tanggal" helperText="Kosongkan untuk hari ini (server).">
             <DateInput value={settleDate} onChange={(e) => setSettleDate(e.target.value)} disabled={settleBusy} />
           </FormField>
-          <FormField label="Metode pembayaran">
-            <TextInput
-              value={settleMethod}
-              maxLength={50}
-              onChange={(e) => setSettleMethod(e.target.value)}
-              placeholder="Tunai / transfer / …"
-              disabled={settleBusy}
-            />
-          </FormField>
+          {settleMovesMoney && (
+            <SettlementPaymentFields pay={settlePay} direction={settleDirection} disabled={settleBusy} />
+          )}
           <FormField label="Nomor referensi">
             <TextInput
               value={settleRef}

@@ -46,12 +46,15 @@ import {
 import { allocationHref, paymentRail } from "@/modules/payment/lib/payment-rail";
 import { useBankAccounts } from "@/modules/finance/hooks/use-bank-accounts";
 import { bankAccountByAccountId, bankAccountLabel } from "@/modules/finance/lib/bank-accounts";
+import { useCashAccounts } from "@/modules/finance/hooks/use-cash-accounts";
+import { cashAccountByAccountId, cashAccountLabel } from "@/modules/finance/lib/cash-accounts";
 
 export default function PaymentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const can = useAuthStore((s) => s.can);
   const bank = useBankAccounts();
+  const cash = useCashAccounts();
   const canCreate = can("payment.create");
   const canCancel = can("payment.archive");
 
@@ -183,6 +186,10 @@ export default function PaymentDetailPage() {
   const rekening = bankAccountByAccountId(bank.all, payment.cashAccountId);
   if (rekening) {
     info.push({ label: payment.direction === "out" ? "Dari rekening" : "Ke rekening", value: bankAccountLabel(rekening) });
+  }
+  const kas = payment.method === "cash" ? cashAccountByAccountId(cash.all, payment.cashAccountId) : undefined;
+  if (kas) {
+    info.push({ label: payment.direction === "out" ? "Dari kas" : "Ke kas", value: cashAccountLabel(kas) });
   }
   if (payment.method !== "cash" && payment.reference) {
     info.push({ label: referenceLabel(payment.method), value: payment.reference });
